@@ -1,24 +1,105 @@
-# Emergency triage with AI (work in progress)
+# Can AI be a second check on emergency triage?
 
-Hackathon project, Health track. The aim: give each emergency patient an urgency level the moment they
-describe their problem, so that urgent patients are seen first. Nothing is built yet; this repository
-currently holds the data.
+**Track:** Health
+**Team:** [your names here]
 
 *This project is a prototype and is not medical advice.*
 
-## The data
+> **In one sentence:** our model is worse than nurses at giving emergency patients an urgency level
+> (68% right against 85%), but used as a second check it flags 107 of the 131 patients that nurses rated
+> less urgent than they really were.
 
-`data/ktas_data.xlsx` (also as `data/ktas_data.csv`): 1,267 adult patients from two emergency departments
-in South Korea, 24 columns. Each row has the patient's complaint, vital signs, the urgency level given by
-the triage nurse (`KTAS_RN`) and the correct level decided by an expert panel (`KTAS_expert`).
-Level 1 is the most urgent and level 5 the least.
+![Of the 131 patients nurses rated too low, the AI flags 107](images/second_check.png)
 
-`data/ktas_codebook.xlsx` (also as `data/ktas_codebook.csv`): what every column and code means.
+## The problem
 
-## Source and licence
+In an emergency department a triage nurse gives every arriving patient an urgency level from 1 (most urgent)
+to 5 (least), and the queue follows those levels. When a patient is rated too low, someone who needs care now
+waits behind minor cases. In the study our data comes from, trained nurses rated about 1 patient in 10 too low.
 
-Moon S-H, Shim JL, Park K-S, Park C-S (2019). Triage accuracy and causes of mistriage using the Korean
-Triage and Acuity Scale. PLOS ONE 14(9): e0216972. https://doi.org/10.1371/journal.pone.0216972
+## What we built
 
-The data files are the paper's supporting information (S1 and S2), unchanged apart from the file names and
-the CSV copies. They are published under the Creative Commons Attribution 4.0 licence (CC BY 4.0).
+A second check for the triage nurse. The complaint in a few words and the vital signs taken at the door go in.
+A suggested urgency level comes out, with the probability of each level and the inputs that pointed to it.
+If the nurse has already given a level and the AI rates the patient as more urgent, it shows a warning asking
+her to look again. When no level is likely enough, it says it is not sure.
+
+![The demo: the nurse's inputs on the left, the suggested level and the second-check warning on the right](images/demo.jpg)
+
+## What we added
+
+Our own idea. Three things go beyond a standard classifier:
+
+- **A human baseline.** We compare the model with real nurses on the same patients, both judged against an
+  expert panel.
+- **Safety-first decisions.** The model treats rating a patient too low as three times as costly as rating
+  them too high.
+- **A different job for the AI.** When it turned out the model could not beat nurses, we tested it as a
+  second check on them instead.
+
+## How it works
+
+**Data.** 1,267 real adult patients from two emergency departments in South Korea (Moon et al., PLOS ONE 2019).
+Each has the nurse's level and the correct level decided afterwards by experts. We marked "unmeasurable" vital
+signs as missing and kept that fact as an input, set the pain score to 0 for patients without pain, and filled
+other gaps with the typical value from the training patients.
+
+**Model.** Logistic regression on what is known at the door: the complaint text (broken into short letter
+patterns), age, sex, how the patient arrived, alertness, pain and vital signs. The nurse's level, the diagnosis
+and the outcome are never given to the model. We chose a simple model because the data is small and its
+weights can be shown to the nurse.
+
+**Testing.** Every patient is scored by a model that never saw them (5-fold cross-validation).
+
+## Results
+
+| | Exact level | Rated too low (dangerous) | Rated too high |
+|---|---|---|---|
+| Baseline: always level 3 | 38% | 19% | 42% |
+| AI, most likely level | 68% | 16% | 16% |
+| AI, safety-first | 60% | 8% | 32% |
+| Nurses | 85% | 10% | 4% |
+
+**The model cannot replace a triage nurse.** It beats the baseline easily and loses clearly to nurses.
+
+**As a second check it is useful.** It flags 107 of the 131 patients (82%) that nurses rated too low. The price
+is a re-check on 36% of all patients, most of whom were rated correctly.
+
+**Waiting time (simulated).** The data has no arrival times, so we simulated a busy department with three
+doctors. The most urgent patients waited 88 minutes under first come, first served, 24 minutes with the AI's
+levels, 13 with the nurses' levels and 7 with the experts'. Ordering by urgency matters more than who does it.
+
+![Simulated waiting time for the most urgent patients under four queue orders](images/waiting.png)
+
+**Where it fails.**
+
+- **Seven urgent patients sent to the slow queue.** They include a chest pain complaint written in Korean with
+  no vital signs, two poisonings and an eye injury, where the danger does not show in the measurements.
+  Nurses rated five of the seven correctly.
+- **It does not travel.** Trained at one hospital and tested at the other, the exact level drops from 68% to
+  55–58%, and in one direction 49 urgent patients ended up in the slow queue.
+- **Groups.** With the safety-first setting, 9% of women and 7% of men are rated too low (nurses: 12% and 9%).
+
+**Limits.** One country, 1,267 patients and only 26 at level 1. The waiting times are a simulation with
+invented arrivals. The three-to-one safety weighting is our choice. We did not test whether real nurses would
+act on the flags.
+
+## What we'd do next
+
+1. Try the flags with real triage nurses and measure how many re-checks change the level.
+2. Train and test on more hospitals, since the model got worse when moved between two.
+
+## Run it
+
+- **Notebook:** open `triage.ipynb`. All outputs are saved in it.
+- **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
+
+## Sources
+
+- **Dataset:** Moon S-H, Shim JL, Park K-S, Park C-S (2019). Triage accuracy and causes of mistriage using the
+  Korean Triage and Acuity Scale. PLOS ONE 14(9): e0216972. https://doi.org/10.1371/journal.pone.0216972
+  (supporting files S1 and S2, CC BY 4.0, unchanged apart from file names and CSV copies).
+- **Libraries:** pandas (https://pandas.pydata.org), scikit-learn (https://scikit-learn.org),
+  Matplotlib (https://matplotlib.org), Gradio (https://gradio.app)
+- **AI tools:** Claude (Claude Code, https://claude.com/claude-code) was used to help write and explain the
+  code and to draft this write-up.
