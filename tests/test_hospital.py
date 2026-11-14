@@ -1092,3 +1092,8 @@ def test_a_summary_sentence_about_something_the_patient_never_said_is_dropped():
 def test_a_guessed_cause_is_cut_off_and_the_rest_is_kept():
     text = "The patient reports knee pain after a fall, likely due to a recent injury. The pain is sharp."
     assert core.checked_summary(text, "knee pain after a fall") == "The patient reports knee pain after a fall. The pain is sharp."
+
+
+def test_a_summary_never_says_how_serious_it_is():
+    text = "The patient reports knee pain following a fall. He is a 30-year-old male with no signs of a serious condition."
+    assert core.checked_summary(text, "knee pain after a fall") == "The patient reports knee pain following a fall."

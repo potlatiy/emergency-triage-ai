@@ -489,6 +489,10 @@ _GUESSES = re.compile(r"\b(likely|probably|possibly|perhaps|due to|suggest\w*|in
 _BODY_AND_SYMPTOMS = re.compile(r"\b(arms?|jaw|back|chest|head|neck|legs?|knees?|ankles?|feet|foot|hands?|fingers?|wrists?|hips?|shoulders?|stomach|belly|abdom\w*|eyes?|ears?|nose|throat|skin|breath\w*|bleed\w*|blood|vomit\w*|fever|faint\w*|dizz\w*|numb\w*|rash|swell\w*|swollen|cough\w*|sweat\w*|nause\w*|seiz\w*|speech|slurred|confus\w*)\b", re.I)
 
 
+# How serious it is, is the nurse's call: "with no signs of a serious condition" (seen on the live site) is dropped.
+_JUDGES = re.compile(r"\b(serious\w*|severity|critical|urgent\w*|emergenc\w*|stable|concern\w*|worr\w*|signs? of|nothing to|life.threatening|alarming|reassur\w*)\b", re.I)
+
+
 def _without_guess(sentence):
     """The sentence with a guessed cause cut off: "Knee pain after a fall, likely due to an injury." becomes
     "Knee pain after a fall." Nothing is left when the guess was the whole sentence ("It is probably nothing.")."""
@@ -515,7 +519,7 @@ def checked_summary(text, complaint="", report=None):
     text = " ".join(str(text or "").split())
     # Keep the first two sentences that do not guess. A third sentence is cut off rather than costing the whole summary.
     sentences = [_without_guess(s) for s in re.split(r"(?<=[.!?])\s+", text)]
-    sentences = [s for s in sentences if s and (report is None or _grounded(s, report))][:2]
+    sentences = [s for s in sentences if s and not _JUDGES.search(s) and (report is None or _grounded(s, report))][:2]
     text = " ".join(sentences)
     if not text or len(text.split()) > SUMMARY_MAX_WORDS:
         raise ValueError("not a short summary")
