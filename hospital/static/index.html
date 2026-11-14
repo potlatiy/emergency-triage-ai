@@ -6,161 +6,414 @@
 <title>Meddy · Digital hospital</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
 <style>
-  :root { --ground:#e9efe8; --paper:#f6f9f4; --mist:#d3dfd5; --ink:#12322e; --soft:#3f5c57; --accent:#e5484d; --radius:14px; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--ground); color:var(--ink); font-family:"Outfit",ui-sans-serif,system-ui,sans-serif; }
-  h1,h2,h3 { margin:0; font-weight:600; letter-spacing:-0.02em; line-height:1.1; }
-  header.top, main { max-width:1280px; margin:0 auto; }
-  header.top { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; padding:22px clamp(16px,4vw,40px) 6px; }
-  header.top h1 { font-size:1.7rem; }
-  header.top p { margin:0; color:var(--soft); }
-  main { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(340px,1fr); gap:22px; align-items:start;
-         padding:14px clamp(16px,4vw,40px) 40px; }
-  .left { display:grid; gap:22px; }
-  .card { background:var(--paper); border:1px solid var(--mist); border-radius:var(--radius); padding:20px; }
-  .mono { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.8rem; color:var(--soft); line-height:1.5; }
+  /* Meddy: a friendly front desk. Warm, calm surfaces; big, readable type for people who are unwell,
+     older or have poor sight; round, generous buttons. Each part of the questionnaire has its own colour.
+     Red, amber and green on the level and the pain scale still mean urgency. */
+  :root {
+    --page:#f3f6f2;       /* soft sage white */
+    --card:#ffffff;
+    --line:#dce3dd;
+    --ink:#16252a;        /* text: 15:1 on white */
+    --soft:#45555b;       /* secondary text: 7.5:1 on white */
+    --blue:#2152c4;       /* Meddy: buttons, links, you */
+    --blue-dark:#173f9c;
+    --blue-tint:#e8eefc;
+    --rose:#b4302f;   --rose-tint:#fdeeec;    /* danger signs */
+    --violet:#5a45b8; --violet-tint:#f1eefc;  /* questions for the doctor */
+    --amber:#9a5a00;  --amber-tint:#fff4e0;   /* pain */
+    --mint:#1d7a52;   --mint-tint:#e8f6ee;    /* comfort while you wait */
+    --error:#b4302f;
+    --round:20px;
+    --font:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",ui-sans-serif,system-ui,sans-serif;
+  }
+  html { font-size:100%; }
+  html.large { font-size:118.75%; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--page); color:var(--ink); font:400 1.1875rem/1.55 var(--font); }
+  h1,h2,h3 { margin:0; line-height:1.15; letter-spacing:-0.01em; }
+  .wrap { max-width:1220px; margin:0 auto; padding:0 clamp(16px,4vw,40px); }
+  button, input, select { font-family:inherit; }
 
-  /* the floor plan */
+  /* ---------- header ---------- */
+  header.top { background:var(--card); border-bottom:1px solid var(--line); }
+  header.top .wrap { display:flex; align-items:center; gap:16px 24px; flex-wrap:wrap; padding-top:18px; padding-bottom:18px; }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .brand h1 { font-size:1.75rem; font-weight:800; }
+  .brand small { display:block; font-size:.95rem; color:var(--soft); }
+  header.top p { margin:0; color:var(--soft); font-size:1rem; max-width:44ch; }
+  .size { margin-left:auto; display:inline-flex; align-items:center; gap:10px; min-height:48px; padding:6px 18px 6px 8px;
+          border:2px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink); font-size:1rem;
+          font-weight:700; cursor:pointer; }
+  .size span { display:grid; place-items:center; width:34px; height:34px; border-radius:50%; background:var(--blue-tint);
+               color:var(--blue); font-weight:800; }
+  .size:hover { border-color:var(--blue); }
+  .size[aria-pressed=true] { border-color:var(--blue); background:var(--blue-tint); }
+  .size[aria-pressed=true] span { background:var(--blue); color:#fff; }
+
+  /* ---------- the five stops ---------- */
+  .steps { display:flex; gap:8px; margin:24px 0 0; padding:8px; list-style:none; background:var(--card);
+           border:1px solid var(--line); border-radius:999px; }
+  .steps span { flex:1; display:flex; align-items:center; justify-content:center; gap:10px; min-height:52px; padding:6px 12px;
+                border-radius:999px; font-weight:700; font-size:1rem; color:var(--soft); text-align:center; line-height:1.2; }
+  .steps span b { display:grid; place-items:center; flex:none; width:30px; height:30px; border-radius:50%;
+                  border:2px solid #b7c3bb; font-size:.9rem; }
+  .steps span.done { color:var(--ink); }
+  .steps span.done b { background:var(--mint-tint); border-color:var(--mint); color:var(--mint); }
+  .steps span.on { background:var(--blue); color:#fff; }
+  .steps span.on b { background:#fff; border-color:#fff; color:var(--blue); }
+
+  /* ---------- layout ---------- */
+  main.wrap { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); gap:28px; align-items:start;
+              padding-top:24px; padding-bottom:28px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--round); padding:28px; }
+  .hint { color:var(--soft); font-size:1rem; line-height:1.5; }
+
+  /* ---------- the floor plan ---------- */
+  .plan { padding:16px; position:sticky; top:16px; }
+  .plan h2 { font-size:1.1rem; margin:4px 6px 12px; color:var(--soft); font-weight:700; }
   .plan svg { width:100%; height:auto; display:block; }
-  .room { fill:var(--paper); stroke:var(--ink); stroke-width:2; transition:fill .3s ease; }
-  .room.on { fill:#fbd9da; stroke:var(--accent); stroke-width:3; }
-  .room-label { font:600 13px "Outfit",sans-serif; fill:var(--ink); }
-  .room-sub { font:400 10.5px "IBM Plex Mono",monospace; fill:var(--soft); }
-  .path { fill:none; stroke:var(--mist); stroke-width:8; stroke-linecap:round; stroke-linejoin:round; }
-  .seat { fill:var(--mist); } .seat.taken { fill:var(--soft); }
+  .floor { fill:#f8faf8; stroke:#cfd8d1; }
+  .path { fill:none; stroke:#e4eae5; stroke-width:16; stroke-linecap:round; stroke-linejoin:round; }
+  .room { stroke-width:2; transition:stroke-width .3s ease, filter .3s ease; }
+  #room-1 { fill:#eaf3ec; stroke:#9cc6a9; } #room-2 { fill:#e9effc; stroke:#a5b9ea; } #room-3 { fill:#f1eefc; stroke:#bbb0e8; }
+  #room-4 { fill:#fff4e0; stroke:#e7c27e; } #room-5 { fill:#e7f4f4; stroke:#94c9c8; } #room-6 { fill:#fdeeec; stroke:#e5a6a2; }
+  .room.on { stroke:var(--blue); stroke-width:4; filter:drop-shadow(0 4px 10px rgba(33,82,196,.25)); }
+  .room-label { font:800 15px var(--font); fill:var(--ink); }
+  .room-sub { font:500 11.5px var(--font); fill:var(--soft); }
+  .seat { fill:#f3e3c2; } .seat.taken { fill:#c99a4a; }
   #you { transition:transform .9s cubic-bezier(.5,.1,.2,1); }
-  #you circle { fill:var(--accent); stroke:var(--paper); stroke-width:3; }
-  #you text { font:700 10px "Outfit",sans-serif; fill:var(--paper); text-anchor:middle; }
-  .steps { display:flex; gap:6px; margin-top:14px; flex-wrap:wrap; }
-  .steps span { padding:5px 10px; border-radius:20px; border:1px solid var(--mist); font-size:.82rem; color:var(--soft); }
-  .steps span.on { background:var(--ink); border-color:var(--ink); color:var(--paper); }
-  .steps span.done { border-color:var(--ink); color:var(--ink); }
+  #you circle:not(.pulse) { fill:var(--blue); stroke:#fff; stroke-width:4; }
+  #you text { font:800 10.5px var(--font); fill:#fff; text-anchor:middle; }
+  #you .pulse { fill:var(--blue); transform-origin:center; transform-box:fill-box; animation:pulse 2.2s ease-out infinite; }
+  @keyframes pulse { from { transform:scale(1); opacity:.35; } to { transform:scale(2.1); opacity:0; } }
 
-  /* the database card */
-  .db h2 { font-size:1.15rem; }
-  .db-counts { display:flex; gap:22px; flex-wrap:wrap; margin:12px 0 6px; }
-  .db-counts div b { display:block; font-size:1.6rem; font-weight:700; line-height:1.1; }
-  table.staff { width:100%; border-collapse:collapse; margin-top:10px; font-size:.9rem; }
-  table.staff th { text-align:left; font:500 .74rem "IBM Plex Mono",monospace; color:var(--soft); padding:6px 8px 6px 0; }
-  table.staff td { padding:7px 8px 7px 0; border-top:1px solid var(--mist); vertical-align:middle; }
-  table.staff tr.off td { color:#8a9b96; }
-  table.staff td.num { font-variant-numeric:tabular-nums; }
-  .duty { padding:4px 10px; border-radius:20px; border:1.5px solid var(--ink); background:#fff; font:inherit; font-size:.82rem;
-          color:var(--ink); cursor:pointer; white-space:nowrap; }
-  .duty.on { background:var(--ink); color:var(--paper); }
-  .duty:disabled { cursor:default; opacity:.7; }
+  /* ---------- the step card ---------- */
+  .panel { position:relative; padding:36px; box-shadow:0 2px 4px rgba(22,37,42,.04), 0 18px 40px -18px rgba(22,37,42,.22); }
+  .panel h2 { font-size:2.1rem; font-weight:800; }
+  .panel .lede { margin:10px 0 4px; color:var(--soft); font-size:1.15rem; max-width:52ch; }
+  .stepno { display:block; margin-bottom:6px; font-size:1rem; font-weight:700; color:var(--blue); }
+  .regno { display:inline-flex; align-items:center; gap:8px; margin-bottom:16px; padding:6px 14px; border-radius:999px;
+           background:var(--blue-tint); color:var(--blue-dark); font-size:.95rem; font-weight:700; }
+  .panel > * { animation:enter .45s cubic-bezier(.2,.7,.2,1) both; }
+  .panel > *:nth-child(2) { animation-delay:.04s; } .panel > *:nth-child(3) { animation-delay:.08s; }
+  .panel > *:nth-child(n+4) { animation-delay:.12s; }
+  #result > * { animation:enter .45s cubic-bezier(.2,.7,.2,1) both; }
+  @keyframes enter { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
 
-  /* the step panel */
-  .panel h2 { font-size:1.45rem; }
-  .panel .lede { margin:8px 0 18px; color:var(--soft); line-height:1.55; }
-  .regno { display:inline-block; margin-bottom:10px; padding:3px 10px; border-radius:20px; background:var(--mist);
-           font:500 .8rem "IBM Plex Mono",monospace; }
-  label { display:block; font-weight:500; margin:14px 0 6px; }
-  input[type=text], input[type=number], select { width:100%; padding:11px 12px; border:1.5px solid var(--ink);
-     border-radius:10px; background:#fff; font:inherit; color:var(--ink); }
-  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  .choice { display:flex; gap:8px; flex-wrap:wrap; }
-  .choice button { padding:9px 14px; border-radius:10px; border:1.5px solid var(--ink); background:#fff; font:inherit;
-     color:var(--ink); cursor:pointer; }
-  .choice button.on { background:var(--ink); color:var(--paper); }
-  .go { margin-top:22px; width:100%; padding:14px; border-radius:var(--radius); border:2px solid var(--ink);
-        background:var(--ink); color:var(--paper); font:600 1.02rem "Outfit",sans-serif; cursor:pointer; }
-  .go.light { background:var(--paper); color:var(--ink); }
-  .go:disabled { opacity:.55; cursor:wait; }
-  .go:active, .choice button:active, .duty:active { transform:translateY(1px); }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
-  .group { margin-top:18px; font-weight:600; }
-  .q { padding:12px 0; border-top:1px solid var(--mist); display:flex; justify-content:space-between; align-items:center; gap:12px; }
-  .q.open { display:block; } .q.open input { margin-top:8px; }
-  .q p { margin:0; line-height:1.4; }
-  .error { color:#b3261e; margin-top:10px; min-height:1.2em; }
-  .verdict { display:flex; align-items:center; gap:14px; border-left:6px solid var(--ink); padding-left:14px; }
-  .verdict .big { margin-left:auto; font-size:2.6rem; font-weight:700; }
-  .verdict .t { font-size:1.25rem; font-weight:600; }
-  .bar { display:grid; grid-template-columns:46% 1fr 44px; gap:10px; align-items:center; margin:7px 0; font-size:.92rem; color:var(--soft); }
-  .bar.on { color:var(--ink); font-weight:600; }
-  .bar i { display:block; height:10px; border-radius:5px; background:var(--mist); }
-  .bar i b { display:block; height:100%; border-radius:5px; background:#2a78d6; }
+  /* fields: big, clear, labels always above */
+  label, .label { display:block; margin:26px 0 10px; font-size:1.2rem; font-weight:800; }
+  input[type=text], input[type=number], select { width:100%; min-height:62px; padding:14px 20px; border:2px solid #aab8b0;
+     border-radius:16px; background:var(--card); font-size:1.2rem; color:var(--ink);
+     transition:border-color .15s ease, box-shadow .15s ease; }
+  input::placeholder { color:#6f7e78; }
+  input:hover, select:hover { border-color:var(--soft); }
+  input:focus, select:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 5px rgba(33,82,196,.18); }
+  input[aria-invalid=true] { border-color:var(--error); box-shadow:0 0 0 5px rgba(180,48,47,.14); }
+  select { appearance:none; padding-right:52px; cursor:pointer;
+     background:var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='11'%3E%3Cpath d='M2 2l7 7 7-7' fill='none' stroke='%2316252a' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 20px center; }
+  .count { float:right; font-weight:500; font-size:1rem; color:var(--soft); font-variant-numeric:tabular-nums; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+
+  /* choices: separate round buttons */
+  .choice { display:flex; flex-wrap:wrap; gap:12px; }
+  .choice button { flex:1 1 0; min-width:0; min-height:60px; padding:12px 16px; white-space:nowrap; border:2px solid #aab8b0; border-radius:999px;
+     background:var(--card); color:var(--ink); font-size:1.15rem; font-weight:700; cursor:pointer;
+     transition:background-color .15s ease, border-color .15s ease, color .15s ease; }
+  .choice button:hover { border-color:var(--blue); background:var(--blue-tint); }
+  .choice button.on { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .choice button.on::before { content:"✓  "; }
+
+  /* the main button */
+  .go { display:flex; align-items:center; justify-content:center; gap:12px; margin-top:32px; width:100%; min-height:64px;
+        padding:16px 28px; border:0; border-radius:999px; background:var(--blue); color:#fff; font-size:1.25rem; font-weight:800;
+        cursor:pointer; box-shadow:0 8px 20px -8px rgba(33,82,196,.55); transition:background-color .15s ease, transform .1s ease; }
+  .go:hover { background:var(--blue-dark); }
+  .go:active { transform:translateY(1px); }
+  .go.light { background:var(--card); color:var(--blue-dark); border:2px solid var(--blue); box-shadow:none; }
+  .go.light:hover { background:var(--blue-tint); }
+  .go:disabled { cursor:wait; }
+  .go.loading::before { content:""; width:20px; height:20px; border:3px solid rgba(255,255,255,.4); border-top-color:#fff;
+     border-radius:50%; animation:spin .7s linear infinite; }
+  .go.light.loading::before { border-color:rgba(33,82,196,.25); border-top-color:var(--blue); }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .textlink { display:block; margin:18px auto 0; padding:10px; border:0; background:none; font-size:1.05rem; font-weight:700;
+              color:var(--soft); text-decoration:underline; text-underline-offset:4px; cursor:pointer; }
+  .textlink:hover { color:var(--ink); }
+  button:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline:4px solid var(--blue); outline-offset:3px; }
+  .error { color:var(--error); font-weight:700; font-size:1.1rem; margin:14px 0 0; }
+  .error:empty { margin:0; }
+  .error:not(:empty)::before { content:"⚠  "; }
+
+  /* ---------- the questionnaire: one colour per section ---------- */
+  .section { margin-top:28px; padding:22px 22px 8px; border-radius:var(--round); }
+  .section-head { display:flex; align-items:center; gap:14px; }
+  .section-head .icon { display:grid; place-items:center; flex:none; width:44px; height:44px; border-radius:50%; color:#fff; }
+  .section-head h3 { font-size:1.35rem; font-weight:800; }
+  .section-head p { margin:2px 0 0; font-size:1rem; color:var(--soft); }
+  .sec-danger { background:var(--rose-tint); } .sec-danger .icon { background:var(--rose); } .sec-danger h3 { color:#8c2322; }
+  .sec-doctor { background:var(--violet-tint); } .sec-doctor .icon { background:var(--violet); } .sec-doctor h3 { color:#46358f; }
+  .sec-pain { background:var(--amber-tint); } .sec-pain .icon { background:#c27400; } .sec-pain h3 { color:#7a4700; }
+  .q { padding:18px 0; border-top:1px solid rgba(22,37,42,.1); }
+  .section-head + .q { margin-top:14px; }
+  .q p, .q label { margin:0 0 12px; font-size:1.2rem; font-weight:700; line-height:1.4; }
+  .q .choice button:not(.on) { background:#fff; }
+  .sec-danger .choice button.on[data-v="Yes"] { background:var(--rose); border-color:var(--rose); }
+  .sec-doctor input { background:#fff; }
+
+  /* pain: eleven big numbers from green to red */
+  .pain { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
+  .pain button { min-height:64px; padding:0; border:2px solid transparent; border-radius:16px; font-size:1.25rem; font-weight:800;
+                 color:var(--ink); cursor:pointer; transition:transform .1s ease; }
+  .pain .low { background:#dff2e5; } .pain .mid { background:#ffe7b8; } .pain .high { background:#fcd9d5; }
+  .pain button:hover { border-color:var(--ink); }
+  .pain button.on { color:#fff; transform:scale(1.08); box-shadow:0 6px 14px -6px rgba(0,0,0,.4); }
+  .pain .low.on { background:#1d7a52; } .pain .mid.on { background:#b06a00; } .pain .high.on { background:#b4302f; }
+  .pain-ends { display:flex; justify-content:space-between; margin:10px 0 0; font-size:1rem; font-weight:600; color:var(--soft); }
+  .pain-now { display:inline-block; margin-left:8px; padding:2px 12px; border-radius:999px; background:#fff; font-size:1.05rem; }
+
+  /* ---------- results ---------- */
+  .measured { margin:22px 0 12px; padding:14px 18px; border-radius:16px; background:var(--page); font-size:1.05rem; }
+  .verdict { display:flex; align-items:center; gap:18px; padding:22px; border-radius:var(--round); border:2px solid;
+             animation:pop .45s cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes pop { from { opacity:0; transform:scale(.96); } }
+  .verdict .num { display:grid; place-items:center; flex:none; width:68px; height:68px; border-radius:50%; color:#fff;
+                  font-size:2.2rem; font-weight:800; }
+  .verdict .t { font-size:1.6rem; font-weight:800; }
+  .verdict .who { display:inline-block; margin-top:6px; padding:4px 12px; border-radius:999px; background:#fff;
+                  font-size:.98rem; font-weight:700; color:var(--blue-dark); }
+  .bars { margin-top:18px; }
+  .bar { display:grid; grid-template-columns:80px 1fr 52px; gap:12px; align-items:center; margin:10px 0; font-size:1.05rem; color:var(--soft); }
+  .bar.on { color:var(--ink); font-weight:800; }
+  .bar i { display:block; height:14px; border-radius:999px; background:#e7ece8; overflow:hidden; }
+  .bar i b { display:block; height:100%; border-radius:999px; background:var(--blue); transform-origin:left;
+             animation:grow .8s .15s cubic-bezier(.2,.7,.2,1) both; }
+  @keyframes grow { from { transform:scaleX(0); } }
   .bar span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
-  .note { margin-top:14px; padding:12px 14px; border-radius:10px; border:1.5px solid var(--mist); line-height:1.5; }
-  .note.red { border-color:var(--accent); }
-  .line-row { display:grid; grid-template-columns:34px 1fr; gap:10px; align-items:center; padding:9px 12px; margin-top:8px;
-     border:1px solid var(--mist); border-left:6px solid var(--mist); border-radius:0 10px 10px 0; background:#fff; }
-  .line-row.you { outline:2.5px solid var(--accent); }
-  .line-row .pos { font-size:1.3rem; font-weight:700; text-align:center; }
-  .tag { display:inline-block; margin-left:6px; padding:0 7px; border:1px solid var(--mist); border-radius:10px; font-size:.75rem; }
-  .tag.red { border-color:var(--accent); }
-  dl.hand { display:grid; grid-template-columns:minmax(110px, 46%) 1fr; gap:6px 14px; margin:12px 0 0; }
-  dl.hand dt { color:var(--soft); } dl.hand dd { margin:0; }
-  .left, .left > *, .panel { min-width:0; }
+  .note { margin-top:18px; padding:18px 20px; border-radius:var(--round); background:var(--page); font-size:1.08rem; line-height:1.5; }
+  .note.red { background:var(--rose-tint); color:#7d1f1e; }
+  .note .choice { flex-direction:column; margin-top:12px; }
+  .note .choice button { text-align:left; white-space:normal; }
+
+  /* ---------- waiting room ---------- */
+  .place { display:flex; align-items:center; gap:20px; margin:18px 0 6px; padding:20px 22px; border-radius:var(--round);
+           background:var(--blue-tint); }
+  .place .num { display:grid; place-items:center; flex:none; width:84px; height:84px; border-radius:50%; background:var(--blue);
+                color:#fff; font-size:2.6rem; font-weight:800; animation:pop .5s cubic-bezier(.3,1.4,.5,1) both; }
+  .place p { margin:0; font-size:1.15rem; color:var(--blue-dark); }
+  .place p b { display:block; font-size:1.5rem; color:var(--ink); }
+  .place .clock { margin-left:auto; text-align:right; font-size:.95rem; color:var(--soft); }
+  .place .clock b { display:block; font-size:1.4rem; color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  .tips { margin:22px 0 8px; padding:22px; border-radius:var(--round); background:var(--mint-tint); }
+  .tips .section-head .icon { background:var(--mint); }
+  .tips .section-head h3 { color:#155c3d; }
+  .tips ul { margin:14px 0 0; padding-left:26px; font-size:1.12rem; line-height:1.5; }
+  .tips li { margin:8px 0; }
+  .tips .safety { list-style:none; padding:0; margin-top:16px; display:grid; gap:8px; }
+  .tips .safety li { margin:0; padding:12px 16px; border-radius:16px; background:#fff; font-weight:700; }
+  .tips .safety li::before { content:"!"; display:inline-grid; place-items:center; width:26px; height:26px; margin-right:10px;
+     border-radius:50%; background:var(--rose); color:#fff; font-size:.95rem; font-weight:800; }
+  .tips .source { margin:14px 0 0; font-size:.95rem; color:var(--soft); }
+
+  .line-title { margin:26px 0 4px; font-size:1.3rem; font-weight:800; }
+  .line-row { display:grid; grid-template-columns:48px 1fr; gap:14px; align-items:center; padding:14px 18px; margin-top:10px;
+              border-radius:18px; background:var(--card); border:2px solid var(--line); }
+  .line-row.you { border-color:var(--blue); background:var(--blue-tint); }
+  .line-row .pos { display:grid; place-items:center; width:44px; height:44px; border-radius:50%; font-size:1.25rem; font-weight:800; color:#fff; }
+  .line-row .who-line { font-size:1.1rem; font-weight:700; }
+  .line-row .hint { margin-top:2px; }
+  .tag { display:inline-block; margin-left:6px; padding:1px 10px; border-radius:999px; background:var(--page); font-size:.88rem; font-weight:700; }
+  .tag.red { background:var(--rose-tint); color:#8c2322; }
+
+  .demo { margin-top:28px; padding:20px; border:2px dashed #b9c5bd; border-radius:var(--round); }
+  .demo .hint { margin:0; }
+  .demo .go { margin-top:12px; min-height:56px; font-size:1.1rem; }
+
+  dl.hand { display:grid; grid-template-columns:minmax(120px, 38%) 1fr; gap:10px 18px; margin:14px 0 0; font-size:1.08rem; }
+  dl.hand dt { color:var(--soft); } dl.hand dd { margin:0; font-weight:600; }
+  .panel h3.sub { margin-top:28px; font-size:1.35rem; font-weight:800; }
+
+  /* ---------- behind the scenes and footer ---------- */
+  .bottom-db { padding-bottom:28px; }
+  details.db { padding:0; }
+  details.db summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:14px; padding:22px 28px;
+                       font-size:1.15rem; font-weight:800; }
+  details.db summary::-webkit-details-marker { display:none; }
+  details.db summary::before { content:"+"; display:grid; place-items:center; flex:none; width:34px; height:34px; border-radius:50%;
+     background:var(--blue-tint); color:var(--blue); font-size:1.3rem; }
+  details.db[open] summary::before { content:"–"; }
+  details.db summary span { font-weight:500; font-size:1rem; color:var(--soft); }
+  .db-body { padding:0 28px 26px; }
+  .db-counts { display:flex; gap:32px; flex-wrap:wrap; margin:8px 0 10px; }
+  .db-counts div b { display:block; font-size:1.8rem; font-weight:800; line-height:1.1; }
+  .db-counts .mono { font-size:.95rem; color:var(--soft); }
   .table-wrap { overflow-x:auto; }
-  /* On a phone: floor plan first, then the step you are on, then the database. */
-  @media (max-width: 900px) {
-    main { grid-template-columns:minmax(0, 1fr); }
-    .left { display:contents; }
-    .plan { order:1; } .panel { order:2; } .db { order:3; }
+  table.staff { width:100%; border-collapse:collapse; margin-top:14px; font-size:1rem; }
+  table.staff th { text-align:left; font-size:.92rem; color:var(--soft); padding:10px 12px 10px 0; border-bottom:2px solid var(--line); }
+  table.staff td { padding:10px 12px 10px 0; border-top:1px solid var(--line); vertical-align:middle; }
+  table.staff tr.off td { color:#7b8a83; }
+  table.staff td.num { font-variant-numeric:tabular-nums; }
+  .mono { font-variant-numeric:tabular-nums; }
+  .duty { min-height:40px; padding:6px 16px; border-radius:999px; border:2px solid #b9c5bd; background:var(--card);
+          font-size:.95rem; font-weight:700; color:var(--soft); cursor:pointer; white-space:nowrap; }
+  .duty.on { background:var(--mint-tint); border-color:var(--mint); color:#155c3d; }
+  .duty:disabled { cursor:default; opacity:.75; }
+  footer.bottom { border-top:1px solid var(--line); background:var(--card); }
+  footer.bottom .wrap { display:flex; flex-wrap:wrap; gap:10px 28px; padding-top:22px; padding-bottom:26px; font-size:1rem; color:var(--soft); }
+  footer.bottom .disclaimer { color:var(--ink); font-weight:700; }
+  footer.bottom a { color:var(--blue-dark); font-weight:700; }
+
+  .panel, .plan { min-width:0; }
+
+  /* ---------- smaller screens ---------- */
+  @media (max-width: 960px) {
+    main.wrap { grid-template-columns:minmax(0,1fr); }
+    .plan { position:static; }
+    .steps { border-radius:24px; }
+    .steps span { flex-direction:column; gap:6px; padding:8px 4px; font-size:.88rem; border-radius:18px; }
+  }
+  @media (max-width: 640px) {
+    body { font-size:1.125rem; }
+    .size { margin-left:0; }
+    .card, .panel { padding:22px; }
+    .panel h2 { font-size:1.75rem; }
+    .steps { gap:4px; padding:6px; }
+    .steps span { font-size:.78rem; min-height:64px; }
+    .row { grid-template-columns:1fr; gap:0; }
+    .section { padding:18px 16px 4px; margin-left:-6px; margin-right:-6px; }
+    .pain { gap:8px; }
+    .place { flex-wrap:wrap; } .place .clock { margin-left:0; text-align:left; }
+    details.db summary span { display:none; }
+    details.db summary { padding:18px 22px; } .db-body { padding:0 22px 22px; }
     table.staff { min-width:520px; }
   }
-  @media (prefers-reduced-motion: reduce) { #you, .room { transition:none; } }
+  @media (prefers-reduced-motion: reduce) {
+    #you, .room { transition:none; }
+    .panel > *, #result > *, .bar i b, .verdict, #you .pulse, .place .num { animation:none; }
+  }
 </style>
 </head>
 <body>
 <header class="top">
-  <h1>Meddy <span style="font-weight:400;color:var(--soft)">· Digital hospital</span></h1>
-  <p>You are the patient. Walk through the emergency department and see what the AI does at each stop.</p>
+  <div class="wrap">
+    <div class="brand">
+      <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+        <rect width="44" height="44" rx="14" fill="#2152c4"/>
+        <path d="M18 10h8v8h8v8h-8v8h-8v-8h-8v-8h8z" fill="#fff"/>
+      </svg>
+      <div><h1>Meddy</h1><small>Digital hospital, your triage buddy</small></div>
+    </div>
+    <p>You are the patient. Walk through the emergency department and see what Meddy does at each stop.</p>
+    <button class="size" id="size" type="button" aria-pressed="false"><span aria-hidden="true">A+</span>Larger text</button>
+  </div>
 </header>
 
-<main>
-  <div class="left">
-    <section class="card plan">
-      <svg viewBox="0 0 640 400" role="img" aria-labelledby="plan-title">
-        <title id="plan-title">Floor plan: entrance, check-in, nurse station, waiting room, doctor rooms and resuscitation bay</title>
-        <rect x="4" y="4" width="632" height="392" rx="16" fill="#eef3ed" stroke="#12322e" stroke-width="2"/>
-        <path class="path" d="M40 210 H120 V120 H330 V290 H470 M330 120 H470 V80 M470 290 V250"/>
-        <g><rect id="room-1" class="room" x="18" y="160" width="92" height="100" rx="10"/>
-           <text class="room-label" x="64" y="186" text-anchor="middle">Entrance</text>
-           <text class="room-sub" x="64" y="202" text-anchor="middle">registration</text></g>
-        <g><rect id="room-2" class="room" x="130" y="40" width="130" height="92" rx="10"/>
-           <text class="room-label" x="195" y="66" text-anchor="middle">Check-in</text>
-           <text class="room-sub" x="195" y="82" text-anchor="middle">questionnaire</text></g>
-        <g><rect id="room-3" class="room" x="280" y="40" width="130" height="92" rx="10"/>
-           <text class="room-label" x="345" y="66" text-anchor="middle">Nurse station</text>
-           <text class="room-sub" x="345" y="82" text-anchor="middle">AI suggests a level</text></g>
-        <g><rect id="room-4" class="room" x="150" y="230" width="260" height="140" rx="10"/>
-           <text class="room-label" x="280" y="256" text-anchor="middle">Waiting room</text>
-           <text class="room-sub" x="280" y="272" text-anchor="middle">electronic line, by urgency</text>
-           <g id="seats"></g></g>
-        <g><rect id="room-6" class="room" x="440" y="30" width="180" height="92" rx="10"/>
-           <text class="room-label" x="530" y="56" text-anchor="middle">Resuscitation bay</text>
-           <text class="room-sub" x="530" y="72" text-anchor="middle">levels 1 and 2</text></g>
-        <g><rect id="room-5" class="room" x="440" y="150" width="180" height="220" rx="10"/>
-           <text class="room-label" x="530" y="176" text-anchor="middle">Doctor rooms</text>
-           <text class="room-sub" x="530" y="192" text-anchor="middle">matched from the database</text>
-           <text class="room-sub" id="doctor-line" x="530" y="336" text-anchor="middle"></text></g>
-        <g id="you" transform="translate(64 228)"><circle r="15"/><text y="3.5">YOU</text></g>
-      </svg>
-      <div class="steps" id="steps"></div>
-    </section>
+<div class="wrap"><nav class="steps" id="steps" aria-label="Your visit"></nav></div>
 
-    <section class="card db" aria-live="polite">
-      <h2>Hospital database</h2>
-      <div class="db-counts" id="db-counts"></div>
-      <p class="mono" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
-      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
-        <tbody id="staff"></tbody></table></div>
-    </section>
-  </div>
+<main class="wrap">
+  <section class="card plan" aria-labelledby="plan-heading">
+    <h2 id="plan-heading">Where you are in the hospital</h2>
+    <svg viewBox="0 0 640 400" role="img" aria-labelledby="plan-title">
+      <title id="plan-title">Floor plan: entrance, check-in, nurse station, waiting room, doctor rooms and resuscitation bay</title>
+      <rect class="floor" x="2" y="2" width="636" height="396" rx="22" stroke-width="2"/>
+      <path class="path" d="M40 210 H120 V120 H330 V290 H470 M330 120 H470 V80 M470 290 V250"/>
+      <g><rect id="room-1" class="room" x="18" y="160" width="92" height="100" rx="14"/>
+         <text class="room-label" x="64" y="186" text-anchor="middle">Entrance</text>
+         <text class="room-sub" x="64" y="203" text-anchor="middle">registration</text></g>
+      <g><rect id="room-2" class="room" x="130" y="40" width="130" height="92" rx="14"/>
+         <text class="room-label" x="195" y="66" text-anchor="middle">Check-in</text>
+         <text class="room-sub" x="195" y="83" text-anchor="middle">questionnaire</text></g>
+      <g><rect id="room-3" class="room" x="280" y="40" width="130" height="92" rx="14"/>
+         <text class="room-label" x="345" y="66" text-anchor="middle">Nurse</text>
+         <text class="room-sub" x="345" y="83" text-anchor="middle">Meddy suggests a level</text></g>
+      <g><rect id="room-4" class="room" x="150" y="230" width="260" height="140" rx="14"/>
+         <text class="room-label" x="280" y="256" text-anchor="middle">Waiting room</text>
+         <text class="room-sub" x="280" y="273" text-anchor="middle">most urgent first</text>
+         <g id="seats"></g></g>
+      <g><rect id="room-6" class="room" x="440" y="30" width="180" height="92" rx="14"/>
+         <text class="room-label" x="530" y="58" text-anchor="middle">Resuscitation</text>
+         <text class="room-sub" x="530" y="75" text-anchor="middle">levels 1 and 2</text></g>
+      <g><rect id="room-5" class="room" x="440" y="150" width="180" height="220" rx="14"/>
+         <text class="room-label" x="530" y="176" text-anchor="middle">Doctor rooms</text>
+         <text class="room-sub" x="530" y="193" text-anchor="middle">the right doctor for you</text>
+         <text class="room-sub" id="doctor-line" x="530" y="336" text-anchor="middle"></text></g>
+      <g id="you" transform="translate(64 228)"><circle class="pulse" r="17"/><circle r="17"/><text y="3.5">YOU</text></g>
+    </svg>
+  </section>
 
   <section class="card panel" id="panel" aria-live="polite"></section>
 </main>
 
+<div class="wrap bottom-db">
+  <details class="card db" aria-live="polite">
+    <summary>Behind the scenes: the hospital database <span>doctors on duty and today's visits</span></summary>
+    <div class="db-body">
+      <div class="db-counts" id="db-counts"></div>
+      <p class="hint" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
+      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
+        <tbody id="staff"></tbody></table></div>
+    </div>
+  </details>
+</div>
+
+<footer class="bottom">
+  <div class="wrap">
+    <span class="disclaimer">This project is a prototype and is not medical advice.</span>
+    <span>Made by Koch Team</span>
+    <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
+  </div>
+</footer>
+
 <script>
-const STOPS = ["Entrance", "Check-in", "Nurse station", "Waiting room", "Doctor"];
+const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
-const LEVEL_COLOUR = { 1:"#d03b3b", 2:"#d03b3b", 3:"#ec835a", 4:"#0ca30c", 5:"#0ca30c" };
+const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
+const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
 const LEVEL_ICON = { 1:"⚠", 2:"⚠", 3:"▲", 4:"✓", 5:"✓" };
+const ICON = {
+  danger: `<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l10 18H2z" fill="none" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/><path d="M12 10v5M12 18v.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>`,
+  doctor: `<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/></svg>`,
+  pain:   `<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-8-5-8-11a4.5 4.5 0 018-2.8A4.5 4.5 0 0120 9c0 6-8 11-8 11z" fill="none" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/></svg>`,
+  comfort:`<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 13a7 7 0 0014 0M8 9h.01M16 9h.01" stroke="#fff" stroke-width="2.4" stroke-linecap="round" fill="none"/></svg>`,
+};
+// Comfort tips for the waiting room, one set per kind of complaint (the same topics as the danger questions).
+// Comfort only: positions, breathing, rest, asking staff. Never medicine, food or a diagnosis.
+// Written with an AI assistant from common first-aid advice and not yet checked by a clinician.
+const TIPS = {
+  "Cardiology": ["Sit upright or half-reclined and keep still. Don't walk around.",
+                 "Loosen anything tight around your chest and neck.",
+                 "Breathe slowly: in through your nose for 4, out through your mouth for 6."],
+  "Respiratory medicine": ["Sit upright and lean slightly forward, with your hands resting on your knees.",
+                           "Breathe out slowly through pursed lips, as if blowing out a candle.",
+                           "If you carry your own inhaler, show it to the nurse."],
+  "Neurology": ["Sit or lie where you can't fall, and stand up slowly.",
+                "Rest somewhere quiet, and close your eyes if the light bothers you.",
+                "Keep someone with you if you can. Don't drive yourself home."],
+  "Trauma and orthopaedics": ["Keep the injured part still, and raised if you can.",
+                              "Ask the desk for a cold pack. Wrap it in a cloth and use it for 15 to 20 minutes at a time.",
+                              "If a wound is bleeding, press on it firmly with a clean cloth.",
+                              "Don't sit or lean on the sore part. Find a position that takes the weight off it."],
+  "Gastroenterology and surgery": ["Lie on your side or curl up in whatever position eases the pain.",
+                                   "Ask the desk for a sick bag and keep it close.",
+                                   "Slow, deep breaths can help you relax through cramps."],
+  "Eye, ear, nose and throat": ["Don't rub your eye. Keep it closed or lightly covered.",
+                                "For a nosebleed: sit up, lean forward and pinch the soft part of your nose for 10 minutes.",
+                                "If something is stuck in your eye, ear or nose, don't try to remove it yourself."],
+  "Urology and kidney": ["Moving around or changing position often helps with this kind of pain.",
+                         "Tell the desk before you go to the toilet, so you don't miss your turn.",
+                         "Ask the desk whether you may use a warm pack on your back or side."],
+  "Obstetrics and gynaecology": ["Lie on your left side with a pillow between your knees if that is more comfortable.",
+                                 "Keep a pad on, so the staff can see how much you are bleeding.",
+                                 "Tell the nurse straight away if you are, or could be, pregnant."],
+  "General medicine": ["Rest, and stand up slowly if you feel light-headed.",
+                       "If you feel cold or shivery, ask the desk for a blanket.",
+                       "Note when it started and which medicines you take, ready for the doctor."],
+};
+const SAFETY = ["Don't take any medicine until a nurse says it's OK.",
+                "Don't eat or drink until a nurse says it's OK.",
+                "Tell the staff straight away if you feel worse."];
 const panel = document.getElementById("panel");
 const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:0, injury:false, alert:"Alert",
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null });
@@ -174,19 +427,43 @@ async function api(path, body) {
   return response.json();
 }
 
+// Larger text, for people with poor sight. Remembered in this browser when storage is allowed.
+const sizeButton = document.getElementById("size");
+function setLarge(on) {
+  document.documentElement.classList.toggle("large", on);
+  sizeButton.setAttribute("aria-pressed", on);
+  try { localStorage.setItem("meddy-large", on ? "1" : "0"); } catch (e) {}
+}
+try { if (localStorage.getItem("meddy-large") === "1") setLarge(true); } catch (e) {}
+sizeButton.addEventListener("click", () => setLarge(sizeButton.getAttribute("aria-pressed") !== "true"));
+
+// Loading state while the server works: a spinner and a message in the pressed button.
+function busy(button, text) {
+  button.dataset.label = button.textContent;
+  button.disabled = true; button.classList.add("loading"); button.textContent = text;
+}
+function idle(button) {
+  if (!button || !button.dataset.label) return;
+  button.disabled = false; button.classList.remove("loading"); button.textContent = button.dataset.label;
+}
+const stepNo = (n) => `<span class="stepno">Step ${n} of 5</span>`;
+const sectionHead = (kind, title, note) => `<div class="section-head"><span class="icon">${ICON[kind]}</span>
+  <div><h3>${title}</h3>${note ? `<p>${note}</p>` : ""}</div></div>`;
+
 // ---------------------------------------------------------------- floor plan and database card
 function walkTo(stop, room) {
   const [x, y] = SPOT[room || stop];
   document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
   for (let i = 1; i <= 6; i++) document.getElementById("room-" + i).classList.toggle("on", i === (room || stop));
   document.getElementById("steps").innerHTML = STOPS.map((name, i) =>
-    `<span class="${i + 1 === stop ? "on" : i + 1 < stop ? "done" : ""}">${i + 1}. ${name}</span>`).join("");
+    `<span class="${i + 1 === stop ? "on" : i + 1 < stop ? "done" : ""}"${i + 1 === stop ? ' aria-current="step"' : ""}>` +
+    `<b>${i + 1 < stop ? "✓" : i + 1}</b>${name}</span>`).join("");
 }
 function drawSeats(count) {
   let html = "";
   for (let i = 0; i < 12; i++) {
     const x = 180 + (i % 6) * 40, y = 300 + Math.floor(i / 6) * 34;
-    html += `<rect class="seat ${i < count ? "taken" : ""}" x="${x - 11}" y="${y - 11}" width="22" height="22" rx="6"/>`;
+    html += `<rect class="seat ${i < count ? "taken" : ""}" x="${x - 12}" y="${y - 12}" width="24" height="24" rx="8"/>`;
   }
   document.getElementById("seats").innerHTML = html;
 }
@@ -212,8 +489,8 @@ document.getElementById("staff").addEventListener("click", async (event) => {
   refreshDatabase();
 });
 
-function choice(id, options, value) {
-  return `<div class="choice" id="${id}">` + options.map((o) =>
+function choice(id, options, value, labelledBy) {
+  return `<div class="choice" id="${id}" role="group"${labelledBy ? ` aria-labelledby="${labelledBy}"` : ""}>` + options.map((o) =>
     `<button type="button" data-v="${esc(o)}" class="${o === value ? "on" : ""}" aria-pressed="${o === value}">${esc(o)}</button>`).join("") + "</div>";
 }
 function bindChoice(id, onPick) {
@@ -223,44 +500,55 @@ function bindChoice(id, onPick) {
     onPick(button.dataset.v);
   });
 }
-const regTag = () => `<span class="regno">Registration no. ${me.reg}${me.ticket ? " · ticket " + me.ticket : ""}</span>`;
+const regTag = () => `<span class="regno">Registration no. ${me.reg}${me.ticket ? ", ticket " + me.ticket : ""}</span>`;
+const painWord = (n) => n === 0 ? "No pain" : n <= 3 ? "Mild" : n <= 6 ? "Moderate" : n <= 9 ? "Severe" : "Worst possible";
 
 // ---------------------------------------------------------------- 1. entrance
 function entrance() {
   walkTo(1);
   panel.innerHTML = `
-    <h2>1. You arrive</h2>
-    <p class="lede">Tell the hospital what is wrong, in your own words. Play any patient you like. No name is asked for;
-    your visit gets a registration number in the hospital database.</p>
-    <label for="complaint">What is wrong?</label>
-    <input type="text" id="complaint" maxlength="200" placeholder="for example: chest pain since this morning" value="${esc(me.complaint)}">
+    ${stepNo(1)}
+    <h2>You arrive</h2>
+    <p class="lede">Tell us what is wrong, in your own words. We don't ask for your name: your visit gets a number instead.</p>
+    <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
+    <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
     <div class="row">
-      <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" value="${me.age}"></div>
-      <div><label>Sex</label>${choice("sex", ["Female", "Male"], me.sex)}</div>
+      <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" inputmode="numeric" value="${me.age}"></div>
+      <div><span class="label" id="sex-label">Sex</span>${choice("sex", ["Female", "Male"], me.sex, "sex-label")}</div>
     </div>
     <label for="arrival">How did you get here?</label>
     <select id="arrival">${["Walked in", "Private car", "Public ambulance", "Private ambulance"].map((o) =>
       `<option ${o === me.arrival ? "selected" : ""}>${o}</option>`).join("")}</select>
-    <button class="go" id="go">Register and walk to check-in</button>
-    <p class="error" id="error" role="alert"></p>`;
+    <p class="error" id="error" role="alert"></p>
+    <button class="go" id="go">Register and go to check-in</button>`;
   bindChoice("sex", (v) => me.sex = v);
+  const complaintBox = document.getElementById("complaint");
+  complaintBox.focus({ preventScroll: true });
+  complaintBox.addEventListener("input", () => {
+    document.getElementById("count").textContent = complaintBox.value.length + " / 200";
+    complaintBox.removeAttribute("aria-invalid"); document.getElementById("error").textContent = ""; });
+  for (const id of ["complaint", "age"]) document.getElementById(id).addEventListener("keydown", (event) => {
+    if (event.key === "Enter") document.getElementById("go").click(); });
   document.getElementById("go").addEventListener("click", async () => {
     me.complaint = document.getElementById("complaint").value.trim();
     me.age = Number(document.getElementById("age").value);
     me.arrival = document.getElementById("arrival").value;
     const error = document.getElementById("error");
-    if (!me.complaint) { error.textContent = "Please say what is wrong first."; return; }
-    if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Please enter an age between 15 and 110."; return; }
+    for (const id of ["complaint", "age"]) document.getElementById(id).removeAttribute("aria-invalid");
+    if (!me.complaint) { error.textContent = "Tell us what is wrong first.";
+      complaintBox.setAttribute("aria-invalid", "true"); complaintBox.focus(); return; }
+    if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Enter an age between 15 and 110.";
+      document.getElementById("age").setAttribute("aria-invalid", "true"); document.getElementById("age").focus(); return; }
     const go = document.getElementById("go");
-    go.disabled = true; go.textContent = "Building your questionnaire…";
-    walkTo(2);
+    busy(go, "Meddy is preparing your questions…");
     try {
       const data = await api("/api/register", { complaint: me.complaint, age: me.age, sex: me.sex });
       me.reg = data.reg_no; me.topic = data.topic; me.source = data.source;
       me.questions = data.questions.map((q) => ({ ...q, answer: null }));
       refreshDatabase();
       checkin();
-    } catch (e) { error.textContent = e.message; go.disabled = false; go.textContent = "Register and walk to check-in"; walkTo(1); }
+    } catch (e) { error.textContent = "Meddy can't reach the hospital server. Check that it is running, then try again.";
+      idle(go); }
   });
 }
 
@@ -271,25 +559,32 @@ function checkin() {
   const extra = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "extra");
   panel.innerHTML = `
     ${regTag()}
-    <h2>2. Your questionnaire</h2>
-    <p class="lede">Built for your complaint, which the system filed under <b>${esc(me.topic.toLowerCase())}</b>.</p>
-    <div class="group">Danger signs</div>
-    <p class="mono" style="margin:4px 0 0">Chosen from a list written by hand. A yes moves you up the line.</p>
-    ${danger.map(([q, i]) => `<div class="q"><p>${esc(q.question)}</p>${choice("q" + i, ["Yes", "No"], q.answer)}</div>`).join("")}
-    ${extra.length ? `<div class="group">For your doctor</div>
-      <p class="mono" style="margin:4px 0 0">Written just now by an AI model on this computer. Your answers are passed on, and do not change your level.</p>
-      ${extra.map(([q, i]) => `<div class="q open"><label for="x${i}" style="margin:0;font-weight:400">${esc(q.question)}</label>
-        <input type="text" id="x${i}" maxlength="80" value="${esc(q.answer || "")}"></div>`).join("")}`
-      : `<p class="mono" style="margin-top:14px">The AI model is switched off, so there are no extra questions this time.</p>`}
-    <div class="group">About the pain</div>
-    <div class="q"><p>Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No")}</div>
-    <label for="pain">How bad is the pain? <b id="pain-value">${me.pain}</b> of 10</label>
-    <input type="range" id="pain" min="0" max="10" value="${me.pain}" style="width:100%">
+    ${stepNo(2)}
+    <h2>A few questions</h2>
+    <p class="lede">Chosen for your complaint, which Meddy filed under <b>${esc(me.topic.toLowerCase())}</b>.</p>
+    <section class="section sec-danger">
+      ${sectionHead("danger", "Danger signs", "A yes moves you up the line.")}
+      ${danger.map(([q, i]) => `<div class="q"><p id="ql${i}">${esc(q.question)}</p>${choice("q" + i, ["Yes", "No"], q.answer, "ql" + i)}</div>`).join("")}
+    </section>
+    ${extra.length ? `<section class="section sec-doctor">
+      ${sectionHead("doctor", "For your doctor", "Written by an AI model on this computer. Your answers go to the doctor and don't change your place.")}
+      ${extra.map(([q, i]) => `<div class="q"><label for="x${i}">${esc(q.question)}</label>
+        <input type="text" id="x${i}" maxlength="80" value="${esc(q.answer || "")}"></div>`).join("")}
+    </section>` : ""}
+    <section class="section sec-pain">
+      ${sectionHead("pain", "About the pain")}
+      <div class="q"><p id="injury-label">Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No", "injury-label")}</div>
+      <div class="q"><p id="pain-label">How bad is the pain? <span class="pain-now" id="pain-value">${me.pain} · ${painWord(me.pain)}</span></p>
+        <div class="pain" id="pain" role="group" aria-labelledby="pain-label">${Array.from({ length: 11 }, (_, n) =>
+          `<button type="button" data-v="${n}" class="${n <= 3 ? "low" : n <= 6 ? "mid" : "high"} ${n === me.pain ? "on" : ""}"
+             aria-pressed="${n === me.pain}" aria-label="${n}, ${painWord(n)}">${n}</button>`).join("")}</div>
+        <div class="pain-ends" aria-hidden="true"><span>0: no pain</span><span>10: worst pain</span></div></div>
+    </section>
     <button class="go" id="go">Go to the nurse</button>`;
   danger.forEach(([, i]) => bindChoice("q" + i, (v) => me.questions[i].answer = v));
   bindChoice("injury", (v) => me.injury = v === "Yes");
-  document.getElementById("pain").addEventListener("input", (e) => {
-    me.pain = Number(e.target.value); document.getElementById("pain-value").textContent = me.pain; });
+  bindChoice("pain", (v) => { me.pain = Number(v);
+    document.getElementById("pain-value").textContent = `${me.pain} · ${painWord(me.pain)}`; });
   document.getElementById("go").addEventListener("click", () => {
     extra.forEach(([, i]) => me.questions[i].answer = document.getElementById("x" + i).value.trim() || null);
     nurse();
@@ -301,25 +596,30 @@ function nurse() {
   walkTo(3);
   panel.innerHTML = `
     ${regTag()}
-    <h2>3. Nurse station</h2>
-    <p class="lede">The nurse measures your blood pressure, pulse, breathing, temperature and oxygen. You cannot measure
-    these yourself, so choose how your patient is doing.</p>
-    <label>Vital signs</label>${choice("vitals", ["Normal", "Feverish", "Unstable"], me.vitals[0].toUpperCase() + me.vitals.slice(1))}
-    <label for="alert">How alert are you?</label>
+    ${stepNo(3)}
+    <h2>The nurse</h2>
+    <p class="lede">The nurse measures your blood pressure, pulse, breathing, temperature and oxygen.
+    In this demo, you choose how the patient is doing.</p>
+    <span class="label" id="vitals-label">Vital signs</span>${choice("vitals", ["Normal", "Feverish", "Unstable"], me.vitals[0].toUpperCase() + me.vitals.slice(1), "vitals-label")}
+    <label for="alert">How alert is the patient?</label>
     <select id="alert">${["Alert", "Responds to voice", "Responds to pain", "Unresponsive"].map((o) =>
       `<option ${o === me.alert ? "selected" : ""}>${o}</option>`).join("")}</select>
     <button class="go" id="go">Measure and assess</button>
     <p class="error" id="error" role="alert"></p>
     <div id="result"></div>`;
   bindChoice("vitals", (v) => me.vitals = v.toLowerCase());
-  document.getElementById("go").addEventListener("click", async () => {
+  document.getElementById("go").addEventListener("click", async (event) => {
     me.alert = document.getElementById("alert").value;
+    const go = event.currentTarget;
+    busy(go, "Measuring and assessing…");
     try {
       me.result = await api("/api/triage", { reg_no: me.reg, complaint: me.complaint, age: me.age, sex: me.sex,
         arrival: me.arrival, injury: me.injury, alert: me.alert, pain: me.pain, vitals: me.vitals,
         answers: me.questions.map(({ question, answer, kind }) => ({ question, answer, kind })) });
+      idle(go);
       showLevel();
-    } catch (e) { document.getElementById("error").textContent = e.message; }
+    } catch (e) { idle(go);
+      document.getElementById("error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again."; }
   });
 }
 function showLevel() {
@@ -327,29 +627,30 @@ function showLevel() {
   document.getElementById("go").textContent = "Measure again";
   document.getElementById("go").className = "go light";
   document.getElementById("result").innerHTML = `
-    <div class="mono" style="margin:16px 0 10px">Measured: blood pressure ${v.SBP}/${v.DBP}, pulse ${v.HR}, breathing ${v.RR},
-      temperature ${v.BT}, oxygen ${v.Saturation}%</div>
-    <div class="verdict" style="border-color:${LEVEL_COLOUR[r.level]}">
-      <span style="font-size:1.7rem;color:${LEVEL_COLOUR[r.level]}">${LEVEL_ICON[r.level]}</span>
-      <div><div class="t">Level ${r.level} · ${r.name}</div><div class="mono">suggested by the AI, confirmed by the nurse</div></div>
-      <div class="big">${r.level}</div>
+    <p class="measured">Measured: blood pressure <b>${v.SBP}/${v.DBP}</b>, pulse <b>${v.HR}</b>, breathing <b>${v.RR}</b>,
+      temperature <b>${v.BT}°C</b>, oxygen <b>${v.Saturation}%</b></p>
+    <div class="verdict" style="border-color:${LEVEL_COLOUR[r.level]};background:${LEVEL_TINT[r.level]}">
+      <span class="num" style="background:${LEVEL_COLOUR[r.level]}" aria-hidden="true">${r.level}</span>
+      <div><div class="t">${LEVEL_ICON[r.level]} Level ${r.level}: ${r.name}</div>
+        <span class="who">Meddy's suggestion. The nurse decides.</span></div>
     </div>
-    <div style="margin-top:14px">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
+    <div class="bars">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
       <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
       <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
     <div class="note"><b>Department: <span id="dept-name">${esc(r.department)}</span>.</b>
-      <span class="mono" id="dept-how">Decided by the ${esc(r.department_how)}.</span>
-      <div class="mono" style="margin-top:8px">The nurse can change it. Percentages are the trained model's estimate:</div>
-      <div class="choice" id="dept" style="margin-top:6px">${r.department_options.map((o) =>
+      <span class="hint" id="dept-how">Decided by the ${esc(r.department_how)}.</span>
+      <div class="hint" style="margin-top:8px">The nurse can change it. Percentages are the trained model's estimate:</div>
+      <div class="choice" id="dept">${r.department_options.map((o) =>
         `<button type="button" data-v="${esc(o.department)}" class="${o.department === r.department ? "on" : ""}"
-           aria-pressed="${o.department === r.department}">${esc(o.department)} \u00B7 ${Math.round(o.chance * 100)}%</button>`).join("")}</div></div>
-    ${r.unsure ? `<div class="note">The AI is not sure: no level reaches 60%. The nurse decides.</div>` : ""}
-    ${r.danger ? `<div class="note red">You answered yes to a danger-sign question. Within the waiting room this counts as half a level more urgent.</div>` : ""}
+           aria-pressed="${o.department === r.department}">${esc(o.department)}, ${Math.round(o.chance * 100)}%</button>`).join("")}</div></div>
+    ${r.unsure ? `<div class="note">Meddy isn't sure about this patient: no level reaches 60%. The nurse decides.</div>` : ""}
+    ${r.danger ? `<div class="note red">You answered yes to a danger-sign question. In the waiting room this counts as half a level more urgent.</div>` : ""}
     <button class="go" id="seat">${urgent ? "Go straight to the resuscitation bay" : "Take a seat in the waiting room"}</button>`;
   bindChoice("dept", (v) => { r.department = v; r.department_how = "nurse, from the suggested departments";
     document.getElementById("dept-name").textContent = v;
     document.getElementById("dept-how").textContent = "Chosen by the nurse from the suggested departments."; });
-  document.getElementById("seat").addEventListener("click", async () => {
+  document.getElementById("seat").addEventListener("click", async (event) => {
+    busy(event.currentTarget, urgent ? "Calling the resuscitation team…" : "Finding your place in line…");
     const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger,
       department: r.department, department_how: r.department_how });
     me.ticket = data.ticket;
@@ -359,29 +660,52 @@ function showLevel() {
 }
 
 // ---------------------------------------------------------------- 4. waiting room
+// Only patients at levels 3-5 reach the waiting room, so only they see comfort tips.
+function tipsCard() {
+  const tips = TIPS[me.topic] || TIPS["General medicine"];
+  return `<section class="tips" aria-labelledby="tips-title">
+    <div class="section-head"><span class="icon">${ICON.comfort}</span><div><h3 id="tips-title">While you wait: tips from Meddy</h3></div></div>
+    <ul>${tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+    <ul class="safety">${SAFETY.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+    <p class="source">Comfort tips for ${esc(me.topic.toLowerCase())} complaints, written with an AI assistant from
+    common first-aid advice. Not yet checked by a clinician. Not medical advice.</p>
+  </section>`;
+}
 function waiting(data, message) {
   walkTo(4);
   const mine = data.patients.find((p) => p.reg_no === me.reg);
   const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
   panel.innerHTML = `
     ${regTag()}
-    <h2>4. Waiting room</h2>
-    <p class="lede">You are number <b>${mine.position}</b> of ${data.patients.length} in line.
-    The line is ordered by urgency, then by how long each person has waited.</p>
+    ${stepNo(4)}
+    <h2>Waiting room</h2>
+    <div class="place">
+      <span class="num" aria-hidden="true">${mine.position}</span>
+      <p>Your place in line<b>Number ${mine.position} of ${data.patients.length}</b></p>
+      <div class="clock">Demo clock<b>${hours}:${minutes}</b></div>
+    </div>
+    <p class="lede">The most urgent patients go first. The longer you wait, the further you move up.</p>
     ${message ? `<div class="note">${message}</div>` : ""}
-    <div class="mono" style="margin-top:12px">Demo clock ${hours}h ${minutes}m</div>
-    ${data.patients.map((p) => `<div class="line-row ${p.reg_no === me.reg ? "you" : ""}" style="border-left-color:${LEVEL_COLOUR[p.level]}">
-      <div class="pos">${p.position}</div>
-      <div><b>${p.ticket}</b> · ${esc(p.who)}${p.reg_no === me.reg ? " (you)" : ""}
-        <div class="mono">${p.reg_no} · ${LEVEL_ICON[p.level]} Level ${p.level} · ${p.name} · waited ${p.waited} min
+    ${tipsCard()}
+    <h3 class="line-title">The line now</h3>
+    ${data.patients.map((p) => `<div class="line-row ${p.reg_no === me.reg ? "you" : ""}">
+      <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
+      <div><div class="who-line">${p.ticket} · ${esc(p.who)}${p.reg_no === me.reg ? " (you)" : ""}</div>
+        <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${p.name}, waited ${p.waited} min
         ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
       </div>`).join("")}
-    <div class="row">
-      <button class="go light" id="wait">15 minutes pass</button>
-      <button class="go" id="next">Call next patient</button>
+    <div class="demo" role="group" aria-label="Demo controls">
+      <p class="hint"><b>Demo controls</b>, for trying the line.</p>
+      <div class="row">
+        <button class="go light" id="wait">15 minutes pass</button>
+        <button class="go" id="next">Call next patient</button>
+      </div>
     </div>`;
-  document.getElementById("wait").addEventListener("click", async () => waiting(await api("/api/line/wait", {}), "Fifteen minutes passed."));
-  document.getElementById("next").addEventListener("click", async () => {
+  document.getElementById("wait").addEventListener("click", async (event) => {
+    busy(event.currentTarget, "Moving the clock…");
+    waiting(await api("/api/line/wait", {}), "Fifteen minutes passed."); });
+  document.getElementById("next").addEventListener("click", async (event) => {
+    busy(event.currentTarget, "Calling…");
     const result = await api("/api/line/next", {});
     refreshDatabase();
     if (result.called && result.called.reg_no === me.reg) doctor(result.called);
@@ -393,35 +717,36 @@ function waiting(data, message) {
 function doctor(called) {
   const resus = called.department === "Resuscitation team";
   walkTo(5, resus ? 6 : 5);
-  document.getElementById("doctor-line").textContent = resus ? "" : `${called.doctor} · ${called.room}`;
+  document.getElementById("doctor-line").textContent = resus ? "" : `${called.doctor}, ${called.room}`;
   const r = me.result, v = r.vitals;
   const answers = called.answers.map((a) => `<dt>${esc(a.question)}</dt><dd>${esc(a.answer || "not answered")}</dd>`).join("");
   panel.innerHTML = `
     ${regTag()}
-    <h2>5. ${resus ? "Resuscitation bay" : "Your doctor"}</h2>
+    ${stepNo(5)}
+    <h2>${resus ? "Resuscitation bay" : "Your doctor"}</h2>
     <p class="lede">${esc(called.reason)}</p>
-    <div class="verdict" style="border-color:${LEVEL_COLOUR[called.level]}">
+    <div class="verdict" style="border-color:${LEVEL_COLOUR[called.level]};background:${LEVEL_TINT[called.level]}">
+      <span class="num" style="background:${LEVEL_COLOUR[called.level]}" aria-hidden="true">${called.level}</span>
       <div><div class="t">${esc(called.doctor)}</div>
-      <div class="mono">${called.doctor_reg} · ${esc(called.department)} · ${esc(called.room)}</div></div>
-      <div class="big">${called.level}</div>
+      <div class="hint">${esc(called.department)}, ${esc(called.room)} (${called.doctor_reg})</div></div>
     </div>
-    <h3 style="margin-top:22px">What the doctor already knows</h3>
+    <h3 class="sub">What the doctor already knows</h3>
     <dl class="hand">
       <dt>Visit</dt><dd>${me.reg}, ticket ${called.ticket}, waited ${called.waited} min</dd>
       <dt>Complaint</dt><dd>${esc(me.complaint)}</dd>
       <dt>Patient</dt><dd>${me.age} years, ${me.sex.toLowerCase()}, ${me.arrival.toLowerCase()}</dd>
-      <dt>Level</dt><dd>${r.level} · ${r.name}${r.unsure ? " (AI was not sure)" : ""}</dd>
+      <dt>Level</dt><dd>${r.level}: ${r.name}${r.unsure ? " (Meddy was not sure)" : ""}</dd>
       <dt>Vital signs</dt><dd>${v.SBP}/${v.DBP}, pulse ${v.HR}, breathing ${v.RR}, ${v.BT}°C, oxygen ${v.Saturation}%</dd>
       <dt>Pain</dt><dd>${me.pain} of 10${me.injury ? ", caused by an injury" : ""}</dd>
       ${answers}
     </dl>
-    <div class="note" style="margin-top:22px"><b>What was real here.</b> The level comes from a model tested on 1,267 real patients;
+    <div class="note" style="margin-top:24px"><b>What was real here.</b> The level comes from a model tested on 1,267 real patients;
     it matched experts 68% of the time against 85% for nurses, so a nurse confirms it. The department comes from a second
     model trained on the same patients' real diagnoses, used only when it is at least 70% sure, with a key-word rule
     otherwise. Together they pick the right department 69% of the time, against 67% for the rule alone. The questionnaire and the line are demonstrations and have not been tested. The doctors are made up.
     Not medical advice.</div>
     <button class="go" id="again">Start again as a new patient</button>
-    <button class="go light" id="reset" style="margin-top:10px">Start a new day (reset the database)</button>`;
+    <button class="textlink" id="reset">Start a new day (clears the waiting room)</button>`;
   document.getElementById("again").addEventListener("click", () => { me = fresh(); entrance(); });
   document.getElementById("reset").addEventListener("click", async () => {
     await api("/api/reset", {}); me = fresh(); document.getElementById("doctor-line").textContent = ""; refreshDatabase(); entrance(); });

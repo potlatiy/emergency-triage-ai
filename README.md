@@ -85,7 +85,7 @@ underneath.
 | Entrance | The visit is registered under its own number | Database |
 | Check-in | A questionnaire for this complaint: three danger-sign questions and two follow-up questions | Danger questions come from a hand-written list chosen by the kind of complaint. The two follow-ups are written on the spot by a small language model running on the same computer |
 | Nurse station | Suggested urgency level | The model tested in this project |
-| Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
+| Waiting room | Your place in line, and comfort tips from Meddy while you wait (levels 3–5 only) | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level. The tips are a hand-written list chosen by the kind of complaint, plus three safety lines for everyone: no medicine and no food or drink until a nurse says so, and tell the staff if you feel worse |
 | Doctor | Department and doctor | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
 The internal database is one SQLite file with three tables: doctors, visits and the questionnaire answers. The
@@ -203,6 +203,7 @@ least 70% sure (about half of patients).
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - Hiding the level from patients is our design choice to avoid panic. We did not test how patients react.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
+- **The waiting-room tips are not checked by a clinician.** We wrote them with an AI assistant from common first-aid advice, kept them to comfort only (positions, breathing, rest, asking staff) and left out medicine and food. Before real use, a doctor or nurse would have to review and approve every tip.
 - **Patients may exaggerate or play things down.** Someone who writes "I am dying" about a sore finger can jump the line, and someone who plays down chest pain can be missed. The model cannot tell. We reduce the risk in three ways: vital signs are measured and not self-reported, the nurse sees every answer and decides, and the check-in screen asks people to describe what they feel and not what they fear. We did not test how well this works. The half-level boost for a "yes" to a danger question could be gamed.
 - **Who measures the vital signs is not solved.** In the demo the nurse types them in. In a real department it could be a self-service blood pressure cuff and finger pulse meter, or an assistant at the door, with people who answered "yes" to a danger question measured first. None of this is built or tested.
 - The waiting times are a simulation with invented arrivals.
