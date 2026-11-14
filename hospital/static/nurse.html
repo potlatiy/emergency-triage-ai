@@ -32,6 +32,9 @@
              background:var(--blue); color:#fff; font-size:2.2rem; font-weight:800; font-variant-numeric:tabular-nums; vertical-align:middle; }
   .summary { margin-top:18px; padding:18px 20px; border-radius:var(--round); background:var(--violet-tint); color:#2f2466; font-size:1.12rem; }
   .summary .hint { display:block; margin-top:6px; color:#46358f; font-size:.95rem; }
+  .words { margin:14px 0 0; padding:16px 20px; border-left:5px solid var(--violet); border-radius:14px; background:var(--violet-tint);
+           color:#2f2466; font-size:1.18rem; font-weight:600; }
+  .words .hint { display:block; margin-top:6px; font-weight:400; color:#46358f; font-size:.95rem; }
   .done { margin-top:18px; padding:22px; border-radius:var(--round); background:var(--mint-tint); color:#12432e; }
   .done h3 { font-size:1.4rem; font-weight:800; }
   .done p { margin:8px 0 0; }
@@ -201,8 +204,18 @@ function facts(card) {
   const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
   const list = [`“${card.complaint}”`, `${card.age} years, ${sexWord(card.sex)}`, card.arrival,
     yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs", card.injury ? "Injury" : null,
-    ...card.answers.filter((a) => a.kind === "extra" && a.answer).map((a) => `${a.label || a.question}: ${a.answer}`)];
+    ...card.answers.filter((a) => a.kind === "extra" && a.answer && a.topic !== "story" && a.answer.length <= 40)
+      .map((a) => `${a.label || a.question}: ${a.answer}`)];
   return `<div class="glance">${list.filter(Boolean).map((f) => `<span>${esc(f)}</span>`).join("")}</div>`;
+}
+// What the patient wrote or answered, word for word: the open question first, then the questions for the doctor.
+function said(card) {
+  const story = card.answers.find((a) => a.topic === "story" && a.answer);
+  const asked = card.answers.filter((a) => a.kind === "extra" && a.answer && a.topic !== "story");
+  if (!story && !asked.length) return "";
+  return `<h3 class="sub">What the patient said</h3>
+    ${story ? `<blockquote class="words">“${esc(story.answer)}”<span class="hint">In their own words, typed at check-in.</span></blockquote>` : ""}
+    ${asked.length ? `<dl class="hand">${asked.map((a) => `<dt>${esc(a.question)}</dt><dd>${esc(a.answer)}</dd>`).join("")}</dl>` : ""}`;
 }
 const ids = (card) => `<div class="ids"><span class="regno">Registration no. ${esc(card.reg_no)}${card.ticket ? ", ticket " + esc(card.ticket) : ""}</span>
   <span class="role staff">Nurse's screen · staff only</span></div>`;
@@ -247,7 +260,8 @@ async function openPatient(reg) {
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
       Waiting for the nurse ${card.waited} min.</p>
     <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
-    <h3 class="sub">What the patient reported</h3>
+    ${said(card)}
+    <h3 class="sub">At a glance</h3>
     ${facts(card)}
     <details class="staffbox" style="margin-top:10px"><summary><span class="summary-text">Every answer from check-in</span></summary>
       <dl class="hand">${answers || "<dt>No answers</dt><dd></dd>"}</dl></details>

@@ -1036,3 +1036,35 @@ def test_the_nurses_summary_is_checked_and_is_none_without_the_model(monkeypatch
 def test_the_nurse_page_is_served():
     page = client.get("/nurse")
     assert page.status_code == 200 and "Nurse" in page.text
+
+
+# ---------------------------------------------------------------- the doctor calls; the patient writes
+
+def test_a_doctor_calls_the_first_patient_of_their_own_department():
+    cardiac = assessed_visit("chest pain since this morning", 67, "Male")
+    client.post("/api/line/join", json={"reg_no": cardiac, "level": 3, "department": "Cardiology"})
+    called = client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"]
+    assert called["reg_no"] == cardiac and called["doctor_reg"] == "DR-1002" and called["room"] == "Room 2"
+    me = client.get(f"/api/me/{cardiac}").json()
+    assert me["status"] == "called" and me["room"] == "Room 2"           # the phone moves on by itself
+    assert cardiac in [p["reg_no"] for p in client.get("/api/doctor/DR-1002/patients").json()["patients"]]
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"] is None   # nobody left
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-9999"}).status_code == 404
+
+
+def test_general_medicine_covers_the_line_when_nobody_of_its_own_waits():
+    line = client.get("/api/line").json()["patients"]
+    general = [p for p in line if core.department_for(p["who"]) == core.DEFAULT_DEPARTMENT]
+    expected = (general or line)[0]["reg_no"]
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-1010"}).json()["called"]["reg_no"] == expected
+
+
+def test_the_patients_own_words_reach_the_nurse_and_the_summary():
+    words = "I was carrying shopping upstairs and my chest went tight, then my arm felt heavy"
+    reg = new_visit()
+    story = {"question": core.OWN_WORDS["question"], "answer": words, "kind": "extra", "topic": "story"}
+    client.post("/api/checkin", json={"reg_no": reg, "answers": [story]})
+    card = client.get(f"/api/nurse/patient/{reg}").json()
+    assert card["answers"][0]["answer"] == words and card["answers"][0]["label"] == "In their own words"
+    report = core._report_for_summary(card["complaint"], card["age"], card["sex"], card["answers"])
+    assert f'in their own words: "{words}"' in report

@@ -62,6 +62,13 @@
           background:var(--page); color:var(--soft); white-space:nowrap; }
   .chip.on { background:var(--mint-tint); color:#155c3d; }
   .chip.off { background:var(--amber-tint); color:#7a4700; }
+  /* "Call my next patient": the first in line for this doctor's department comes in; their phone shows the room */
+  .call { min-height:52px; padding:10px 22px; border:0; border-radius:999px; background:var(--blue); color:#fff;
+          font:inherit; font-size:1.05rem; font-weight:800; cursor:pointer; }
+  .call:hover { background:var(--blue-dark, #173f9c); }
+  .call:disabled { cursor:wait; opacity:.7; }
+  .called-note { flex-basis:100%; margin:0; font-size:1rem; color:var(--soft); }
+  .called-note:empty { display:none; }
   .live { margin-left:auto; display:inline-flex; align-items:center; gap:10px; font-size:.98rem; color:var(--soft); }
   .live i { width:12px; height:12px; border-radius:50%; background:var(--mint); animation:beat 2.4s ease-in-out infinite; }
   .live.down { color:#7d1f1e; font-weight:700; } .live.down i { background:var(--rose); animation:none; }
@@ -186,7 +193,9 @@
   <section class="card me" aria-label="This screen belongs to">
     <div><h2 id="me-name">&nbsp;</h2><p class="where" id="me-where">&nbsp;</p></div>
     <span class="chip" id="me-duty" hidden></span>
+    <button type="button" class="call" id="call">Call my next patient</button>
     <span class="live" id="live"><i aria-hidden="true"></i><span id="live-text">Connecting…</span></span>
+    <p class="called-note" id="called-note" role="status"></p>
   </section>
 </div>
 
@@ -479,6 +488,25 @@ function drawCard() {
     }
   });
 }
+
+// The doctor calls the next patient from the waiting room: the first in line for this department. The patient's
+// phone asks the server every few seconds, so it moves on by itself and tells them which room to go to.
+$("call").addEventListener("click", async () => {
+  const button = $("call"), note = $("called-note");
+  button.disabled = true; note.textContent = "Calling…";
+  try {
+    const response = await fetch("/api/doctor/call", { method:"POST", headers:{ "Content-Type":"application/json" },
+                                                       body:JSON.stringify({ doctor_reg:reg }) });
+    if (!response.ok) throw new Error();
+    const { called } = await response.json();
+    note.textContent = called
+      ? `Ticket ${called.ticket} (${called.who}) is on the way to ${called.room}. Their phone shows the room now.`
+      : "Nobody in the waiting room is waiting for this department right now.";
+    if (called) { selected = called.reg_no; check(); }
+  } catch (error) {
+    note.textContent = "Could not call: the hospital server did not answer. Try again.";
+  } finally { button.disabled = false; }
+});
 
 check();
 setInterval(() => { if (!document.hidden) check(); }, EVERY);

@@ -136,6 +136,10 @@ class Finished(BaseModel):
     reg_no: str
 
 
+class Calling(BaseModel):
+    doctor_reg: str
+
+
 def open_visit(reg_no):
     """The visit for a step at the desk or the nurse station. Refused when the registration number is unknown
     (404) or the patient has already gone to a doctor (409), so no step can be done twice or out of order."""
@@ -330,6 +334,19 @@ def doctor_patients(doctor_reg: str):
     if screen is None:
         raise HTTPException(404, "No doctor with this registration number.")
     return screen
+
+
+@app.post("/api/doctor/call")
+def doctor_call(body: Calling):
+    """The doctor calls their next patient: the first in line for their department. "called" is None when
+    nobody is waiting for this doctor."""
+    try:
+        called = db.call_for_doctor(body.doctor_reg)
+    except LookupError:
+        raise HTTPException(404, "No doctor with this registration number.")
+    if called:
+        called["answers"] = db.answers_for(called["reg_no"])
+    return {"called": called, **db.line()}
 
 
 @app.post("/api/doctor/finish")
