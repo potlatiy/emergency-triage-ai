@@ -374,6 +374,7 @@
     .steps { gap:4px; padding:6px; }
     .steps span { font-size:.78rem; min-height:64px; }
     .row { grid-template-columns:1fr; gap:0; }
+    .panel { order:-1; }        /* on a phone the step comes first; the floor plan is below it */
     .section { padding:18px 16px 4px; margin-left:-6px; margin-right:-6px; }
     .pain { gap:8px; }
     .levels { grid-template-columns:repeat(2,minmax(0,1fr)); } .levels button { min-height:68px; }
@@ -841,7 +842,7 @@ function drawFollowUp() {
     ${extra.map(([q, i]) => `<div class="q"><p id="xl${i}">${esc(q.question)}</p>
       <div class="choice chips" id="x${i}" role="group" aria-labelledby="xl${i}">${q.choices.map((c) =>
         `<button type="button" data-v="${esc(c)}" class="${c === q.chip ? "on" : ""}" aria-pressed="${c === q.chip}">${esc(c)}</button>`).join("")}</div>
-      <input type="text" id="xt${i}" maxlength="120" aria-labelledby="xl${i}" placeholder="Or write it in your own words"
+      <input type="text" id="xt${i}" maxlength="120" aria-labelledby="xl${i}" placeholder="Or write your own answer"
              value="${esc(q.typed || "")}"></div>`).join("")}
   </section>`;
   extra.forEach(([q, i]) => {
