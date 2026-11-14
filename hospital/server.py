@@ -16,7 +16,8 @@ from typing import Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -43,6 +44,20 @@ def lan_ip():
     return None if ip.startswith("127.") else ip
 
 
+@app.exception_handler(RequestValidationError)
+def refused(request, error):
+    """Say what was wrong with a request without echoing the value back: a number such as NaN or a broken
+    character in the rejected value cannot be written as JSON and used to turn the refusal into a crash."""
+    problems = [{"where": [str(part) for part in e["loc"]], "problem": e["msg"]} for e in error.errors()]
+    return JSONResponse({"detail": problems}, status_code=422)
+
+
+@app.exception_handler(UnicodeEncodeError)
+def unreadable_text(request, error):
+    """Text with a broken character cannot be stored. Nothing was saved: the write is undone as a whole."""
+    return JSONResponse({"detail": "The text contains a character that cannot be stored."}, status_code=422)
+
+
 Sex = Literal["Female", "Male"]
 
 
@@ -60,25 +75,28 @@ class Arrival(BaseModel):
 
 
 class Answer(BaseModel):
-    question: str
-    answer: str | None = None
-    kind: str
-    topic: str | None = None        # the history topic of an AI-written question, for the doctor's overview
+    question: str = Field(max_length=300)
+    answer: str | None = Field(default=None, max_length=200)
+    kind: str = Field(max_length=20)
+    topic: str | None = Field(default=None, max_length=30)   # the history topic, for the doctor's overview
 
 
 class Assessment(BaseModel):
     # Every choice is spelled out. An unknown value is refused rather than quietly read as "normal" or "alert":
     # a silent default here would make a sick patient look well.
     reg_no: str
-    complaint: str
-    age: float
-    sex: Sex = "Female"
+    # Who the patient is comes from the registered visit, never from this request: otherwise a level worked
+    # out for "chest pain, 70" could be saved against a visit registered as "sore throat, 20".
+    # The three fields are still accepted so that older pages keep working; they are ignored.
+    complaint: str | None = Field(default=None, max_length=200)
+    age: float | None = None
+    sex: str | None = None
     arrival: Literal["Walked in", "Public ambulance", "Private car", "Private ambulance"] = "Walked in"
     injury: bool = False
     alert: Literal["Alert", "Responds to voice", "Responds to pain", "Unresponsive"] = "Alert"
     pain: int = Field(default=0, ge=0, le=10)
     vitals: Literal["normal", "feverish", "unstable"] = "normal"       # one of core.VITAL_PRESETS
-    answers: list[Answer] = []
+    answers: list[Answer] = Field(default=[], max_length=20)
 
 
 class Joining(BaseModel):
@@ -86,7 +104,7 @@ class Joining(BaseModel):
     level: int = Field(ge=1, le=5)
     danger: bool = False
     department: str | None = None
-    department_how: str | None = None
+    department_how: str | None = Field(default=None, max_length=120)
     # What the nurse did with Meddy's report: accepted it as it was, or checked the patient in person.
     review: Literal["approved", "checked"] | None = None
 
@@ -151,7 +169,7 @@ def register(body: Arrival):
         # One person, one open visit. The answer points to the visit that is already open.
         raise HTTPException(409, {"message": "This card already has an open visit. One person, one visit at a time.",
                                   **already.visit})
-    return {"reg_no": reg_no, **core.questionnaire(body.complaint, use_model=body.use_model)}
+    return {"reg_no": reg_no, "day": db.day(), **core.questionnaire(body.complaint, use_model=body.use_model)}
 
 
 @app.get("/api/follow-up/{reg_no}")
@@ -168,11 +186,12 @@ def follow_up(reg_no: str):
 
 @app.post("/api/triage")
 def triage(body: Assessment):
-    open_visit(body.reg_no)
+    visit = open_visit(body.reg_no)
     vitals = core.VITAL_PRESETS[body.vitals]
     answers = [a.model_dump() for a in body.answers]
     db.save_answers(body.reg_no, answers, body.injury)
-    result = core.assess(body.complaint, body.age, body.sex, body.arrival, body.injury, body.alert, body.pain, vitals)
+    result = core.assess(visit["complaint"], visit["age"], visit["sex"], body.arrival, body.injury, body.alert,
+                         body.pain, vitals)
     # Only the hand-written danger questions can mark a patient; AI-written ones are information only.
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
@@ -196,8 +215,10 @@ def join(body: Joining):
     known_department(body.department)
     if visit["ai_level"] is None:
         raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
-    ticket = db.join_line(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review)
-    called = db.call_next(body.reg_no) if body.level <= 2 else None
+    try:        # the state is checked again inside the database, together with the change (two quick clicks)
+        ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review)
+    except db.AlreadySent:
+        raise HTTPException(409, "This patient has already been sent to a doctor.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"ticket": ticket, "called": called, **db.line()}
@@ -240,7 +261,10 @@ def refer(body: Referral):
     """The nurse sends a critical patient straight to a doctor, past the line. Her reason is required."""
     open_visit(body.reg_no)
     known_department(body.department)
-    return db.refer(body.reg_no, body.level, body.reason, body.department)
+    try:
+        return db.refer(body.reg_no, body.level, body.reason, body.department)
+    except db.AlreadySent:
+        raise HTTPException(409, "This patient has already been sent to a doctor.")
 
 
 @app.get("/api/doctor/{doctor_reg}/patients")

@@ -5,7 +5,7 @@ What is here, and what uses AI:
                    local language model chooses and words for the exact complaint
 2. triage        - the urgency level, from the model tested in the notebook
 3. line order    - who is seen next (plain rules)
-4. department    - which department a complaint belongs to (plain rules)
+4. department    - which department a complaint belongs to (a trained model when it is sure, plain rules otherwise)
 The doctors, the registration numbers and the line itself live in the database (db.py).
 """
 
@@ -63,14 +63,16 @@ breath breathe cough wheeze choke chest heart stomach belly tummy head throat no
 neck back arm leg hand foot feet finger toe knee ankle wrist shoulder elbow hip skin bone
 fever temperature shiver chill sweat dizzy faint weak tired numb tingling
 sick vomit nausea diarrhea diarrhoea constipated pee urine poop stool period pregnant
-fell fall hit cut twist broke broken sprain injure injury accident crash bite bitten stung
+fell fall hit cut twist broke broken sprain injure injury accident crash bit bite bitten stung
 seizure shaking confused unconscious collapse vision blurry blind hearing swallow sleep
 allergy allergic lump wound infection infected pressure tight cramp""".split())
 _NOT_A_SYMPTOM = set("""a an and are as at be both but by can for from had has have her him his how if in into is it its
 me my no not of on or our out she since so than that the their them then there these they this to too up was we
 were what when where which who why will with you your after before about more very still some any just only also
 day days week weeks hour hours month months year years today yesterday morning night ago last left right side old
-both area pt am do go he us ok hi oh im ive id did get got feel feeling felt bad really""".split())
+both area pt am do go he us ok hi oh im ive id did get got feel feeling felt bad really
+type like free open high low status site problem general wall nos state light near post whole upper lower
+change changes finding film copy lab idea sense sudden adult attempt activity""".split())
 
 
 def _words(text):
@@ -88,8 +90,10 @@ def known_words(complaint):
     complaint is written in nurses' shorthand, so that "di" in an Italian sentence does not pass."""
     def known(word):
         forms = {word, word.removesuffix("s"), word.removesuffix("es"), word.removesuffix("ed"),
-                 word.removesuffix("ing"), word.removesuffix("ing") + "e", word.removesuffix("d"),
-                 word.removesuffix("y"), word.removesuffix("ness")}
+                 word.removesuffix("ing"), word.removesuffix("d"), word.removesuffix("y"), word.removesuffix("ness")}
+        if word.endswith("ing"):
+            forms.add(word.removesuffix("ing") + "e")          # "breathing" -> "breathe"
+        forms = {form for form in forms if len(form) >= 3}     # "died" must not become the shorthand "di"
         return bool(forms & _NURSE_WORDS or forms & _EVERYDAY or _SYMPTOM_RULES.search(word))
     words = [w for w in _words(complaint) if w not in _NOT_A_SYMPTOM]
     found = [w for w in words if len(w) >= 3 and known(w)]
@@ -100,8 +104,9 @@ def known_words(complaint):
 
 def vital_warnings(vitals, alert="Alert", pain=0):
     """The warning signs in one patient's measurements, by name. The same rule as in the tests (triage.py)."""
-    row = pd.DataFrame([{**vitals, "Mental": {"Alert": 1}.get(alert, 2), "NRS_pain": pain, "unmeasurable": 0}])
-    table = warning_signs(row)
+    missing = any(value is None for value in vitals.values())
+    row = pd.DataFrame([{**vitals, "Mental": {"Alert": 1}.get(alert, 2), "NRS_pain": pain, "unmeasurable": int(missing)}])
+    table = warning_signs(row.astype(float))
     return [name for name in table.columns if bool(table[name].iloc[0])]
 
 
@@ -112,7 +117,7 @@ def review_advice(result, danger=False):
     the level is 3 to 5 and nothing in the measurements or the answers is a warning. On such patients its
     level was too low as rarely as the nurses' (7%). A suggested level 1 or 2 is also quick: accepting it
     sends the patient in at once, which is the safe direction. The nurse decides either way."""
-    sure = max(result["probabilities"].values())
+    sure = result.get("sure", max(result["probabilities"].values()))
     reasons = []
     if result["unread"]:
         reasons.append("Meddy found no symptom it knows in the complaint")
@@ -149,7 +154,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "NRS_pain": pain,
         "Patients number per hour": _BUSY,
         **vitals,
-        "unmeasurable": 0,
+        "unmeasurable": int(any(value is None for value in vitals.values())),
     }]).astype({c: float for c in NUMBERS})
     probabilities = _model.predict_proba(row)[0]
     # Meddy shows its most likely level (right 68% of the time in our tests). The safety-first level, which
@@ -176,6 +181,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "level": level,
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
+        "sure": float(probabilities.max()),          # unrounded: the 80% rule is decided on this
         "unsure": bool(probabilities.max() < SURE_ENOUGH),
         "careful_level": int(safety_first(probabilities[None, :])[0]),
         # For every level the nurse could give: how sure Meddy is that the patient is more urgent than that,
@@ -190,17 +196,22 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
 # ---------------------------------------------------------------- department and doctor (plain rules)
 
 # Each department: the words in a complaint that send a patient there. First match wins.
+# Short stems are tied to the start of a word (\b) so they cannot match inside another one: "urin" used to
+# match "during", "pee" matched "speech", "arm " matched "warm ", "ear " matched "year ", and a body part
+# followed by a full stop or written in the plural ("my legs.") was missed.
 DEPARTMENTS = [
     ("Obstetrics and gynaecology", r"vagin|pregnan|menstr|period pain|pelvic|labou?r pain|miscarr"),
-    ("Urology and kidney", r"urin|flank|kidney|dysuria|hematuria|testic|scrot|voiding|pee|bladder"),
-    ("Cardiology", r"chest|palpitat|heart|흉통"),
+    ("Urology and kidney", r"\burin|flank|kidney|dysuria|hematuria|testic|scrot|\bvoiding|\bpee(s|d|ing)?\b|(?<!gall)bladder"),
+    ("Cardiology", r"chest|palpitat|\bheart(?!burn)|흉통"),
     ("Respiratory medicine", r"dyspnea|breath|cough|asthma|sputum|hemoptysis|wheez"),
-    ("Neurology", r"headache|dizz|vertigo|weakness|mental|seizure|syncope|numb|dysarthria|faint|stroke|confus"),
-    ("Trauma and orthopaedics", r"wound|fractur|lacerat|burn|injur|sprain|trauma|bite|fall|fell|broke|twist|cut |bleed|"
-                                r"ankle|knee|wrist|shoulder|arm |leg |back pain|hip|finger|foot|hand "),
+    ("Neurology", r"headache|dizz|vertigo|weakness|mental|seizure|syncope|\bnumb(ness|ing)?\b|dysarthria|faint|\bstroke|confus|"
+                  r"speech|slurr|droop"),
+    ("Trauma and orthopaedics", r"wound|fractur|lacerat|\bburn|injur|sprain|trauma|\bbit(e|es|ten)\b|\bfall(s|en)?\b|"
+                                r"\bfell\b|\bbroke|twist|\bcuts?\b|bleed|ankle|knee|wrist|shoulder|\b(fore)?arms?\b|"
+                                r"\blegs?\b|back pain|\bhips?\b|finger|\bfoot\b|\bfeet\b|\bhands?\b"),
     ("Gastroenterology and surgery", r"abd|epigastr|stomach|belly|bowel|vomit|diarrh|nausea|melena|hemateme|stool|"
-                                     r"constipat|ruq|rlq"),
-    ("Eye, ear, nose and throat", r"eye|ocular|visual|vision|ear |throat|nose|epistaxis|foreign body"),
+                                     r"constipat|ruq|rlq|heartburn|reflux|gall ?bladder"),
+    ("Eye, ear, nose and throat", r"\beye|ocular|visual|vision|\bear(s|ache)?\b|throat|\bnose|epistaxis|foreign body"),
 ]
 DEFAULT_DEPARTMENT = "General medicine"
 DEPARTMENT_NAMES = [name for name, _ in DEPARTMENTS] + [DEFAULT_DEPARTMENT]
@@ -315,14 +326,17 @@ def _extra_schema(allowed):
 # Meddy never gives a diagnosis. It suggests an urgency level and a department, and it asks questions; saying
 # what is wrong with the patient is the doctor's job. The prompt tells the model so, and this check enforces
 # it in plain code: a question that speaks of a diagnosis or names a condition is thrown away.
-_BANNED = re.compile(r"\b(you (should|must|need to)|diagnos\w*|names?|address|phone|call an ambulance)\b", re.I)
+_BANNED = re.compile(r"\b(you (should|must|need to)\w*|diagnos\w*|(sur)?names?|address|(tele)?phone|call an ambulance)", re.I)
 _NAMES_A_CONDITION = re.compile(
-    r"\b(heart attack|stroke|cancer|tumou?r|infection|infected|appendicitis|pneumonia|asthma|diabetes|covid|flu|"
-    r"migraine|epilepsy|fracture|broken (bone|arm|leg|rib|wrist|ankle)|blood clot|embolism|sepsis|meningitis|"
-    r"kidney stones?|gallstones?|ulcer|hernia|concussion|angina|arrhythmia|bronchitis)\b", re.I)
+    r"\b(heart attack|heart failure|stroke|cancer|tumou?r|infection|infected|appendicitis|pneumonia|asthma\w*|"
+    r"diabet\w*|covid|flu|migraine|epilep\w*|fracture|broken (bone|arm|leg|rib|wrist|ankle)|blood clot|embolism|"
+    r"sepsis|meningitis|kidney stone|gallstone|ulcer|hernia|concussion|angina|arrhythmia|bronchitis)(s|es|d)?\b", re.I)
+QUESTION_MAX_LETTERS = 120
 # Words in a complaint that already answer a topic, so that topic is not asked again.
-_SAYS_WHEN = re.compile(r"\b(since|ago|yesterday|today|tonight|this morning|last night|for (a|an|one|two|three|\d+) )", re.I)
-_SAYS_COURSE = re.compile(r"\b(getting (worse|better)|worse|comes and goes|on and off)\b", re.I)
+_SAYS_WHEN = re.compile(
+    r"\b(since|ago|yesterday|today|tonight|this (morning|afternoon|evening)|last (night|week|month)|"
+    r"for ((a|an|\w+|\d+) )?(minute|hour|day|week|month|year)s?)\b", re.I)
+_SAYS_COURSE = re.compile(r"\b(getting (\w+ )?(worse|better)|worsening|comes and goes|on and off)\b", re.I)
 _written = {}       # complaints the model has already answered, so a repeated complaint is instant
 
 
@@ -346,9 +360,15 @@ def checked_questions(written, skip=(), complaint=""):
             continue
         if not question.endswith("?") or len(question.split()) > 16 or _BANNED.search(question):
             continue
+        # One short question and nothing else. A statement in front of it ("This is serious. When did it
+        # start?") is where advice or an opinion would hide, so any other sentence mark throws it away.
+        if len(question) > QUESTION_MAX_LETTERS or re.search(r"[.!\n]|\?.", question):
+            continue
         # "Could it be a heart attack?" is a diagnosis in disguise. A condition the patient named themselves
-        # ("asthma attack") may be repeated back: those are the patient's words, not Meddy's opinion.
-        if any(found.group(0).lower() not in complaint.lower() for found in _NAMES_A_CONDITION.finditer(question)):
+        # ("asthma attack") may be repeated back: those are the patient's words, not Meddy's opinion. It has to
+        # be the same whole word: "flu" is not in "reflux".
+        said = lambda name: re.search(rf"\b{re.escape(name)}\b", complaint, re.I)       # noqa: E731
+        if any(not said(found.group(0)) for found in _NAMES_A_CONDITION.finditer(question)):
             continue
         kept.append({"question": question, "topic": topic})
         used.add(topic)
@@ -396,12 +416,15 @@ def follow_up(complaint, injury=False, use_model=True):
     Written by the AI for this exact complaint when it answers in time, and the standard wording otherwise,
     so the doctor always gets the same kind of overview. The answers are information only: they never
     change the level or the place in line, because nobody has tested them."""
-    key = complaint.strip().lower()
     skip = already_answered(complaint, injury)
+    text = complaint.strip().lower()
+    key = (text, frozenset(skip))             # the same words with other allowed topics need other questions
     source, questions = "list", None
-    if use_model and key:
+    if use_model and text:
         try:
             if key not in _written:
+                if len(_written) >= 500:
+                    _written.clear()          # a demo never gets here; a long-running copy must not grow for ever
                 _written[key] = questions_from_model(complaint, skip)
             source, questions = "ai", _written[key]
         except Exception:
