@@ -26,6 +26,13 @@ her to look again. When no level is likely enough, it says it is not sure.
 
 ![The demo: the nurse's inputs on the left, the suggested level and the second-check warning on the right](images/demo.jpg)
 
+**The electronic line.** Each checked patient can be added to a live line ordered by urgency. Levels 1 and 2
+always go first. A less urgent patient moves up one level for every 45 minutes waited, so nobody is stuck at the
+back. Flagged patients are marked for the nurse, and each patient's phone shows their place in line, never a
+promised time. The line is ordered by plain rules; the AI only supplies each patient's level.
+
+![The electronic line: six waiting patients ordered by urgency, with the chest pain patient first](images/queue.jpg)
+
 ## What we added
 
 Our own idea. Three things go beyond a standard classifier:
@@ -82,7 +89,8 @@ levels, 13 with the nurses' levels and 7 with the experts'. Ordering by urgency 
 
 **Limits.** One country, 1,267 patients and only 26 at level 1. The waiting times are a simulation with
 invented arrivals. The three-to-one safety weighting is our choice. We did not test whether real nurses would
-act on the flags.
+act on the flags. The electronic line is a demonstration: its 45-minute rule is our choice and it was not tried
+in a real department.
 
 ## What we'd do next
 

@@ -90,8 +90,9 @@ def card(level, probabilities, why, nurse_level):
 
 
 def check(complaint, age, sex, arrival, injury, mental, pain, sbp, dbp, hr, rr, temp, oxygen, nurse_level):
+    """Returns the result card and a short record of the patient that can be added to the queue."""
     if not complaint or age is None:
-        return '<div class="hr-card hr-empty">Please enter the complaint and the age.</div>'
+        return '<div class="hr-card hr-empty">Please enter the complaint and the age.</div>', None
     patient = pd.DataFrame([{
         TEXT: complaint.lower(), "Age": age, "Sex": SEX[sex], "Arrival mode": ARRIVAL[arrival],
         "Injury": 2 if injury else 1, "Mental": MENTAL[mental], "Pain": int((pain or 0) > 0), "NRS_pain": pain or 0,
@@ -101,7 +102,111 @@ def check(complaint, age, sex, arrival, injury, mental, pain, sbp, dbp, hr, rr, 
     probabilities = model.predict_proba(patient)
     level = int(safety_first(probabilities)[0])
     nurse = int(nurse_level[-1]) if nurse_level and nurse_level != "Not given yet" else None
-    return card(level, probabilities[0], reasons(patient, level), nurse)
+    record = {"who": f"{complaint}, {int(age)}, {sex[0]}", "level": level,
+              "flag": bool(nurse and level < nurse), "unsure": bool(probabilities.max() < SURE_ENOUGH)}
+    return card(level, probabilities[0], reasons(patient, level), nurse), record
+
+
+# ---------------------------------------------------------------- the electronic queue
+# Plain rules, not AI: the AI supplies each patient's level, the rules below order the line.
+
+MOVE_UP_EVERY = 45      # a level 3-5 patient gains one level of priority per 45 minutes waited
+
+
+def new_queue():
+    return {"clock": 0, "next": 1, "patients": []}
+
+
+def place(patient, clock):
+    """Sorting key: smaller goes first. Levels 1-2 always come before everyone else."""
+    waited = clock - patient["arrived"]
+    if patient["level"] <= 2:
+        return (0, patient["level"], patient["arrived"])
+    # Waiting moves a patient up among the non-emergency patients, never ahead of an emergency.
+    return (1, patient["level"] - waited / MOVE_UP_EVERY, patient["arrived"])
+
+
+def ordered(queue):
+    return sorted(queue["patients"], key=lambda p: place(p, queue["clock"]))
+
+
+def phone_message(position, patient):
+    if patient["level"] <= 2:
+        return "Staff are coming to you now"
+    ending = {1: "st", 2: "nd", 3: "rd"}.get(position if position < 20 else position % 10, "th")
+    return f"You are {position}{ending} in line"
+
+
+def board(queue, note=""):
+    line = ordered(queue)
+    hours, minutes = divmod(queue["clock"], 60)
+    top = f"""<div class="q-top"><b>{len(line)} waiting</b><span>Demo clock: {hours}h {minutes:02d}m</span></div>"""
+    if note:
+        top += f'<div class="q-note">{note}</div>'
+    if not line:
+        return f"""<div class="hr-card">{top}<div class="hr-empty">The line is empty. Check a patient and press
+        <b>Add to the line</b>, or load the sample patients.</div></div>"""
+    rows = ""
+    for position, p in enumerate(line, 1):
+        waited = queue["clock"] - p["arrived"]
+        tags = ""
+        if p["flag"]:
+            tags += '<span class="q-tag q-red">&#9873; re-check asked</span>'
+        if p["unsure"]:
+            tags += '<span class="q-tag">AI not sure</span>'
+        if p["level"] >= 3 and waited >= MOVE_UP_EVERY:
+            tags += '<span class="q-tag">&#9650; moved up for waiting</span>'
+        rows += f"""<div class="q-row" style="border-left-color:{COLOUR[p['level']]}">
+          <div class="q-pos">{position}</div>
+          <div><div class="q-who">{p['ticket']} · {p['who']}</div>
+               <div class="hr-note">{ICON[p['level']]} Level {p['level']} · {NAMES[p['level']]} · waited {waited} min {tags}</div></div>
+          <div class="q-phone"><span class="hr-note">Patient's phone shows</span><br>{phone_message(position, p)}</div>
+        </div>"""
+    return f'<div class="hr-card">{top}{rows}</div>'
+
+
+def add_to_line(record, queue):
+    if not record:
+        return queue, board(queue, "Check a patient first, then add them to the line.")
+    ticket = f"A{queue['next']:03d}"
+    queue["patients"].append({**record, "ticket": ticket, "arrived": queue["clock"]})
+    queue["next"] += 1
+    return queue, board(queue, f"{ticket} joined the line at level {record['level']}.")
+
+
+def call_next(queue):
+    line = ordered(queue)
+    if not line:
+        return queue, board(queue)
+    first = line[0]
+    queue["patients"] = [p for p in queue["patients"] if p["ticket"] != first["ticket"]]
+    return queue, board(queue, f"{first['ticket']} ({first['who']}) was called to a doctor.")
+
+
+def pass_time(queue):
+    queue["clock"] += 15
+    return queue, board(queue, "15 minutes passed.")
+
+
+SAMPLE_LINE = [      # made-up patients, already given a level, arriving a few minutes apart
+    ("sore throat, 31, F", 5, False, 0), ("ankle pain, 24, F", 4, False, 4), ("abd pain, 45, M", 3, False, 9),
+    ("headache, 52, F", 4, True, 12), ("dizziness, 58, F", 3, False, 20), ("ant. chest pain, 67, M", 2, True, 26),
+]
+
+
+def load_sample(queue):
+    queue = new_queue()
+    for who, level, flag, arrived in SAMPLE_LINE:
+        queue["patients"].append({"who": who, "level": level, "flag": flag, "unsure": False,
+                                  "ticket": f"A{queue['next']:03d}", "arrived": arrived})
+        queue["next"] += 1
+    queue["clock"] = 30
+    return queue, board(queue, "Six sample patients loaded. The chest pain patient arrived last and is first in line.")
+
+
+def clear_line(queue):
+    queue = new_queue()
+    return queue, board(queue)
 
 
 CSS = """
@@ -127,6 +232,18 @@ CSS = """
 .hr-dir {font-size: 0.85rem; text-align: right; font-variant-numeric: tabular-nums;}
 .hr-why {margin: 0; padding-left: 20px; font-size: 0.93rem; line-height: 1.7;}
 .hr-foot {margin-top: 18px; line-height: 1.5;}
+.q-top {display: flex; justify-content: space-between; margin-bottom: 6px;}
+.q-top span {color: var(--body-text-color-subdued); font-size: 0.9rem;}
+.q-note {font-size: 0.9rem; margin-bottom: 10px; color: var(--body-text-color-subdued);}
+.q-row {display: grid; grid-template-columns: 40px 1fr 190px; align-items: center; gap: 12px; padding: 10px 12px;
+        margin-top: 8px; border: 1px solid var(--border-color-primary); border-left: 6px solid; border-radius: 0 8px 8px 0;
+        background: var(--background-fill-primary);}
+.q-pos {font-size: 1.5rem; font-weight: 700; text-align: center;}
+.q-who {font-weight: 650;}
+.q-phone {font-size: 0.92rem; text-align: right;}
+.q-tag {display: inline-block; margin-left: 8px; padding: 0 7px; border: 1px solid var(--border-color-primary);
+        border-radius: 10px; font-size: 0.78rem; white-space: nowrap;}
+.q-red {border-color: #d03b3b;}
 """
 
 EMPTY = """<div class="hr-card hr-empty">Enter what the nurse records at the door and press
@@ -141,43 +258,70 @@ EXAMPLES = [
 
 with gr.Blocks(title="Triage second check") as demo:
     gr.Markdown("# A second check for emergency triage\n"
-                "The nurse records the complaint and vital signs at the door. The AI suggests an urgency level "
-                "and warns when a patient looks more urgent than the level they were given.", elem_id="hr-title")
-    with gr.Row(equal_height=False):
-        with gr.Column(scale=5):
-            gr.Markdown("### At the door")
-            complaint = gr.Textbox(label="Complaint, in a few words", placeholder="for example: chest pain")
-            with gr.Row():
-                age = gr.Number(label="Age", value=50, minimum=15, maximum=110)
-                sex = gr.Radio(list(SEX), label="Sex", value="Female")
-            with gr.Row():
-                arrival = gr.Dropdown(list(ARRIVAL), label="How they arrived", value="Walked in")
-                mental = gr.Dropdown(list(MENTAL), label="Alertness", value="Alert")
-            with gr.Row():
-                pain = gr.Slider(0, 10, step=1, value=0, label="Pain score (0 = none)")
-                injury = gr.Checkbox(label="Caused by an injury")
-            gr.Markdown("### Vital signs")
-            with gr.Row():
-                sbp = gr.Number(label="Blood pressure, upper", value=125)
-                dbp = gr.Number(label="Blood pressure, lower", value=80)
-            with gr.Row():
-                hr = gr.Number(label="Heart rate", value=80)
-                rr = gr.Number(label="Breathing rate", value=18)
-            with gr.Row():
-                temp = gr.Number(label="Temperature (°C)", value=36.6)
-                oxygen = gr.Number(label="Oxygen level (%)", info="Leave empty if not measured", value=None)
-            nurse_level = gr.Dropdown(["Not given yet"] + [f"Level {l}" for l in LEVELS], value="Not given yet",
-                                      label="Level the nurse gave", info="Optional. Used for the second check.")
-            button = gr.Button("Check urgency", variant="primary", size="lg")
-        with gr.Column(scale=6):
-            gr.Markdown("### Suggestion")
-            result = gr.HTML(EMPTY)
-            examples_slot = gr.Column()
+                "The nurse records the complaint and vital signs at the door. The AI suggests an urgency level, "
+                "warns when a patient looks more urgent than the level they were given, and the electronic line "
+                "orders everyone by urgency.", elem_id="hr-title")
+    queue = gr.State(new_queue())
+    last_patient = gr.State(None)
+
+    with gr.Tab("1. Check a patient"):
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=5):
+                gr.Markdown("### At the door")
+                complaint = gr.Textbox(label="Complaint, in a few words", placeholder="for example: chest pain")
+                with gr.Row():
+                    age = gr.Number(label="Age", value=50, minimum=15, maximum=110)
+                    sex = gr.Radio(list(SEX), label="Sex", value="Female")
+                with gr.Row():
+                    arrival = gr.Dropdown(list(ARRIVAL), label="How they arrived", value="Walked in")
+                    mental = gr.Dropdown(list(MENTAL), label="Alertness", value="Alert")
+                with gr.Row():
+                    pain = gr.Slider(0, 10, step=1, value=0, label="Pain score (0 = none)")
+                    injury = gr.Checkbox(label="Caused by an injury")
+                gr.Markdown("### Vital signs")
+                with gr.Row():
+                    sbp = gr.Number(label="Blood pressure, upper", value=125)
+                    dbp = gr.Number(label="Blood pressure, lower", value=80)
+                with gr.Row():
+                    hr = gr.Number(label="Heart rate", value=80)
+                    rr = gr.Number(label="Breathing rate", value=18)
+                with gr.Row():
+                    temp = gr.Number(label="Temperature (°C)", value=36.6)
+                    oxygen = gr.Number(label="Oxygen level (%)", info="Leave empty if not measured", value=None)
+                nurse_level = gr.Dropdown(["Not given yet"] + [f"Level {l}" for l in LEVELS], value="Not given yet",
+                                          label="Level the nurse gave", info="Optional. Used for the second check.")
+                button = gr.Button("Check urgency", variant="primary", size="lg")
+            with gr.Column(scale=6):
+                gr.Markdown("### Suggestion")
+                result = gr.HTML(EMPTY)
+                add_button = gr.Button("Add to the line", size="lg")
+                added = gr.Markdown("")
+                examples_slot = gr.Column()
+
+    with gr.Tab("2. Electronic line"):
+        gr.Markdown("Everyone waiting, ordered by urgency. Levels 1 and 2 always go first. A less urgent patient moves "
+                    f"up one level for every {MOVE_UP_EVERY} minutes waited, so nobody is stuck at the back. "
+                    "Patients see their place on their phone, never a promised time. "
+                    "The order is set by plain rules; the AI only supplies each level.")
+        with gr.Row():
+            sample_button = gr.Button("Load sample patients")
+            time_button = gr.Button("15 minutes pass")
+            next_button = gr.Button("Call next patient", variant="primary")
+            clear_button = gr.Button("Clear the line")
+        line_view = gr.HTML(board(new_queue()))
 
     inputs = [complaint, age, sex, arrival, injury, mental, pain, sbp, dbp, hr, rr, temp, oxygen, nurse_level]
-    button.click(check, inputs, result)
+    button.click(check, inputs, [result, last_patient])
+    add_button.click(add_to_line, [last_patient, queue], [queue, line_view]).then(
+        lambda record: "Added. Open **2. Electronic line** to see the order." if record else
+        "Check a patient first.", last_patient, added)
+    sample_button.click(load_sample, queue, [queue, line_view])
+    time_button.click(pass_time, queue, [queue, line_view])
+    next_button.click(call_next, queue, [queue, line_view])
+    clear_button.click(clear_line, queue, [queue, line_view])
     with examples_slot:
-        gr.Examples(EXAMPLES, inputs, result, fn=check, run_on_click=True, label="Example patients (made up)",
+        gr.Examples(EXAMPLES, inputs, [result, last_patient], fn=check, run_on_click=True,
+                    label="Example patients (made up)",
                     example_labels=["Chest pain, nurse said level 3", "Ankle injury, nurse said level 4",
                                     "Dizziness, no nurse level yet"])
 
