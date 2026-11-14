@@ -299,6 +299,21 @@
 
   /* ---------- behind the scenes and footer ---------- */
   .bottom-db { padding-bottom:28px; }
+  .db-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px 18px; margin-top:18px; }
+  .db-actions .go { width:auto; margin:0; min-height:52px; font-size:1.05rem; }
+  .db-actions .hint { margin:0; }
+
+  /* the QR code on the entrance step */
+  .qr { display:flex; align-items:center; gap:18px; margin-top:14px; padding:16px; border-radius:16px; background:var(--blue-tint); }
+  .qr[hidden] { display:none; }
+  .qr-code { flex:none; width:164px; height:164px; padding:8px; border-radius:12px; background:#fff; }
+  .qr-code img, .qr-code canvas { display:block; width:148px !important; height:148px !important; }
+  .qr h3 { margin:0 0 4px; font-size:1.15rem; font-weight:800; }
+  .qr .hint { margin:0; }
+  .qr-url { margin:8px 0 0; font-weight:800; font-size:1.05rem; color:var(--blue-dark); word-break:break-all; }
+  .qr.off .qr-code { display:none; }
+  .qr.off { background:var(--page); }
+  @media (max-width: 640px) { .qr { display:none; } }   /* already on a phone: nothing to scan */
   details.db { padding:0; }
   details.db summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:14px; padding:22px 28px;
                        font-size:1.15rem; font-weight:800; }
@@ -398,13 +413,21 @@
          <g id="seats"></g></g>
       <g><rect id="room-6" class="room" x="440" y="30" width="180" height="92" rx="14"/>
          <text class="room-label" x="530" y="58" text-anchor="middle">Resuscitation</text>
-         <text class="room-sub" x="530" y="75" text-anchor="middle">levels 1 and 2</text></g>
+         <text class="room-sub" x="530" y="75" text-anchor="middle">care right away</text></g>
       <g><rect id="room-5" class="room" x="440" y="150" width="180" height="220" rx="14"/>
          <text class="room-label" x="530" y="176" text-anchor="middle">Doctor rooms</text>
          <text class="room-sub" x="530" y="193" text-anchor="middle">the right doctor for you</text>
          <text class="room-sub" id="doctor-line" x="530" y="336" text-anchor="middle"></text></g>
       <g id="you" transform="translate(64 228)"><circle class="pulse" r="17"/><circle r="17"/><text y="3.5">YOU</text></g>
     </svg>
+    <div class="qr" id="qr" hidden>
+      <div class="qr-code" id="qr-code" aria-hidden="true"></div>
+      <div>
+        <h3>Check in from your phone</h3>
+        <p class="hint" id="qr-text">Scan the code with your phone's camera. It opens this entrance on your own screen.</p>
+        <p class="qr-url" id="qr-url"></p>
+      </div>
+    </div>
   </section>
 
   <section class="card panel" id="panel" aria-live="polite"></section>
@@ -416,6 +439,10 @@
     <div class="db-body">
       <div class="db-counts" id="db-counts"></div>
       <p class="hint" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
+      <div class="db-actions">
+        <button class="go light" id="new-day" type="button">Start a new day</button>
+        <p class="hint">Clears the waiting room and the doctors' lists, and starts this walk-through again.</p>
+      </div>
       <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
         <tbody id="staff"></tbody></table></div>
     </div>
@@ -552,6 +579,7 @@ function walkTo(stop, room) {
   const [x, y] = SPOT[room || stop];
   document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
   for (let i = 1; i <= 6; i++) document.getElementById("room-" + i).classList.toggle("on", i === (room || stop));
+  document.getElementById("qr").hidden = stop !== 1;
   document.getElementById("steps").innerHTML = STOPS.map((name, i) =>
     `<span class="${i + 1 === stop ? "on" : i + 1 < stop ? "done" : ""}"${i + 1 === stop ? ' aria-current="step"' : ""}>` +
     `<b>${i + 1 < stop ? "✓" : i + 1}</b>${name}</span>`).join("");
@@ -1108,12 +1136,42 @@ function doctor(called) {
     comes from a second model trained on the same patients' real diagnoses, used only when it is at least 70% sure, with a key-word rule
     otherwise. Together they pick the right department 69% of the time, against 67% for the rule alone. The questions, the overview and
     the line are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
-    <button class="go" id="again">Start again as a new patient</button>
-    <button class="textlink" id="reset">Start a new day (clears the waiting room)</button>`;
+    <button class="go" id="again">Start again as a new patient</button>`;
   document.getElementById("again").addEventListener("click", () => { me = fresh(); forget(); entrance(); });
-  document.getElementById("reset").addEventListener("click", async () => {
-    await api("/api/reset", {}); me = fresh(); forget(); document.getElementById("doctor-line").textContent = ""; refreshDatabase(); entrance(); });
 }
+
+// "Start a new day" lives in Behind the scenes (spec, screen 7), not on the patient's screens.
+document.getElementById("new-day").addEventListener("click", async (event) => {
+  const button = event.currentTarget;              // kept: currentTarget is empty again after the await
+  busy(button, "Starting a new day…");
+  try {
+    await api("/api/reset", {}); me = fresh(); forget(); document.getElementById("doctor-line").textContent = "";
+    refreshDatabase(); entrance();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } finally { idle(button); }
+});
+
+// The QR code on the entrance step: the address phones on the same Wi-Fi can open.
+// The server gives it only when started with MEDDY_LAN=1; the code is drawn by a small library from cdnjs.
+async function showAddress() {
+  let url = null;
+  try { url = (await api("/api/address")).url; } catch (e) {}
+  const box = document.getElementById("qr");
+  if (!url) {
+    box.classList.add("off");
+    document.getElementById("qr-text").textContent =
+      "Phones can join when the hospital runs on your Wi-Fi: start the server with MEDDY_LAN=1.";
+    return;
+  }
+  document.getElementById("qr-url").textContent = url.replace(/^http:\/\//, "").replace(/\/$/, "");
+  const script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+  script.onload = () => new QRCode(document.getElementById("qr-code"),
+    { text: url, width: 148, height: 148, colorDark: "#16252a", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
+  script.onerror = () => box.classList.add("off");   // offline: the address in words still shows
+  document.head.appendChild(script);
+}
+showAddress();
 
 refreshDatabase();
 start();

@@ -230,6 +230,8 @@ least 70% sure (about half of patients).
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000. For AI-written questions,
   install Ollama and run `ollama pull gemma3:4b` first; without it the hand-written questions are used.
+- **Check in from a phone:** start it with `MEDDY_LAN=1 python hospital/server.py`. The entrance step then shows a
+  QR code that phones on the same Wi-Fi can scan. Without `MEDDY_LAN=1` the server only answers this computer.
 
 ## Sources
 
