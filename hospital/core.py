@@ -476,22 +476,46 @@ Rules:
 - Use only the facts given. Add nothing. If the patient wrote something in their own words, use it.
 - Never guess the cause: no "likely", "probably", "possibly", "due to", "suggests". Never name a disease or a diagnosis.
 - Never give advice and never say how serious it is.
-- Keep "or" as "or": a yes to "Does the pain spread to your arm, jaw or back?" means "to the arm, jaw or back", not all three.
+- When a question offered several things joined by "or", keep the "or": the patient said yes to one of them, not to all.
 - Plain English, no lists, no headings."""
 SUMMARY_MAX_WORDS = 50
 # A sentence that guesses a cause is dropped: the summary repeats what the patient said, it does not explain it.
 # Tried on 20 made-up patients with Gemma 3 1B: the first prompt guessed causes ("likely due to a recent injury")
 # and wrote three sentences, which threw the whole summary away; this prompt and these checks kept all 20.
 _GUESSES = re.compile(r"\b(likely|probably|possibly|perhaps|due to|suggest\w*|indicat\w*|may be|might be|could be)\b", re.I)
+# A small model copies words from its instructions or invents them: with an example in the prompt, Gemma 3 1B told
+# the nurse that a patient with knee pain had pain "spreading to the arm, jaw and back". A sentence that names a
+# part of the body or a symptom the patient never mentioned is dropped.
+_BODY_AND_SYMPTOMS = re.compile(r"\b(arms?|jaw|back|chest|head|neck|legs?|knees?|ankles?|feet|foot|hands?|fingers?|wrists?|hips?|shoulders?|stomach|belly|abdom\w*|eyes?|ears?|nose|throat|skin|breath\w*|bleed\w*|blood|vomit\w*|fever|faint\w*|dizz\w*|numb\w*|rash|swell\w*|swollen|cough\w*|sweat\w*|nause\w*|seiz\w*|speech|slurred|confus\w*)\b", re.I)
+
+
+def _without_guess(sentence):
+    """The sentence with a guessed cause cut off: "Knee pain after a fall, likely due to an injury." becomes
+    "Knee pain after a fall." Nothing is left when the guess was the whole sentence ("It is probably nothing.")."""
+    if not _GUESSES.search(sentence):
+        return sentence
+    kept = re.sub(r"[,;]?\s*\b(likely|probably|possibly|perhaps|due to|suggest\w*|indicat\w*|may be|might be|could be)\b[^.!?]*",
+                  "", sentence, flags=re.I).strip().rstrip(".!?,; ")
+    return kept + "." if len(kept.split()) >= 3 else ""
+
+
+def _grounded(sentence, report):
+    """True when every body part or symptom the sentence names was in what the patient reported."""
+    said = report.lower()
+    return all(re.search(r"\b" + re.escape(found.group(0).lower().rstrip("s")[:4]), said)
+               for found in _BODY_AND_SYMPTOMS.finditer(sentence))
+
+
 _summaries = {}        # one summary per visit and set of answers, so the nurse's screen can ask again for free
 
 
-def checked_summary(text, complaint=""):
+def checked_summary(text, complaint="", report=None):
     """The summary as it may be shown, or ValueError. Too long, advice, a diagnosis or a condition the patient
     did not name themselves: thrown away, and the nurse sees the patient's own answers only."""
     text = " ".join(str(text or "").split())
     # Keep the first two sentences that do not guess. A third sentence is cut off rather than costing the whole summary.
-    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s and not _GUESSES.search(s)][:2]
+    sentences = [_without_guess(s) for s in re.split(r"(?<=[.!?])\s+", text)]
+    sentences = [s for s in sentences if s and (report is None or _grounded(s, report))][:2]
     text = " ".join(sentences)
     if not text or len(text.split()) > SUMMARY_MAX_WORDS:
         raise ValueError("not a short summary")
@@ -534,7 +558,7 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             written = json.loads(response.read())["message"]["content"]
-        result = {"source": "ai", "text": checked_summary(written, complaint)}
+        result = {"source": "ai", "text": checked_summary(written, complaint, report)}
     except Exception:
         return {"source": "none", "text": None}          # not kept: the next look may find the model ready
     if len(_summaries) >= 500:
