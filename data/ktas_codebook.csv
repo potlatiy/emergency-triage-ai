@@ -1,0 +1,23 @@
+column,meaning
+Group,1: Local ED / 2: Regional ED
+Sex,1: Female / 2: Male
+Age ,Age (Years)
+Patients number per hour,Patients number/hous
+Arrival mode,1: Walking / 2: 119 use / 3: Private car / 4: Private ambulance / 5: Public transfotation (Police ets) /6: Wheelchair / 7: Others
+Injury,1: Non-injury / 2: Injury
+Mental ,1: Alert / 2: Verval response / 3: Pain response / 4: Unconciousness
+Pain ,1: Pain / 2: Non-pain
+NRS_pain,Numeric rating scales of pain
+SBP,Systolid blood pressure
+DBP,Diastolic blood pressure
+HR,Heart rate
+RR,Respiration rate
+BT,Body temperature
+Saturation,Saturation to use pulse oxmeter
+KTAS_RN,KTAS result of nuses in ED
+Disposition,1: Discharge / 2: Ward admission / 3: ICU admission / 4: AMA discharge / 5: Transfer / 6: Death / 7: OP fom ED
+KTAS_expert,KTAS result of experts
+Error_group,1: Vital sign / 2: Physical exam / 3: Psychatric /4: Pain / 5: Mental / 6: Underlying disease / 7: Medical records of other ED / 8: On set / 9: Others
+Length of stay_min,Length of stay (minutes)
+KTAS duration_min,KTAS duration (minutes)
+Mistriage,0: Correct / 1: Over triage / 2: Under triage
