@@ -9,6 +9,7 @@ It holds three things:
 No names are stored for patients. The doctors are made up for the demonstration.
 """
 
+import json
 import os
 import sqlite3
 import threading
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS visits (
     reg_no TEXT PRIMARY KEY, ticket TEXT, complaint TEXT NOT NULL, age REAL, sex TEXT, injury INTEGER DEFAULT 0,
     level INTEGER, danger INTEGER DEFAULT 0, you INTEGER DEFAULT 0, arrived INTEGER,
     department TEXT, department_how TEXT,
+    ai_level INTEGER, vitals TEXT, referred INTEGER DEFAULT 0, referral_reason TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT NOT NULL REFERENCES visits(reg_no),
@@ -111,6 +113,23 @@ def answers_for(reg_no):
     with _lock:
         return [dict(r) for r in _conn.execute(
             "SELECT question, answer, kind FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
+
+
+def save_assessment(reg_no, ai_level, vitals, alert, pain):
+    """Keep what the AI suggested and what was measured, so the doctor can see it later.
+
+    ai_level is stored apart from level: level is the nurse's final decision and may be different.
+    The six vital signs, the alertness and the pain score go into one JSON text column."""
+    record = json.dumps({**vitals, "alert": alert, "pain": pain})
+    with _lock, _conn:
+        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ? WHERE reg_no = ?", (ai_level, record, reg_no))
+
+
+def visit_for(reg_no):
+    """One visit as a plain dictionary, or None when the registration number is unknown."""
+    with _lock:
+        row = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    return dict(row) if row else None
 
 
 def join_line(reg_no, level, danger, department=None, department_how=None):
@@ -216,5 +235,5 @@ def set_duty(reg_no, on_duty):
 with _conn:
     _conn.executescript(SCHEMA)
 _columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")}
-if "department" not in _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+if not {"department", "referral_reason"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()
