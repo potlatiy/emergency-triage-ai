@@ -193,14 +193,34 @@ def call_next():
         if not rows:
             return None
         patient = rows[0]
-        doctor, reason = _pick_doctor(patient)
-        _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
-        _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
-                      (doctor["reg_no"], patient["reg_no"]))
+        doctor, reason = _send_to_doctor(patient)
     return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
             "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
             "department": doctor["department"], "doctor": doctor["name"], "doctor_reg": doctor["reg_no"],
             "room": doctor["room"], "reason": reason}
+
+
+def refer(reg_no, level, reason, department=None):
+    """The nurse sends a critical patient straight to a doctor, past the line.
+
+    Her reason is stored so the doctor can read it. The doctor is chosen by the same rules as
+    call_next (levels 1-2 always go to the resuscitation team), inside one locked transaction."""
+    with _lock, _conn:
+        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
+        _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, "
+                      "arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
+                      (ticket, level, reason, _meta("clock"), reg_no))
+        if department:
+            _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
+                          (department, reg_no))
+        patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
+        doctor, match_reason = _send_to_doctor(patient)
+    return {"ticket": ticket, "department": doctor["department"], "doctor": doctor["name"],
+            "doctor_reg": doctor["reg_no"], "room": doctor["room"], "referral_reason": reason,
+            "match_reason": match_reason, "reason": match_reason}
 
 
 # ---------------------------------------------------------------- doctors
@@ -208,6 +228,18 @@ def call_next():
 def _on_duty(department):
     return [dict(r) for r in _conn.execute(
         "SELECT * FROM doctors WHERE department = ? AND on_duty = 1 ORDER BY waiting, reg_no", (department,))]
+
+
+def _send_to_doctor(patient):
+    """Match one patient with a doctor and write it down: the visit gets the doctor, the doctor gets one more patient.
+
+    Shared by call_next and refer. The caller already holds the lock and the transaction, so both
+    changes are saved together or not at all."""
+    doctor, reason = _pick_doctor(patient)
+    _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
+    _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
+                  (doctor["reg_no"], patient["reg_no"]))
+    return doctor, reason
 
 
 def _pick_doctor(patient):

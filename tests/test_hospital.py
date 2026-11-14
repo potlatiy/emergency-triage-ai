@@ -222,3 +222,41 @@ def test_the_patient_phone_before_the_line_and_for_an_unknown_number():
     me = client.get(f"/api/me/{new_visit()}").json()
     assert me["status"] == "registered" and me["ticket"] is None and me["position"] is None
     assert client.get("/api/me/P-2026-9999").status_code == 404
+
+
+# ---------------------------------------------------------------- the nurse sends a patient straight to a doctor
+
+def refer(reg, level=3, reason="Rigid abdomen, looks septic", department=None):
+    return client.post("/api/refer", json={"reg_no": reg, "level": level, "reason": reason, "department": department})
+
+
+def test_a_referral_needs_a_reason_and_a_known_visit():
+    reg = new_visit()
+    assert client.post("/api/refer", json={"reg_no": reg, "level": 1}).status_code == 422     # no reason at all
+    assert refer(reg, reason="   ").status_code == 422                                        # only spaces
+    assert refer(reg, reason="x" * 301).status_code == 422
+    assert refer("P-2026-9999").status_code == 404
+    assert refer(reg).status_code == 200
+    assert refer(reg).status_code == 409                                    # already with a doctor
+
+
+def test_a_referred_patient_skips_the_line():
+    reg = new_visit("bad stomach pain", 50, "Female")
+    ticket = client.post("/api/line/join", json={"reg_no": reg, "level": 3}).json()["ticket"]
+    before = next(d for d in db.staff()["doctors"] if d["reg_no"] == "DR-1008")["waiting"]
+    sent = refer(reg, department="Gastroenterology and surgery").json()
+    assert sent["ticket"] == ticket and sent["doctor_reg"] == "DR-1008"   # the only gastroenterology doctor
+    assert sent["referral_reason"] == "Rigid abdomen, looks septic" and "by the nurse" in sent["match_reason"]
+    visit = db.visit_for(reg)
+    assert visit["status"] == "with doctor" and visit["doctor_reg"] == "DR-1008"
+    assert visit["referred"] == 1 and visit["referral_reason"] == "Rigid abdomen, looks septic"
+    assert visit["department_how"] == "nurse"
+    assert all(p["reg_no"] != reg for p in client.get("/api/line").json()["patients"])
+    assert next(d for d in db.staff()["doctors"] if d["reg_no"] == "DR-1008")["waiting"] == before + 1
+
+
+@pytest.mark.parametrize("level", [1, 2])
+def test_a_referral_at_level_1_or_2_always_goes_to_resuscitation(level):
+    reg = new_visit("blurry vision", 40, "Male")
+    sent = refer(reg, level=level, reason="Collapsed, pulse not felt", department="Eye, ear, nose and throat").json()
+    assert sent["doctor_reg"] == "DR-1000" and sent["ticket"].startswith("A")    # a ticket is given on the way

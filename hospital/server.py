@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import core
 import db
@@ -53,6 +53,15 @@ class Joining(BaseModel):
     danger: bool = False
     department: str | None = None
     department_how: str | None = None
+
+
+class Referral(BaseModel):
+    # Spaces are trimmed before the length check, so a reason made only of spaces is refused.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    reg_no: str
+    level: int = Field(ge=1, le=5)
+    reason: str = Field(min_length=3, max_length=300)       # required: the doctor must know why
+    department: str | None = None
 
 
 class Duty(BaseModel):
@@ -120,6 +129,17 @@ def call_next():
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"called": called, **db.line()}
+
+
+@app.post("/api/refer")
+def refer(body: Referral):
+    """The nurse sends a critical patient straight to a doctor, past the line. Her reason is required."""
+    visit = db.visit_for(body.reg_no)
+    if visit is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    if visit["status"] == "with doctor":
+        raise HTTPException(409, "This patient is already with a doctor.")
+    return db.refer(body.reg_no, body.level, body.reason, body.department)
 
 
 @app.get("/api/staff")
