@@ -60,7 +60,7 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 |---|---|---|---|
 | The level is sometimes wrong | A **second check**: a model reads the same facts as the nurse and flags patients it rates more urgent than she did | Yes | Yes. It flags 107 of the 131 under-rated patients (82%) |
 | Urgent and minor cases share a line | An **electronic line** ordered by urgency, where waiting slowly moves a patient up | No, plain rules | Simulated only |
-| Too many hand-offs | A **questionnaire at check-in** built for the complaint, and **direct assignment** to a doctor who is on duty, with the answers passed on so the story is told once | Partly | Assignment: being trained and tested now. Questionnaire: not tested |
+| Too many hand-offs | A **questionnaire at check-in** built for the complaint, and **direct assignment** to a doctor who is on duty, with the answers passed on so the story is told once | Partly | Assignment: yes. The trained model picks the right department 71% of the time, against 66% for a key-word rule. Questionnaire: not tested |
 
 ### The patient's path in our system
 
@@ -98,18 +98,39 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
   much as one level too high.
 - **What it outputs:** a level, the probability of each level, and "not sure" when no level reaches 60%.
 
-### Part B: the assignment model (being trained on real data)
+### Part B: the assignment model (trained on real data)
 
 - **What it reads:** the same facts as Part A.
-- **What it learns from:** each real patient's final diagnosis, mapped to a department. The model learns which
+- **What it learned from:** each real patient's final diagnosis. We matched all 584 distinct diagnoses in the
+  data to one of nine departments (the table is `data/diagnosis_departments.csv`), and the model learned which
   complaints and vital signs lead to which department.
+- **How well it does:** tested on patients it never saw, it picks the department of the real diagnosis 71% of
+  the time. A key-word rule on the complaint gets 66%, and always guessing the most common department gets 22%.
+  The model's lead over the rule is 4.3 points, with a 95% range of 2.1 to 6.6.
+- **Where it is weaker than the rule:** respiratory and gynaecology patients. It is stronger for neurology,
+  cardiology and gastroenterology.
+- **How the hospital uses it:** the model was trained on complaints as nurses write them ("ant. chest pain").
+  A patient typing "it burns when I pee" is less familiar to it, and at middling confidence it made some odd
+  choices in our trials. So the model decides only when it is at least 70% sure (about half of patients) and
+  the key-word rule decides otherwise. That combination is right 68% of the time. The screen always says which
+  of the two decided.
 - **What it outputs:** a department. A plain rule then picks the least busy doctor on duty there from the database.
+- **A limit to state:** the answer key depends on our own diagnosis-to-department table. 87 rarer diagnoses
+  matched no rule and default to general medicine. Someone on the team should review the table.
+
+To reproduce these numbers: `python assignment.py`
 
 ### Part C: the question writer (a language model steered by a system prompt)
 
 - **What it is:** a small general-purpose language model (Gemma 3) running on the same computer.
 - **How we steer it:** with a **system prompt**. This is a fixed set of written instructions sent to the model
   before every request: its role, the rules for a good question, what it must never do, and worked examples.
+  Ours is in `hospital/core.py` under `QUESTION_SYSTEM_PROMPT`.
+- **What the prompt tells it:** write two questions about this patient's own complaint, in plain words, that
+  the patient can answer in a few words; never repeat the nurse's questions; never suggest a diagnosis, give
+  advice or ask for identity details.
+- **A second safety net:** plain code checks every question the model returns and drops any that is too long
+  or contains banned wording. If fewer than two survive, the patient simply gets no extra questions.
 
 **A note on "fine-tuning with a system prompt".** These are two different things, and it matters for what we
 can claim.
@@ -140,11 +161,13 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 - [x] Digital hospital with a floor plan, questionnaire, database and doctor assignment (`hospital/`)
 - [x] Interactive mind map of the project (`docs/`)
 
+- [x] Assignment model trained on real diagnoses and compared with the key-word rule (`assignment.py`)
+- [x] Question writer steered by a system prompt (`hospital/core.py`)
+
 ### In progress
 
-- [ ] Train the assignment model on real diagnoses and compare it with the key-word rule
-- [ ] Steer the question writer with a system prompt
 - [ ] Review the diagnosis-to-department table (`data/diagnosis_departments.csv`) by hand
+- [ ] Ask a nurse or doctor to rate a sample of the AI-written questions
 
 ### Before submitting (deadline: Sunday, November 15, 11:59 PM US Eastern time)
 
@@ -159,7 +182,7 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 
 | Person | Role | Owns | Next actions |
 |---|---|---|---|
-| **Yegor** | Backend | `hospital/core.py`, `hospital/db.py`, `hospital/server.py`, `triage.py` | Check the assignment model's results. Check the database rules. Confirm the notebook runs in Colab |
+| **Yegor** | Backend | `hospital/core.py`, `hospital/db.py`, `hospital/server.py`, `triage.py`, `assignment.py` | Run `python assignment.py` and check the results. Check the database rules. Confirm the notebook runs in Colab |
 | **Ostap** | Front end | `hospital/static/index.html`, `docs/index.html`, `app.py` | Try the digital hospital on a phone and a laptop. Fix anything unclear on screen. Record the video |
 | **Denys** | Project decisions | `README.md`, this guide | Review the diagnosis-to-department table. Decide what the video says. Rewrite the README. Send the submission form |
 
@@ -179,7 +202,8 @@ pip install -r requirements.txt
 
 | What | Command | Then open |
 |---|---|---|
-| All results | `python triage.py` | (prints to the screen) |
+| Urgency results | `python triage.py` | (prints to the screen) |
+| Assignment results | `python assignment.py` | (prints to the screen) |
 | Notebook | open `triage.ipynb` | |
 | Second-check demo | `python app.py` | http://localhost:7861 |
 | Digital hospital | `python hospital/server.py` | http://localhost:8000 |

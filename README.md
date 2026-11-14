@@ -53,14 +53,33 @@ What each stop uses:
 | Check-in | A questionnaire for this complaint: three danger-sign questions and two follow-up questions | Danger questions come from a hand-written list chosen by the kind of complaint. The two follow-ups are written on the spot by a small language model running on the same computer |
 | Nurse station | Suggested urgency level | The model tested in this project |
 | Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
-| Doctor | Department and doctor | Plain rules: key words in the complaint pick the department, then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers |
+| Doctor | Department and doctor | A second model, trained on the real diagnoses, picks the department when it is at least 70% sure; a key-word rule decides otherwise. The database then picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers |
 
 **The internal database** is one SQLite file with three tables: doctors (registration number, department, room,
 on duty or not, patients waiting), visits (registration number, ticket, complaint, level, status, assigned doctor)
 and the questionnaire answers. In the demo you can switch a doctor off duty and watch the next patient be matched
 around them.
 
-Only the urgency level has been tested. The questionnaire, the line and the doctor match are demonstrations.
+**Choosing the department, tested.** We matched each of the 584 real diagnoses in the data to one of nine
+departments (`data/diagnosis_departments.csv`) and trained a model to predict that department from the complaint
+and triage measurements. On patients it never saw:
+
+| Method | Picks the department of the real diagnosis |
+|---|---|
+| Always the most common department | 22% |
+| Key-word rule on the complaint | 66% (64–69%) |
+| Trained model | 71% (68–73%) |
+
+The model leads the rule by 4.3 points (95% range 2.1 to 6.6). It is weaker than the rule for respiratory and
+gynaecology patients. Because it was trained on complaints written by nurses and patients word things
+differently, the hospital lets it decide only when it is at least 70% sure and uses the rule otherwise; that
+combination scores 68%. We tried four versions of the model and kept the simplest, which also scored best.
+The answer key rests on our own diagnosis-to-department table, which still needs a clinician's review.
+Run `python assignment.py` to reproduce this.
+
+The urgency level and the choice of department have been tested. The questionnaire and the line are demonstrations.
+The AI-written questions come from a general language model steered by a written system prompt; it was not
+trained on medical data.
 Answers to the AI-written questions are passed to the doctor but never change the level, because nobody has
 checked those questions. The doctors and their registration numbers are made up. No patient names are asked for,
 and the database is wiped each time the server starts.

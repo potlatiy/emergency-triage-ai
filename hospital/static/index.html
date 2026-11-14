@@ -264,7 +264,7 @@ function checkin() {
   panel.innerHTML = `
     ${regTag()}
     <h2>2. Your questionnaire</h2>
-    <p class="lede">Built for your complaint, which the system read as a <b>${esc(me.topic.toLowerCase())}</b> problem.</p>
+    <p class="lede">Built for your complaint, which the system filed under <b>${esc(me.topic.toLowerCase())}</b>.</p>
     <div class="group">Danger signs</div>
     <p class="mono" style="margin:4px 0 0">Chosen from a list written by hand. A yes moves you up the line.</p>
     ${danger.map(([q, i]) => `<div class="q"><p>${esc(q.question)}</p>${choice("q" + i, ["Yes", "No"], q.answer)}</div>`).join("")}
@@ -329,11 +329,13 @@ function showLevel() {
     <div style="margin-top:14px">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
       <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
       <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
+    <div class="note"><b>Likely department: ${esc(r.department)}.</b> <span class="mono">Decided by the ${esc(r.department_how)}.</span></div>
     ${r.unsure ? `<div class="note">The AI is not sure: no level reaches 60%. The nurse decides.</div>` : ""}
     ${r.danger ? `<div class="note red">You answered yes to a danger-sign question. Within the waiting room this counts as half a level more urgent.</div>` : ""}
     <button class="go" id="seat">${urgent ? "Go straight to the resuscitation bay" : "Take a seat in the waiting room"}</button>`;
   document.getElementById("seat").addEventListener("click", async () => {
-    const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger });
+    const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger,
+      department: r.department, department_how: r.department_how });
     me.ticket = data.ticket;
     if (urgent) { const result = await api("/api/line/next", {}); refreshDatabase(); doctor(result.called); }
     else { refreshDatabase(); waiting(data, ""); }
@@ -398,8 +400,10 @@ function doctor(called) {
       ${answers}
     </dl>
     <div class="note" style="margin-top:22px"><b>What was real here.</b> The level comes from a model tested on 1,267 real patients;
-    it matched experts 68% of the time against 85% for nurses, so a nurse confirms it. The questionnaire, the line and the
-    doctor match are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
+    it matched experts 68% of the time against 85% for nurses, so a nurse confirms it. The department comes from a second
+    model trained on the same patients' real diagnoses, used only when it is at least 70% sure, with a key-word rule
+    otherwise. Together they pick the right department 68% of the time, against 66% for the rule alone. The questionnaire and the line are demonstrations and have not been tested. The doctors are made up.
+    Not medical advice.</div>
     <button class="go" id="again">Start again as a new patient</button>
     <button class="go light" id="reset" style="margin-top:10px">Start a new day (reset the database)</button>`;
   document.getElementById("again").addEventListener("click", () => { me = fresh(); entrance(); });
