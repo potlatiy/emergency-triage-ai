@@ -337,7 +337,8 @@ with gr.Blocks(title="Triage second check") as demo:
             "| Nurses | 85% | 10% | 4% |\n\n"
             "The AI is worse than nurses at giving the level, so it should not replace them. Used as a second check, "
             "it flags 107 of the 131 patients nurses rated too low, and asks for a re-check on about a third of all "
-            "patients. The waiting times are simulated. This is a prototype and is not medical advice."
+            "patients. With time to re-check only 20% of patients, it reaches 67% of the under-rated ones, against "
+            "34 to 38% for simple rules. The waiting times are simulated. This is a prototype and is not medical advice."
         )
 
 if __name__ == "__main__":

@@ -69,8 +69,21 @@ weights can be shown to the nurse.
 
 **The model cannot replace a triage nurse.** It beats the baseline easily and loses clearly to nurses.
 
-**As a second check it is useful.** It flags 107 of the 131 patients (82%) that nurses rated too low. The price
-is a re-check on 36% of all patients, most of whom were rated correctly.
+**As a second check it is useful.** It flags 107 of the 131 patients that nurses rated too low (82%, with a
+95% range of 75–88%). The price is a re-check on 36% of all patients, most of whom were rated correctly.
+
+**It beats simple rules, not just chance.** If nurses can re-check only a share of patients, this is the share of
+under-rated patients they reach (95% range in brackets):
+
+| Who picks the patients to re-check | Re-check 10% | Re-check 20% | Re-check 30% |
+|---|---|---|---|
+| Random choice | 10% | 20% | 30% |
+| Rule: most abnormal vital signs first | 18% (14–26%) | 34% (27–42%) | 41% (35–50%) |
+| Rule: patients the nurse rated lowest first | 23% (16–29%) | 38% (28–43%) | 55% (42–57%) |
+| **Our model** | **37% (30–45%)** | **67% (60–75%)** | **77% (70–83%)** |
+
+We also built a second model specially for this job, which sees the nurse's level and predicts "rated too low".
+It did not do better (63% at a 20% budget), so we kept the simpler model.
 
 **Waiting time (simulated).** The data has no arrival times, so we simulated a busy department with three
 doctors. The most urgent patients waited 88 minutes under first come, first served, 24 minutes with the AI's

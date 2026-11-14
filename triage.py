@@ -148,6 +148,65 @@ def compare_queues(df, ai_levels, rounds=200):
     return rows
 
 
+# ---------------------------------------------------------------- the second check, tested harder
+
+def urgency_gap_score(probabilities, nurse):
+    """How strongly the level model disagrees with the nurse: the probability that the
+    correct level is MORE urgent than the one the nurse gave."""
+    levels = np.array(LEVELS)
+    return (probabilities * (levels[None, :] < np.asarray(nurse)[:, None])).sum(axis=1)
+
+
+def vital_sign_rule(df):
+    """The simple rule to beat: count the warning signs any nurse would recognise."""
+    signs = pd.DataFrame({
+        "fast or slow pulse": (df["HR"] > 110) | (df["HR"] < 50),
+        "fast breathing": df["RR"] > 24,
+        "low blood pressure": df["SBP"] < 90,
+        "low oxygen": df["Saturation"] < 92,
+        "high fever": df["BT"] >= 38.5,
+        "not fully alert": df["Mental"] > 1,
+        "severe pain": df["NRS_pain"] >= 8,
+        "unmeasurable vital signs": df["unmeasurable"] == 1,
+    })
+    return signs.sum(axis=1).values
+
+
+def make_flag_model():
+    """A model built for the second check itself: it sees everything known at the door AND the
+    nurse's level, and learns to predict 'the nurse rated this patient too low'."""
+    prepare = ColumnTransformer([
+        ("numbers", Pipeline([("fill", SimpleImputer(strategy="median")), ("scale", StandardScaler())]), NUMBERS),
+        ("categories", OneHotEncoder(handle_unknown="ignore"), CATEGORIES + ["KTAS_RN"]),
+        ("complaint", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4), min_df=2, sublinear_tf=True), TEXT),
+    ])
+    return Pipeline([("prepare", prepare),
+                     ("model", LogisticRegression(max_iter=3000, C=1.0, class_weight="balanced"))])
+
+
+def flag_model_score(df):
+    """Each patient scored by a flag model that never saw them (5-fold cross-validation)."""
+    under = (df["KTAS_RN"] > df["KTAS_expert"]).astype(int)
+    folds = StratifiedKFold(5, shuffle=True, random_state=SEED)
+    return cross_val_predict(make_flag_model(), df, under, cv=folds, method="predict_proba")[:, 1]
+
+
+def caught_within_budget(score, under, budget, rng=None):
+    """If nurses can re-check only `budget` of all patients, taking the highest scores first,
+    what share of the under-rated patients do they reach? Ties are broken at random."""
+    rng = rng or np.random.default_rng(SEED)
+    order = np.lexsort((rng.random(len(score)), -np.asarray(score, dtype=float)))
+    chosen = order[: int(round(budget * len(score)))]
+    return under[chosen].sum() / under.sum()
+
+
+def plausible_range(statistic, n, rounds=1000):
+    """95% range from re-drawing the patients with replacement (bootstrap)."""
+    rng = np.random.default_rng(SEED)
+    values = [statistic(rng.integers(0, n, n)) for _ in range(rounds)]
+    return np.percentile(values, [2.5, 97.5])
+
+
 # ---------------------------------------------------------------- report
 
 def main():
@@ -208,6 +267,45 @@ def main():
     for group in [1, 2]:
         m = (df["Group"] == group).values
         print(line(f"Same-data check, hospital {group} patients", summary(truth[m], plain[m]), m.sum()))
+
+    second_check_report(df, probabilities)
+
+
+def second_check_report(df, probabilities):
+    truth, nurse = df["KTAS_expert"].values, df["KTAS_RN"].values
+    under = nurse > truth
+    n = len(df)
+    scores = {
+        "Vital-sign rule (simple baseline)": vital_sign_rule(df),
+        "Least urgent first (simple baseline)": nurse.astype(float),   # re-check whoever the nurse rated lowest
+        "AI level model vs nurse": urgency_gap_score(probabilities, nurse),
+        "AI flag model (sees nurse level)": flag_model_score(df),
+    }
+    print("\n7. THE SECOND CHECK, TESTED HARDER")
+    print(f"   {under.sum()} of {n} patients were rated too low by the nurse. If nurses can re-check only part")
+    print("   of the patients, highest scores first, what share of those under-rated patients is reached?")
+    budgets = [0.10, 0.20, 0.30]
+    print(f"   {'':36}" + "".join(f"re-check {b:.0%}        " for b in budgets))
+    print(f"   {'Random choice':36}" + "".join(f"{b:.0%}                 " for b in budgets))
+    table = {}
+    for name, score in scores.items():
+        cells = []
+        for b in budgets:
+            value = caught_within_budget(score, under, b)
+            low, high = plausible_range(
+                lambda pick, s=score, b=b: caught_within_budget(s[pick], under[pick], b) if under[pick].any() else np.nan, n)
+            cells.append((value, low, high))
+        table[name] = cells
+        print(f"   {name:36}" + "".join(f"{v:.0%} ({lo:.0%}-{hi:.0%})      " for v, lo, hi in cells))
+    rule = scores["Vital-sign rule (simple baseline)"] >= 1
+    print(f"\n   Vital-sign rule as a yes/no flag (any warning sign): flags {rule.sum()} patients ({rule.mean():.0%}), "
+          f"reaches {(rule & under).sum()} of {under.sum()} ({(rule & under).sum() / under.sum():.0%}).")
+    safe = safety_first(probabilities)
+    flag = safe < nurse
+    low, high = plausible_range(lambda pick: (flag[pick] & under[pick]).sum() / max(1, under[pick].sum()), n)
+    print(f"   Safety-first flag from before: flags {flag.sum()} patients ({flag.mean():.0%}), "
+          f"reaches {(flag & under).sum()} of {under.sum()} ({(flag & under).sum() / under.sum():.0%}, range {low:.0%}-{high:.0%}).")
+    return scores, table
 
 
 if __name__ == "__main__":
