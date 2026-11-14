@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import sqlite3
 import threading
 from pathlib import Path
@@ -127,6 +128,7 @@ def reset():
                             "DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS meta;" + SCHEMA)
         _conn.executemany("INSERT INTO doctors (reg_no, name, department, room) VALUES (?, ?, ?, ?)", SEED_DOCTORS)
         _meta("clock", START_CLOCK)
+        _meta("day", secrets.randbelow(10**9))      # registration numbers start again every day; this tells days apart
         _meta("visit", 0)
         _meta("ticket", 0)
         _meta("arrivals", 0)
@@ -144,10 +146,11 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
     second check are really computed. With a doctor the visit is 'with doctor', otherwise it is waiting.
     The caller holds the lock and the transaction."""
     vitals = core.VITAL_PRESETS[preset]
-    if complaint not in _seed_levels:
+    who = (complaint, age, sex, preset, pain, alert)
+    if who not in _seed_levels:
         result = core.assess(complaint, age, sex, alert=alert, pain=pain, vitals=vitals)
-        _seed_levels[complaint] = (result["level"], [result["probabilities"][str(l)] for l in core.LEVELS])
-    ai_level, odds = _seed_levels[complaint]
+        _seed_levels[who] = (result["level"], [result["probabilities"][str(l)] for l in core.LEVELS])
+    ai_level, odds = _seed_levels[who]
     number = _next_number("visit")
     reg_no, ticket = f"P-2026-{number:04d}", f"A{_next_number('ticket'):03d}"
     _conn.execute(
@@ -243,11 +246,46 @@ def _flag(reg_no, level):
     return core.second_check(json.loads(saved["ai_odds"]), level) if saved and saved["ai_odds"] else None
 
 
+def day():
+    """A number that changes at every new day. Registration numbers start again each day, so a phone keeps
+    this next to its number to know that the visit it remembers is today's."""
+    with _lock:
+        return _meta("day")
+
+
 def visit_for(reg_no):
     """One visit as a plain dictionary, or None when the registration number is unknown."""
     with _lock:
         row = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
     return dict(row) if row else None
+
+
+class AlreadySent(Exception):
+    """The patient has already gone to a doctor, so the step at the nurse station cannot be done (again)."""
+
+
+def _still_at_the_desk(reg_no):
+    """The visit, if it is still before the doctor. Called with the lock held, in the same transaction as the
+    change it protects: checking in one step and writing in another let two quick clicks send one patient
+    to two doctors."""
+    visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    if visit is None:
+        return None
+    if visit["status"] in ("with doctor", "done"):
+        raise AlreadySent(reg_no)
+    return visit
+
+
+def _join(reg_no, level, danger, department, department_how, review):
+    visit = _still_at_the_desk(reg_no)
+    ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
+    arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
+    # A department that is not given is left as it was: joining again must not wipe the nurse's choice.
+    _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = COALESCE(?, department), "
+                  "department_how = COALESCE(?, department_how), second_check = ?, review = COALESCE(?, review), "
+                  "status = 'waiting' WHERE reg_no = ?",
+                  (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review, reg_no))
+    return ticket
 
 
 def join_line(reg_no, level, danger, department=None, department_how=None, review=None):
@@ -256,14 +294,28 @@ def join_line(reg_no, level, danger, department=None, department_how=None, revie
     Joining a second time (the nurse changed the level) keeps the same ticket and the same arrival time,
     so nobody gets two tickets or loses the minutes they have already waited."""
     with _lock, _conn:
-        visit = _conn.execute("SELECT ticket, arrived FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
-        ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
-        arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
-        _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = ?, "
-                      "department_how = ?, second_check = ?, review = COALESCE(?, review), status = 'waiting' "
-                      "WHERE reg_no = ?",
-                      (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review, reg_no))
-    return ticket
+        return _join(reg_no, level, danger, department, department_how, review)
+
+
+def admit(reg_no, level, danger, department=None, department_how=None, review=None):
+    """What the nurse station does through the web: join the line, and for level 1 or 2 go to the
+    resuscitation team in the same breath. One lock for all of it, so nobody else can call the patient in
+    between. Returns (ticket, where the patient was sent, or None when they wait in line)."""
+    with _lock, _conn:
+        ticket = _join(reg_no, level, danger, department, department_how, review)
+        if level > 2:
+            return ticket, None
+        patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
+        return ticket, _called(patient, _meta("clock"))
+
+
+def _called(patient, clock):
+    """Send one patient to a doctor and describe where they went. The caller holds the lock."""
+    doctor, reason = _send_to_doctor(patient)
+    return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
+            "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
+            "department": doctor["department"], "doctor": doctor["name"], "doctor_reg": doctor["reg_no"],
+            "room": doctor["room"], "reason": reason}
 
 
 # ---------------------------------------------------------------- the line
@@ -297,7 +349,9 @@ def where_is(reg_no):
             return None
         _, rows = _waiting()            # the same order as the line the nurse sees
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
-    me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None}
+        today = _meta("day")
+    me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
+          "day": today}
     if visit["status"] == "waiting":
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
         me.update(status="waiting", position=position, ahead=position - 1)
@@ -337,12 +391,7 @@ def call_next(reg_no=None):
             rows = [p for p in rows if p["reg_no"] == reg_no]
         if not rows:
             return None
-        patient = rows[0]
-        doctor, reason = _send_to_doctor(patient)
-    return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
-            "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
-            "department": doctor["department"], "doctor": doctor["name"], "doctor_reg": doctor["reg_no"],
-            "room": doctor["room"], "reason": reason}
+        return _called(rows[0], clock)
 
 
 def refer(reg_no, level, reason, department=None):
@@ -351,7 +400,7 @@ def refer(reg_no, level, reason, department=None):
     Her reason is stored so the doctor can read it. The doctor is chosen by the same rules as
     call_next (levels 1-2 always go to the resuscitation team), inside one locked transaction."""
     with _lock, _conn:
-        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        visit = _still_at_the_desk(reg_no)             # raises AlreadySent for a second click on "send"
         if visit is None:
             return None
         ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
@@ -411,7 +460,8 @@ def review_stats():
     return {"reviewed": len(rows), "accepted": len(accepted), "checked": len(checked),
             "accepted_against_advice": sum(r["quick_advised"] == 0 for r in accepted),
             "level_changed": sum(r["ai_level"] is not None and r["level"] != r["ai_level"] for r in checked),
-            "department_changed": sum(bool(r["ai_department"]) and r["department"] != r["ai_department"] for r in checked)}
+            "department_changed": sum(bool(r["ai_department"]) and r["department"] is not None
+                                      and r["department"] != r["ai_department"] for r in checked)}
 
 
 def _pick_doctor(patient):

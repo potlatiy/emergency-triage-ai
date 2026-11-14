@@ -47,13 +47,13 @@ How a visit would work, and how much of it we built and tested:
 
 | Step | What happens | Status |
 |---|---|---|
-| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they scan their insurance card (or type the number, or say they have none) and give age, what hurts, why, and what could have caused it. One person can have one open visit. | Built as a demo step. The scanner reads a barcode or QR code with the camera; we tried it only on our own sample card. |
+| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they scan their insurance card (or type the number, or say they have none) and give what is wrong in their own words, age, sex and how they arrived. One person can have one open visit. | Built as a demo step. The scanner reads a barcode or QR code with the camera; we tried it only on our own sample card. |
 | 2. Follow-up questions | The AI chooses three history questions for this complaint (for example when it started, or what was taken for it) and the patient answers each with one tap. | Built, **not tested**. The answers go to the doctor and never change the level. |
 | 3. Suggested level | At triage the nurse measures vital signs and enters them. The AI suggests a level from 1 to 5 with the probability of each level. When no level is likely enough, it says it is not sure. | **Built and tested.** |
 | 4. Number on the phone | The patient sees their ticket number and place in line, never their level and never a promised time. | Built as a demo. Each stop of the walk-through is marked "Patient's phone" or "staff only", and the patient's parts show no level. The whole line with levels sits in a closed drawer marked as the nurse's screen. |
-| 5. Nurse decides | The nurse sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. In a critical case she sends the patient straight to a doctor herself, skipping the line, and records the reason. | Second-look flag **tested**. The screen is a demo. Levels 1 and 2 already go straight to the resuscitation team automatically. Choosing the doctor and writing the reason by hand is **not built yet**. |
+| 5. Nurse decides | The nurse sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. In a critical case she sends the patient straight to a doctor herself, skipping the line, and records the reason. | Second-look flag **tested**. The screen is a demo. Levels 1 and 2 already go straight to the resuscitation team automatically. The reason is written by hand and is required; the nurse picks the department, and the least busy doctor on duty there is chosen for her. Picking a doctor by name is not built. |
 | 6. Order of the line | Levels 1 and 2 always go first. A less urgent patient moves up one level for every 45 minutes waited, so nobody is stuck at the back. | Plain rules. Ordering effect **simulated**. |
-| 7. Doctor gets the note | When the patient is called, the system matches them to a department and to the least busy doctor on duty, and prepares a note for that doctor: complaint, age and sex, urgency level (and whether the AI was not sure), vital signs, pain, and the answers from check-in. The patient tells their story once. | Built as a demo: the note appears on screen, there is no separate doctor screen yet. The department choice is **tested**, the note itself is not. |
+| 7. Doctor gets the note | When the patient is called, the system matches them to a department and to the least busy doctor on duty, and prepares a note for that doctor: complaint, age and sex, urgency level (with Meddy's own level and its flag), vital signs, pain, and the answers from check-in. The patient tells their story once. | Built as a demo: the note appears on screen, the note appears at the end of the walk-through and on a separate doctor's screen (`/doctor`), where the doctor closes the visit with "Visit finished". The department choice is **tested**, the note itself is not. |
 
 The line is ordered by plain rules. The AI only supplies each patient's level.
 
@@ -92,7 +92,7 @@ underneath.
 | Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
 | Doctor | Department and doctor | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
-The internal database is one SQLite file with four tables: doctors, visits, the questionnaire answers, and a
+The internal database is one SQLite file with four tables (and a small one for counters): doctors, visits, the questionnaire answers, and a
 registry of people that keeps one open visit per insurance card. The doctors, their registration numbers and the
 patients already in the department are made up. No patient names are asked for, no card number is stored (only a
 one-way fingerprint), and the database is wiped each time the server starts.
@@ -185,10 +185,16 @@ sure, it suggests level 3 to 5, and the patient shows no warning sign.
 | Quick review offered | 325 (26%) | 84% | 7% | 89% | 7% |
 | Personal check advised | 942 (74%) | 63% | 19% | 84% | 11% |
 
-Where a quick review is offered, the AI's level is too low as rarely as the nurses' own, though it is still right
-less often. Everywhere else it is clearly worse than a nurse, so the app advises a personal check. Of the 246
+Where a quick review is offered, the AI's level is too low about as rarely as the nurses' own (7% and 7% here), though
+it is still right less often. We chose the 80% cut-off on these same patients, so that tie should not be trusted to the
+point: the AI's 7% has a 95% range of 4–10%, and with ten other random splits of the data it averages 7.9% against 6.8%
+for the nurses. "About as good, or slightly worse" is the fair reading. Everywhere else the AI is clearly worse than a
+nurse, so the app advises a personal check. One more case exists in the app: when Meddy suggests level 1 or 2, accepting
+the report sends the patient to the resuscitation team at once, which is the safe direction, so that is offered too. Of the 246
 patients experts rated level 1 or 2, 10 would be offered a quick review, so the nurse's review is a real step.
 The hospital adds two conditions the data cannot test: no danger sign answered yes, and a complaint Meddy can read.
+"No warning sign" means none among what was measured: 195 of the 325 patients had no oxygen measurement at all,
+because one of the two hospitals never recorded it. In the app an unmeasured vital sign counts as a warning.
 
 It beats simple rules, not just chance. If nurses can re-check only a share of patients, this is the share of
 under-rated patients they reach (95% range in brackets):
@@ -196,9 +202,13 @@ under-rated patients they reach (95% range in brackets):
 | Who picks the patients to re-check | Re-check 10% | Re-check 20% | Re-check 30% |
 |---|---|---|---|
 | Random choice | 10% | 20% | 30% |
-| Rule: most abnormal vital signs first | 18% (14–26%) | 34% (27–42%) | 41% (35–50%) |
-| Rule: patients the nurse rated lowest first | 23% (16–29%) | 38% (28–43%) | 55% (42–57%) |
+| Rule: most abnormal vital signs first | 20% (15–25%) | 34% (28–41%) | 43% (37–49%) |
+| Rule: patients the nurse rated lowest first | 23% (17–28%) | 36% (31–41%) | 49% (44–55%) |
 | **Our model** | **37% (30–45%)** | **67% (60–75%)** | **77% (70–83%)** |
+
+The two rules give many patients the same score, so the cut-off falls inside a group of equals; we count that group
+by its share. (An earlier version of this table broke such ties with one random draw, which put the second rule at
+55% for a 30% budget when its average is 49%.)
 
 We also built a second model specially for this job, which sees the nurse's level and predicts "rated too low".
 It did not do better (63% at a 20% budget), so we kept the simpler model.
@@ -228,8 +238,9 @@ nurse station in front of the doctors (`python chain_time.py`).
 
 **Every timing in it is our assumption**, because the data has no times at all: 5 minutes for a full assessment
 by the nurse, 20 for a consultation, 1.5 minutes saved for the nurse and 1 for the doctor because the patient
-answered the history questions on the phone, half a minute for the nurse to read Meddy's report, and 1.5 minutes
-for a quick review. What is real: the patients, their levels, and which of them would be offered a quick review
+answered the history questions on the phone, half a minute for the nurse to read Meddy's report, 1.5 minutes
+for a quick review, and 1 minute for a re-check when the strong flag is raised. We also assume that the nurse
+accepts every quick review she is offered and corrects half of the under-rated patients she re-checks. What is real: the patients, their levels, and which of them would be offered a quick review
 or flagged.
 
 ![Simulated minutes from the door to the doctor, before and after, and how the result changes with each assumption](images/chain_time.png)
@@ -258,9 +269,11 @@ What we take from it:
 
 ### Where it fails
 
-- **Seven urgent patients sent to the slow queue.** They include a chest pain complaint written in Korean with
-  no vital signs, two poisonings and an eye injury, where the danger does not show in the measurements.
-  Nurses rated five of the seven correctly.
+- **Urgent patients sent to the slow queue.** With the safety-first setting the model gave level 4 or 5 to seven
+  patients whom experts rated level 1 or 2. They include a chest pain complaint written in Korean with no vital
+  signs, two poisonings and an eye injury, where the danger does not show in the measurements. Nurses rated five of
+  the seven correctly. With the most likely level, which is what Meddy shows as its suggestion, it is 19 patients,
+  and nurses rated 14 of them correctly. This is why the nurse decides.
 - **It does not travel.** Trained at one hospital and tested at the other, the exact level drops from 68% to
   55–58%, and in one direction 49 urgent patients ended up in the slow queue.
 - **Groups.** With the safety-first setting, 9% of women and 7% of men are rated too low (nurses: 12% and 9%).
@@ -272,10 +285,14 @@ What we take from it:
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - Hiding the level from patients is our design choice to avoid panic. We did not test how patients react.
 - **The nurse reviewing a report is not the same as the nurse deciding alone.** Our second-check result (107 of 131) was measured with the nurse giving her level first. When she reads Meddy's report before deciding, she may agree with it more often than she should. We count every verdict in the app ("test regime"), but we have not tried it with real nurses.
+- **Five patients appear twice in the data** (the same visit with two diagnoses), so the 1,267 rows are 1,262 visits, and such a pair can sit on both sides of a test split. Removing them changes nothing that matters: the exact level goes from 68.1% to 68.6%, and the second check from 107 of 131 to 107 of 130.
+- **The department model's version was chosen on the same test splits it is reported on.** We tried four versions and kept the best, so its 70% and its 3.7-point lead over the key-word rule may be up to a point too kind. It still beats the rule.
+- **One diagnosis cannot be sorted by its name.** "Percutaneous catheter problem" (8 patients) covers urinary catheters and feeding or bile tubes. Our table sends all 8 to urology, and about half belong to gastroenterology.
+- **Each queue order was simulated on its own 200 random days**, so a difference of a minute or two between two rows of the first table is luck. The large differences are not.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
-- **Patients may exaggerate or play things down.** Someone who writes "I am dying" about a sore finger can jump the line, and someone who plays down chest pain can be missed. The model cannot tell. We reduce the risk in three ways: vital signs are measured and not self-reported, the nurse sees every answer and decides, and the check-in screen asks people to describe what they feel and not what they fear. We did not test how well this works. The half-level boost for a "yes" to a danger question could be gamed.
+- **Patients may exaggerate or play things down.** Someone who writes "I am dying" about a sore finger can jump the line, and someone who plays down chest pain can be missed. The model cannot tell. We reduce the risk in three ways: vital signs are measured and not self-reported, the nurse sees every answer and decides, and check-in asks about facts to tap (danger signs, what the pain feels like, when it started), not for a judgement of how serious it is. We did not test how well this works. The half-level boost for a "yes" to a danger question could be gamed.
 - **Who measures the vital signs is not solved.** In the demo the nurse types them in. In a real department it could be a self-service blood pressure cuff and finger pulse meter, or an assistant at the door, with people who answered "yes" to a danger question measured first. None of this is built or tested.
 - The waiting times are a simulation with invented arrivals.
 - The department answer key is our own diagnosis-to-department table. 83 rarer diagnoses matched no rule and default to general medicine. We read every row and corrected 14 by hand, but no clinician has reviewed it.
@@ -294,10 +311,13 @@ What we take from it:
 - **Notebook:** open `triage.ipynb`. All outputs are saved in it.
 - **Trained models:** both are saved in [`models/`](models/README.md), so nothing needs training. `python trained_models.py` makes them again.
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
-- **Digital hospital:** `python hospital/server.py` and open http://localhost:8000. For AI-written questions,
+- **Digital hospital:** `python hospital/server.py` and open http://localhost:8000. The doctor's screen is at
+  http://localhost:8000/doctor. For AI-written questions,
   install Ollama and run `ollama pull gemma3:4b` first; without it the hand-written questions are used.
 - **Check in from a phone:** start it with `MEDDY_LAN=1 python hospital/server.py`. The entrance step then shows a
   QR code that phones on the same Wi-Fi can scan. Without `MEDDY_LAN=1` the server only answers this computer.
+  The phone opens the whole walk-through, including the parts marked "staff only": in this demo one page plays
+  every role, so hiding the level from the patient is shown, not enforced.
 
 ## Sources
 

@@ -232,6 +232,7 @@ reg = reg || FIRST_DOCTOR;
 let staffKey = "", screenKey = "";      // what was drawn last, so the page is only redrawn when something changed
 let screen = null;                      // the last answer of /api/doctor/.../patients
 let selected = null;                    // registration number of the open card
+let cardKey = "", cardFor = null;       // what the open card was drawn from, and for which patient
 let known = null;                       // patients already seen on this screen; later arrivals are marked "New"
 const unseen = new Set();
 
@@ -246,14 +247,14 @@ try { if (localStorage.getItem("meddy-large") === "1") setLarge(true); } catch (
 sizeButton.addEventListener("click", () => setLarge(sizeButton.getAttribute("aria-pressed") !== "true"));
 
 async function get(path) {
-  const response = await fetch(path, { cache:"no-store" });
+  const response = await fetch(path, { cache:"no-store", signal:AbortSignal.timeout(4000) });   // a hung request counts as down
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("The hospital server did not answer (" + response.status + ").");
   return response.json();
 }
 
 function chooseDoctor(next) {
-  reg = next; screen = null; screenKey = ""; selected = null; known = null; unseen.clear();
+  reg = next; screen = null; screenKey = ""; cardKey = ""; cardFor = null; selected = null; known = null; unseen.clear();
   try { localStorage.setItem("meddy-doctor", reg); } catch (e) {}
   history.replaceState(null, "", "?reg=" + encodeURIComponent(reg));
   $("list").innerHTML = ""; $("card").innerHTML = "";
@@ -263,11 +264,12 @@ $("who").addEventListener("change", (event) => chooseDoctor(event.target.value))
 
 // ---------------------------------------------------------------- asking the server
 
+let turn = 0;                                       // counts the requests, so a slow old answer cannot overwrite a newer one
 async function check() {
-  const asked = reg;
+  const asked = reg, mine = ++turn;
   try {
     const [staff, answer] = await Promise.all([get("/api/staff"), get(`/api/doctor/${encodeURIComponent(asked)}/patients`)]);
-    if (asked !== reg) return;                       // the doctor was changed while we were waiting
+    if (asked !== reg || mine !== turn) return;      // the doctor was changed, or a newer request has been sent
     if (answer === null) {                           // no doctor with this number: fall back to the first one
       if (asked !== FIRST_DOCTOR) chooseDoctor(FIRST_DOCTOR);
       return;
@@ -277,13 +279,14 @@ async function check() {
     $("live").classList.remove("down");
     $("live-text").textContent = "Live. Checked at " + new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
   } catch (error) {
+    if (mine !== turn) return;
     $("live").classList.add("down");
     $("live-text").textContent = "Can't reach the hospital server. Trying again every 5 seconds.";
   }
 }
 
 function drawStaff(staff, doctor) {
-  const key = JSON.stringify([staff.doctors, doctor]);
+  const key = JSON.stringify([staff.doctors.map((d) => [d.reg_no, d.name, d.department, d.on_duty]), doctor]);
   if (key === staffKey) return;
   staffKey = key;
   $("who").innerHTML = staff.doctors.map((d) => `<option value="${esc(d.reg_no)}" ${d.reg_no === doctor.reg_no ? "selected" : ""}>
@@ -300,15 +303,24 @@ function drawStaff(staff, doctor) {
 function drawPatients(answer) {
   const key = JSON.stringify(answer.patients);
   const ids = answer.patients.map((p) => p.reg_no);
-  if (known === null) known = new Set(ids);          // the first look: nobody is "new"
-  const arrived = answer.patients.filter((p) => !known.has(p.reg_no));
-  arrived.forEach((p) => { known.add(p.reg_no); unseen.add(p.reg_no); });
+  const arrived = known === null ? [] : answer.patients.filter((p) => !known.has(p.reg_no));   // the first look: nobody is "new"
+  known = new Set(ids);                              // patients who left are forgotten: after a new day the same number is new again
+  arrived.forEach((p) => unseen.add(p.reg_no));
   if (arrived.length) $("say").textContent = "New patient: " + arrived.map((p) => `ticket ${p.ticket}, level ${p.level}`).join("; ");
   if (key === screenKey && !arrived.length) return;
   screenKey = key; screen = answer;
   if (!ids.includes(selected)) selected = ids[0] || null;     // the server sends the most pressing patient first
   unseen.delete(selected);
-  drawList(); drawCard();
+  // Redrawing replaces the buttons, so remember which one the keyboard was on and go back to it.
+  const held = document.activeElement, heldReg = held && held.dataset ? held.dataset.reg : null;
+  const heldFinish = held && held.id === "finish" ? cardFor : null;
+  drawList();
+  const open = answer.patients.find((p) => p.reg_no === selected);
+  const openKey = JSON.stringify(open || null);
+  if (openKey !== cardKey) { cardKey = openKey; cardFor = selected; drawCard(); }     // an unchanged card is left alone
+  if (heldReg) ($("list").querySelector(`[data-reg="${CSS.escape(heldReg)}"]`) || $("card")).focus({ preventScroll:true });
+  else if (heldFinish && document.activeElement !== $("finish"))
+    ((heldFinish === selected && $("finish")) || $("card")).focus({ preventScroll:true });
 }
 
 // ---------------------------------------------------------------- the list
@@ -339,6 +351,7 @@ $("list").addEventListener("click", (event) => {
   const button = event.target.closest(".pt");
   if (!button) return;
   selected = button.dataset.reg; unseen.delete(selected);
+  cardFor = selected; cardKey = JSON.stringify(screen.patients.find((p) => p.reg_no === selected) || null);
   drawList(); drawCard();
   $("list").querySelector(`[data-reg="${CSS.escape(selected)}"]`).focus();
   if (matchMedia("(max-width: 960px)").matches) {            // on a phone the card is below the list: bring it up
@@ -372,7 +385,7 @@ function vitalsBlock(v) {
     ${tile("Breathing", v.RR, "per min")}
     ${tile("Temperature", v.BT, "°C")}
     ${tile("Oxygen", v.Saturation, "%")}
-    ${v.pain === undefined ? "" : v.pain_word ? tile("Pain", v.pain_word, "how bad was not asked") : tile("Pain", v.pain, "of 10")}
+    ${v.pain === undefined ? "" : v.pain_word ? tile("Pain", v.pain_word, v.pain > 0 ? "how bad was not asked" : "") : tile("Pain", v.pain, "of 10")}
     ${v.alert === undefined ? "" : `<div class="wide"><dt>Alertness</dt><dd>${esc(v.alert)}</dd></div>`}
   </dl>`;
 }
@@ -441,14 +454,18 @@ function drawCard() {
       <p class="hint" id="finish-hint" role="status">Closes the visit and takes the patient off your list.</p>
     </div>`;
   // Two taps, so a visit is not closed by accident: the first arms the button for a few seconds.
-  const finish = $("finish");
-  let armed = null;
+  const finish = $("finish"), hint = $("finish-hint"), usual = hint.textContent;
+  let armed = null, armedAt = 0;
   finish.addEventListener("click", async () => {
     if (!armed) {
       finish.textContent = "Tap again to close this visit"; finish.classList.add("armed");
-      armed = setTimeout(() => { armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed"); }, 4000);
+      hint.textContent = "Press again within 4 seconds to close this visit.";      // said aloud by a screen reader
+      armedAt = Date.now();
+      armed = setTimeout(() => { armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed");
+                                 hint.textContent = usual; }, 4000);
       return;
     }
+    if (Date.now() - armedAt < 600) return;          // a double-click is one decision, not two
     clearTimeout(armed); finish.disabled = true;
     try {
       const response = await fetch("/api/doctor/finish", { method:"POST", headers:{ "Content-Type":"application/json" },

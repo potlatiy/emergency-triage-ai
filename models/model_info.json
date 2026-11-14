@@ -28,6 +28,10 @@
     ],
     "text": "Chief_complain"
   },
+  "recipe": {
+    "urgency": "080ee4672658b7c8",
+    "department": "080ee4672658b7c8"
+  },
   "data": {
     "data/ktas_data.csv": "9876383970fa0577",
     "data/diagnosis_departments.csv": "945044a0de2a841f"

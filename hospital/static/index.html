@@ -443,7 +443,7 @@
 
 <div class="wrap bottom-db">
   <details class="card db" aria-live="polite">
-    <summary>Behind the scenes: the hospital database <span>doctors on duty and today's visits</span></summary>
+    <summary>Behind the scenes: the hospital database <span>staff only · doctors on duty and today's visits</span></summary>
     <div class="db-body">
       <div class="db-counts" id="db-counts"></div>
       <p class="regime" id="reviews" role="status"></p>
@@ -520,9 +520,10 @@ const panel = document.getElementById("panel");
 const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:null, feel:null,
                        painForm:null, insurance:null, cardEnd:null, injury:false, alert:"Alert",
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null,
-                       noDanger:false, followUp:"none", nurseLevel:null, review:null, showLine:false });
+                       noDanger:false, followUp:"none", nurseLevel:null, review:null, showLine:false, day:null });
 let me = fresh();
 let watching = null;                    // the timer of the patient's phone in the waiting room
+let tick = 0;                           // counts the changes of step; an answer that arrives for an older step is dropped
 
 // A reload must not lose the visit: a patient who refreshes their phone would lose their place and leave a
 // ghost in the line. The visit is kept in this tab's session storage and looked up again on the server.
@@ -530,33 +531,42 @@ function remember(step, called) {
   try { sessionStorage.setItem("meddy-visit", JSON.stringify({ me, step, called: called || null })); } catch (e) {}
 }
 function forget() { try { sessionStorage.removeItem("meddy-visit"); } catch (e) {} }
+function startOver() { me = fresh(); forget(); entrance(); }
+// True when the hospital's answer is about the visit this page remembers, and not about another patient who
+// got the same registration number on a later day.
+const sameVisit = (now) => now.day === undefined || me.day === undefined || me.day === null || now.day === me.day;
 async function start() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem("meddy-visit")); } catch (e) {}
-  if (saved && saved.me && saved.me.reg) {
-    try {
-      const now = await api("/api/me/" + encodeURIComponent(saved.me.reg));      // unknown after a new day: falls through
-      me = { ...fresh(), ...saved.me };
-      if (now.status === "waiting") return waiting("Welcome back. Your place in line was kept.");
-      if (now.status === "called" && me.result) return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
-      if (now.status === "registered") {
-        if (saved.step === "nurse") return nurse();
-        const writing = me.followUp === "writing";
-        checkin();
-        if (writing) askFollowUp();
-        return;
-      }
-    } catch (e) {}
-    me = fresh(); forget();
+  if (!(saved && saved.me && saved.me.reg)) { entrance(); return; }
+  let now;
+  try { now = await api("/api/me/" + encodeURIComponent(saved.me.reg)); }
+  catch (e) {
+    if (e.status === 404) { startOver(); return; }               // a new day: the hospital no longer knows this visit
+    panel.innerHTML = `<h2>Meddy can't reach the hospital</h2>
+      <p class="error">Your visit is kept. Check that the server is running, then reload the page.</p>`;
+    return;
   }
-  entrance();
+  me = { ...fresh(), ...saved.me };
+  if (!sameVisit(now)) { startOver(); return; }
+  if (now.status === "waiting") return waiting("Welcome back. Your place in line was kept.");
+  if (now.status === "called" && me.result) return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
+  if (now.status === "registered") {
+    if (saved.step === "nurse") return nurse();
+    const writing = me.followUp === "writing";
+    checkin();
+    if (writing) askFollowUp();
+    return;
+  }
+  startOver();                                                   // the visit is finished
 }
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} :
     { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) });
-  if (!response.ok) throw new Error("The hospital server did not answer (" + response.status + ").");
+  if (!response.ok) throw Object.assign(new Error("The hospital server did not answer (" + response.status + ")."),
+                                        { status: response.status });
   return response.json();
 }
 
@@ -585,7 +595,8 @@ const sectionHead = (kind, title, note) => `<div class="section-head"><span clas
 
 // ---------------------------------------------------------------- floor plan and database card
 function walkTo(stop, room) {
-  clearInterval(watching); stopScan();
+  clearInterval(watching); stopScan(); tick++;
+  if (stop !== 5) document.getElementById("doctor-line").textContent = "";       // no doctor of the visit before
   const [x, y] = SPOT[room || stop];
   document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
   for (let i = 1; i <= 6; i++) document.getElementById("room-" + i).classList.toggle("on", i === (room || stop));
@@ -619,9 +630,9 @@ async function refreshDatabase() {
       (t.checked ? ` (level changed in ${t.level_changed}, department changed in ${t.department_changed})` : "") + ".");
   document.getElementById("staff").innerHTML = data.doctors.map((d) => `
     <tr class="${d.on_duty ? "" : "off"}">
-      <td class="mono">${d.reg_no}</td><td>${esc(d.name)}</td><td>${esc(d.department)}</td><td>${esc(d.room)}</td>
+      <td class="mono">${esc(d.reg_no)}</td><td>${esc(d.name)}</td><td>${esc(d.department)}</td><td>${esc(d.room)}</td>
       <td class="num">${d.waiting}</td>
-      <td><button class="duty ${d.on_duty ? "on" : ""}" data-reg="${d.reg_no}" data-on="${d.on_duty}"
+      <td><button class="duty ${d.on_duty ? "on" : ""}" data-reg="${esc(d.reg_no)}" data-on="${d.on_duty}"
             ${d.reg_no === "DR-1000" ? "disabled" : ""} aria-pressed="${d.on_duty}">${d.on_duty ? "On duty" : "Off duty"}</button></td>
     </tr>`).join("");
 }
@@ -645,7 +656,7 @@ function bindChoice(id, onPick) {
 // Every stop says whose screen it is. The patient never sees a level; staff screens are marked.
 const role = (who, label) => `<span class="role ${who}">${who === "patient" ? "Patient's phone" : label + " · staff only"}</span>`;
 const head = (who, label) => `<div class="ids">${me.reg ? regTag() : ""}${role(who, label)}</div>`;
-const regTag = () => `<span class="regno">Registration no. ${me.reg}${me.ticket ? ", ticket " + me.ticket : ""}</span>`;
+const regTag = () => `<span class="regno">Registration no. ${esc(me.reg)}${me.ticket ? ", ticket " + esc(me.ticket) : ""}</span>`;
 
 // ---------------------------------------------------------------- scanning the insurance card
 // The camera reads a barcode or QR code on the card (BarcodeDetector, built into Chrome). Nothing is uploaded:
@@ -659,13 +670,17 @@ function stopScan() {
   const box = document.getElementById("scanner"); if (box) box.hidden = true;
 }
 async function scanCard(field) {
+  stopScan();
   const box = document.getElementById("scanner"), hint = document.getElementById("scan-hint"), video = document.getElementById("scan-video");
   box.hidden = false; video.hidden = true;
   if (!("BarcodeDetector" in window) || !navigator.mediaDevices) {
     hint.textContent = "This browser cannot scan. Type the number, or open Meddy in Chrome."; return; }
   try {
     hint.textContent = "Starting the camera…";
-    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    if (video.srcObject || !video.isConnected || box.hidden) {      // the patient moved on while the camera was asked for
+      stream.getTracks().forEach((track) => track.stop()); return; }
+    video.srcObject = stream;
     video.hidden = false; await video.play();
     const detector = new BarcodeDetector();
     hint.textContent = "Hold the barcode or QR code of the card in front of the camera.";
@@ -779,7 +794,7 @@ function entrance() {
       if (!response.ok) throw new Error();
       const data = await response.json();
       me.cardEnd = me.insurance === "none" ? null : card.slice(-4).toUpperCase();      // the number itself is not kept
-      me.reg = data.reg_no; me.topic = data.topic; me.source = data.source;
+      me.reg = data.reg_no; me.day = data.day; me.topic = data.topic; me.source = data.source;
       me.questions = data.questions.map((q) => ({ ...q, answer: null }));
       me.painForm = data.pain;
       me.followUp = "writing";
@@ -792,7 +807,7 @@ function entrance() {
 }
 
 // ---------------------------------------------------------------- 2. check-in
-// Check-in is a few taps. The two history questions for the doctor are fetched in the background
+// Check-in is a few taps. The three history questions for the doctor are fetched in the background
 // (GET /api/follow-up), so nobody waits for the language model; a patient who is quicker simply skips them.
 const ELSE = "Something else";
 function askFollowUp() {
@@ -963,7 +978,7 @@ function showLevel() {
       <h3 class="sub">Suggested level</h3>
       <div class="verdict" style="margin-top:12px;border-color:${LEVEL_COLOUR[r.level]};background:${LEVEL_TINT[r.level]}">
         <span class="num" style="background:${LEVEL_COLOUR[r.level]}" aria-hidden="true">${r.level}</span>
-        <div><div class="t">${LEVEL_ICON[r.level]} Level ${r.level}: ${r.name}</div>
+        <div><div class="t">${LEVEL_ICON[r.level]} Level ${r.level}: ${esc(r.name)}</div>
           <span class="who">Meddy's suggestion. The nurse decides.</span></div>
       </div>
       <div class="bars">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
@@ -995,7 +1010,7 @@ function showLevel() {
     try {
       const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger,
         department: r.department, department_how: r.department_how, review: "approved" });
-      me.nurseLevel = r.level; me.review = "approved"; me.ticket = data.ticket; refreshDatabase();
+      me.nurseLevel = r.level; me.review = "approved"; me.ticket = data.ticket; remember("waiting"); refreshDatabase();
       if (data.called) doctor(data.called); else waiting("");
     } catch (e) { idle(button);
       document.getElementById("approve-error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again."; }
@@ -1058,7 +1073,7 @@ function afterLevel() {
     try {
       const data = await api("/api/line/join", { reg_no: me.reg, level: mine, danger: r.danger,
         department: r.department, department_how: r.department_how, review: "checked" });
-      me.ticket = data.ticket; refreshDatabase();
+      me.ticket = data.ticket; remember("waiting"); refreshDatabase();
       // Levels 1 and 2 never wait in the line: the server has already sent the patient in, and says where.
       if (data.called) doctor(data.called); else waiting("");
     } catch (e) { idle(button); failed(); }
@@ -1098,12 +1113,20 @@ function tipsCard() {
 // The patient's phone shows only what GET /api/me sends: the ticket and the place in line. Never the level,
 // a colour or a promised time. The whole line with levels is the nurse's screen, kept in a closed drawer.
 async function waiting(message) {
+  const held = document.activeElement && document.activeElement.id;      // to give the keyboard its place back
   walkTo(4);
+  const run = tick;
   let mine, data;
   try { [mine, data] = await Promise.all([api("/api/me/" + encodeURIComponent(me.reg)), api("/api/line")]); }
-  catch (e) { panel.innerHTML = `${head("patient")}${stepNo(4)}<h2>Waiting room</h2>
-    <p class="error">Meddy can't reach the hospital server. Check that it is running, then reload the page.</p>`; return; }
+  catch (e) {
+    if (run !== tick) return;
+    if (e.status === 404) { startOver(); return; }
+    panel.innerHTML = `${head("patient")}${stepNo(4)}<h2>Waiting room</h2>
+    <p class="error">Meddy can't reach the hospital server. Your visit is kept: check that the server is running, then reload the page.</p>`; return; }
+  if (run !== tick) return;                                             // a newer screen is already being drawn
+  if (!sameVisit(mine)) { startOver(); return; }
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
+  if (mine.status !== "waiting") { startOver(); return; }               // finished, or no longer in the line
   remember("waiting");
   const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
@@ -1132,22 +1155,30 @@ async function waiting(message) {
       <p class="hint" style="margin:12px 0 0">The patient never sees this. The patient's phone above shows no level, no colour and no waiting time.</p>
       ${data.patients.map((p) => `<div class="line-row ${p.reg_no === me.reg ? "you" : ""}">
         <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
-        <div><div class="who-line">${p.ticket} · ${esc(p.who)}${p.reg_no === me.reg ? ` <span class="tag">this visit</span>` : ""}</div>
-          <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${p.name}, waited ${p.waited} min
+        <div><div class="who-line">${esc(p.ticket)} · ${esc(p.who)}${p.reg_no === me.reg ? ` <span class="tag">this visit</span>` : ""}</div>
+          <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
           ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
         </div>`).join("")}
     </details>`;
   document.getElementById("staff-line").addEventListener("toggle", (event) => me.showLine = event.target.open);
+  const noAnswer = (button) => { idle(button);
+    const box = button.closest(".demo"); let line = box.querySelector(".moved");
+    if (!line) { line = document.createElement("p"); line.className = "hint moved"; line.setAttribute("role", "status"); box.insertBefore(line, box.lastElementChild); }
+    line.textContent = "Meddy can't reach the hospital server. Check that it is running, then try again."; };
   document.getElementById("wait").addEventListener("click", async (event) => {
-    busy(event.currentTarget, "Moving the clock…");
-    const passed = await api("/api/line/wait", {});
+    const button = event.currentTarget;
+    busy(button, "Moving the clock…");
+    let passed;
+    try { passed = await api("/api/line/wait", {}); } catch (e) { noAnswer(button); return; }
     refreshDatabase();
     if (passed.called && passed.called.reg_no === me.reg) { doctor(passed.called); return; }
     waiting("Fifteen minutes passed. " + (passed.called ? `Ticket ${esc(passed.called.ticket)} was called, and a` : "A") +
             " new patient walked in."); });
   document.getElementById("next").addEventListener("click", async (event) => {
-    busy(event.currentTarget, "Calling…");
-    const result = await api("/api/line/next", {});
+    const button = event.currentTarget;
+    busy(button, "Calling…");
+    let result;
+    try { result = await api("/api/line/next", {}); } catch (e) { noAnswer(button); return; }
     refreshDatabase();
     if (result.called && result.called.reg_no === me.reg) doctor(result.called);
     else waiting(result.called ? `Ticket ${esc(result.called.ticket)} was called. The line moved.` : "");
@@ -1156,9 +1187,12 @@ async function waiting(message) {
   watching = setInterval(async () => {
     try {
       const now = await api("/api/me/" + encodeURIComponent(me.reg));
+      if (run !== tick) return;
+      if (!sameVisit(now)) { startOver(); return; }
       if (now.status !== mine.status || now.position !== mine.position) waiting(now.status === "called" ? "" : "The line moved.");
-    } catch (e) {}
+    } catch (e) { if (run === tick && e.status === 404) startOver(); }     // a new day was started on another screen
   }, 5000);
+  if (held && document.getElementById(held)) document.getElementById(held).focus({ preventScroll: true });
 }
 
 // ---------------------------------------------------------------- 5. doctor
@@ -1196,7 +1230,7 @@ function doctor(called) {
         <dt>Doctor</dt><dd>${esc(called.doctor)}${called.department && !resus ? ", " + esc(called.department) : ""}, ${esc(called.room)}${called.doctor_reg ? ` (${esc(called.doctor_reg)})` : ""}</dd>
         ${called.reason ? `<dt>Why this doctor</dt><dd>${esc(called.reason)}</dd>` : ""}
         ${called.referral_reason ? `<dt>Sent straight in</dt><dd>The nurse's reason: ${esc(called.referral_reason)}</dd>` : ""}
-        <dt>Visit</dt><dd>${me.reg}, ticket ${esc(called.ticket)}${called.waited === undefined ? "" : `, waited ${called.waited} min`}</dd>
+        <dt>Visit</dt><dd>${esc(me.reg)}, ticket ${esc(called.ticket)}${called.waited === undefined ? "" : `, waited ${called.waited} min`}</dd>
         <dt>Level</dt><dd>${level}: ${LEVEL_NAME[level]}. ${me.review === "approved"
           ? "Meddy's suggestion, accepted by the nurse after reviewing the report."
           : `Set by the nurse after a personal check. Meddy suggested level ${r.level}${r.unsure ? " and was not sure" : ""}.`}</dd>

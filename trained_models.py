@@ -33,6 +33,13 @@ def fingerprint(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
 
 
+def recipe():
+    """A short code for how the two models are built (their steps and settings). It changes when someone
+    changes the recipe in triage.py or assignment.py, and not when they only edit a comment."""
+    return {"urgency": hashlib.sha256(repr(make_model()).encode()).hexdigest()[:16],
+            "department": hashlib.sha256(repr(make_assignment_model()).encode()).hexdigest()[:16]}
+
+
 def train(data=None):
     """Both models, each trained on every patient in the data."""
     data = load() if data is None else data
@@ -59,6 +66,7 @@ def save():
         "patients": len(data),
         "made_with": {"python": sys.version.split()[0], "scikit-learn": sklearn.__version__, "numpy": np.__version__},
         "inputs": {"numbers": NUMBERS, "categories": CATEGORIES, "text": TEXT},
+        "recipe": recipe(),
         "data": {"data/ktas_data.csv": fingerprint(DATA), "data/diagnosis_departments.csv": fingerprint(TABLE)},
         "models": {
             URGENCY_FILE.name: {
@@ -92,6 +100,10 @@ def why_not_usable():
     if info["made_with"]["scikit-learn"] != sklearn.__version__:
         return (f"saved with scikit-learn {info['made_with']['scikit-learn']}, "
                 f"this computer has {sklearn.__version__}")
+    if info.get("inputs") != {"numbers": NUMBERS, "categories": CATEGORIES, "text": TEXT}:
+        return "the models were saved with other inputs than the code uses now"
+    if info.get("recipe") != recipe():
+        return "the way the models are built has changed since they were saved"
     for name, saved in info["data"].items():
         if fingerprint(Path(__file__).parent / name) != saved:
             return f"{name} has changed since the models were saved"

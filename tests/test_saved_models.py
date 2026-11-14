@@ -32,3 +32,12 @@ def test_a_tampered_model_file_is_not_loaded(monkeypatch, tmp_path):
     fake.write_bytes(b"not the real model")
     monkeypatch.setattr(trained_models, "URGENCY_FILE", fake)
     assert "does not match" in trained_models.why_not_usable()
+
+
+def test_a_changed_recipe_or_other_inputs_means_training_again(monkeypatch):
+    monkeypatch.setattr(trained_models, "recipe", lambda: {"urgency": "another", "department": "another"})
+    assert "built has changed" in trained_models.why_not_usable()
+    monkeypatch.undo()
+    monkeypatch.setattr(trained_models, "NUMBERS", trained_models.NUMBERS[:-1])
+    assert "other inputs" in trained_models.why_not_usable()
+

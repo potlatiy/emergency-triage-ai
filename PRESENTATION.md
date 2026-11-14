@@ -15,9 +15,9 @@ Record the screen with your voice over it. No editing needed.
 | Time | What is on screen | What to say |
 |---|---|---|
 | 0:00–0:15 | The digital hospital, entrance step | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
-| 0:15–0:35 | Type "crushing chest pain and sweating", age 67, male. Tap "Make up a number" for the insurance card. At check-in tap one danger sign, what the pain feels like and the answers for the doctor | "You are the patient. You say what is wrong and get a quick check built for your complaint: danger signs to tap, and three history questions that an AI model on this laptop chose for you. A few taps, and no waiting." |
-| 0:35–0:55 | Nurse station: choose Unstable, press "Measure and get Meddy's report". Show the report, then press "Everything is correct" | "The nurse measures the vital signs, and Meddy writes its report: the patient at a glance, a level, and the likely doctor. Our model, trained on 1,267 real emergency patients, says level 2. The nurse reads it and presses one button: everything is correct. The patient goes straight to the resuscitation bay." |
-| 0:55–1:15 | Start again: "bad stomach pain and vomiting", feverish. Meddy advises a personal check: press "I want to check the patient myself", tap level 3, send. Show the line, press 15 minutes pass, then Call next | "For the next patient Meddy is less sure, so it advises the nurse to check in person. She gives her own level and the patient joins the electronic line. The patient's phone shows a ticket and a place in line, never the level. The line is ordered by urgency, and waiting moves you up so nobody is stuck. When called, a second model suggests the department and the database picks the least busy doctor on duty." |
+| 0:15–0:35 | Type "crushing chest pain and sweating", age 67, male, tap "No insurance", register. At check-in tap the first danger sign, "Pressure or tightness", and an answer to each of the three questions for the doctor | "You are the patient. You say what is wrong and get a quick check built for your complaint: danger signs to tap, and three history questions that an AI model on this laptop chose for you. A few taps, and no waiting." |
+| 0:35–0:55 | Nurse station: choose Unstable, press "Measure and get Meddy's report". Show the report, then press "Everything is correct: send straight to the resuscitation bay" | "The nurse measures the vital signs, and Meddy writes its report: the patient at a glance, a level, and the likely doctor. Our model, trained on 1,267 real emergency patients, says level 2, an emergency. The nurse reads it and presses one button, and the patient goes straight to the resuscitation bay." |
+| 0:55–1:15 | Press "Start again as a new patient". Type "bad stomach pain and vomiting", age 40, "No insurance"; at check-in tap "No, none of these" and "Cramping"; at the nurse choose Feverish. Meddy advises a personal check: press "I want to check the patient myself", tap level 3, send to the waiting room (you are 3rd). Press "15 minutes pass" once, then "Call next patient" twice | "For the next patient Meddy is less sure, so it advises the nurse to check in person. She gives her own level and the patient joins the electronic line. The patient's phone shows a ticket and a place in line, never the level. The line is ordered by urgency, and waiting moves you up so nobody is stuck. When called, a second model has suggested the department and the database picks the least busy doctor on duty." |
 | 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
 | 1:45–2:00 | The limits section of the README | "The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
 
@@ -26,7 +26,8 @@ Record the screen with your voice over it. No editing needed.
 1. Start the hospital: `python hospital/server.py`, then open http://localhost:8000
 2. Run both patients of the script through once first. The AI model needs a few seconds to load the first time,
    and a complaint it has already seen is answered at once, so the recording will not wait.
-3. Press "Start a new day" on the last screen so the recording begins with a clean waiting room.
+3. Open "Behind the scenes" at the bottom of the page and press "Start a new day", so the recording begins with a
+   clean waiting room.
 4. Keep the browser window around 1,200 pixels wide so the floor plan and the panel sit side by side.
 
 ## Numbers to know by heart
@@ -41,7 +42,7 @@ Record the screen with your voice over it. No editing needed.
 | The stricter flag the hospital shows: share of patients flagged / under-rated patients reached | 21% / 91 of 131 (69%) |
 | Reports where a quick review is offered / AI level too low there / nurses too low there | 26% of patients / 7% / 7% |
 | Reports where a personal check is advised: AI level right / nurses right | 63% / 84% |
-| Under-rated patients reached when re-checking 1 in 5: simple rules / our model | 34–38% / 67% |
+| Under-rated patients reached when re-checking 1 in 5: simple rules / our model | 34–36% / 67% |
 | Simulated wait for the most urgent: arrival order / AI levels / nurse levels / expert levels | 88 / 24 / 13 / 7 minutes |
 | Right department: most common / key-word rule / our model | 21% / 67% / 70% |
 | Right department among the model's top three | 88% |
@@ -52,12 +53,14 @@ Record the screen with your voice over it. No editing needed.
 **Doesn't the "Everything is correct" button let the AI decide?**
 The nurse still decides: she reads the report and can always check the patient herself. Meddy offers a quick review
 only where its level held up in our tests (about 1 patient in 4: at least 80% sure, level 3 to 5, no warning sign).
-There its level was too low for 7% of patients, the same as the nurses. For everyone else it advises a personal check.
+There its level was too low for about 7% of patients, about the same as the nurses (with other random splits of the data,
+8% against 7%). For everyone else it advises a personal check. One exception: when Meddy suggests level 1 or 2, accepting
+sends the patient to the resuscitation team at once, which is the safe direction, so that is one press too.
 We have not tested how real nurses use the button, and reading a report first may make them agree too easily. That is
 why the app counts every verdict.
 
 **Why is your AI worse than nurses?**
-It reads a few words and seven numbers. A nurse sees and hears the patient. That is why we did not build a
+It reads a few words, the age and the vital signs. A nurse sees and hears the patient. That is why we did not build a
 replacement; we built a second check and a way to sort the line.
 
 **If it is worse, why use it at all?**
@@ -94,7 +97,8 @@ supplies the answers to tap and checks the result. Only the urgency model and th
 real data. The questions are untested, so their answers are passed to the doctor and never change the level.
 
 **Where does it fail?**
-It sent seven level 1–2 patients to the slow queue; nurses got five of those right. It is worse at a hospital it
+Its most likely level put 19 patients whom experts rated level 1 or 2 at level 4 or 5; nurses got 14 of those right.
+(With the safety-first setting it is seven, and nurses got five right.) It is worse at a hospital it
 was not trained on. It asks for a re-check on about a third of patients.
 
 **Is any patient data stored?**

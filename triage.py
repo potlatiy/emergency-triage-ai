@@ -103,8 +103,8 @@ def simulate_wait(priority, truth, rng, doctors=3, service_minutes=20.0, load=0.
     """Average minutes until first seen, for the truly urgent (expert level 1-2) and for everyone.
 
     This is a SIMULATION. The data has no arrival times, so we invent them: patients arrive at
-    random, and each visit takes a random time averaging `service_minutes`. Only the ORDER in
-    which waiting patients are called differs between runs.
+    random, and each visit takes a random time averaging `service_minutes`. Within one simulated
+    day only the ORDER in which waiting patients are called depends on `priority`.
     """
     n = len(truth)
     order = rng.permutation(n)
@@ -132,6 +132,8 @@ def simulate_wait(priority, truth, rng, doctors=3, service_minutes=20.0, load=0.
 
 
 def compare_queues(df, ai_levels, rounds=200):
+    """Each queue order is run on its own 200 random days (not on the same days), so a difference of a
+    minute or two between two orders is within the luck of the draw. The large differences are not."""
     rng = np.random.default_rng(SEED)
     truth = df["KTAS_expert"].values
     orderings = {
@@ -212,6 +214,23 @@ def quick_review_report(df, probabilities):
               f"too low {np.mean(nurse[pick] > truth[pick]):.0%}")
     urgent = truth <= 2
     print(f"   Of the {urgent.sum()} patients experts rated level 1 or 2, {int((quick & urgent).sum())} would be offered a quick review.")
+    # How far to trust "too low as rarely as the nurses": we picked the 80% cut-off on these same patients,
+    # so we look at the range and at other random splits of the data.
+    n = len(df)
+    low, high = plausible_range(lambda pick: np.mean(ai[pick][quick[pick]] > truth[pick][quick[pick]]), n)
+    print(f"   The AI's too-low share where a quick review is offered has a 95% range of {low:.0%} to {high:.0%}.")
+    shares = []
+    for seed in range(10):
+        folds = StratifiedKFold(5, shuffle=True, random_state=seed)
+        other = cross_val_predict(make_model(), df, df["KTAS_expert"], cv=folds, method="predict_proba")
+        pick = quick_review(other, vital_sign_rule(df))
+        shares.append((np.mean(most_likely(other)[pick] > truth[pick]), np.mean(nurse[pick] > truth[pick])))
+    ai_share, nurse_share = np.mean(shares, axis=0)
+    print(f"   With ten other random splits of the data: AI too low {ai_share:.1%} on average, nurses {nurse_share:.1%}. "
+          f"So the AI is about as good as the nurses there, or slightly worse, not better.")
+    unmeasured = df["Saturation"].isna().to_numpy()
+    print(f"   {int((quick & unmeasured).sum())} of the {quick.sum()} had no oxygen measurement at all (one of the two hospitals "
+          f"never recorded it), so 'no warning sign' means no warning sign among what was measured.")
     return quick
 
 
@@ -236,11 +255,18 @@ def flag_model_score(df):
 
 def caught_within_budget(score, under, budget, rng=None):
     """If nurses can re-check only `budget` of all patients, taking the highest scores first,
-    what share of the under-rated patients do they reach? Ties are broken at random."""
-    rng = rng or np.random.default_rng(SEED)
-    order = np.lexsort((rng.random(len(score)), -np.asarray(score, dtype=float)))
-    chosen = order[: int(round(budget * len(score)))]
-    return under[chosen].sum() / under.sum()
+    what share of the under-rated patients do they reach?
+
+    A simple rule gives many patients the same score, so the cut-off can fall inside a group of equals,
+    and which of them are re-checked is luck. That group is counted by its share: if 40 of 100 equal
+    patients fit in the budget, 40% of the under-rated ones among them count as reached. (Breaking the
+    tie with one random draw made the simple rules look up to 6 points better or worse than they are.)"""
+    score, under = np.asarray(score, dtype=float), np.asarray(under, dtype=bool)
+    take = int(round(budget * len(score)))
+    cut = np.sort(score)[::-1][take - 1]                  # the lowest score that still gets a re-check
+    surely, maybe = score > cut, score == cut
+    share = (take - surely.sum()) / maybe.sum()           # of the group at the cut-off, the part that fits
+    return (under[surely].sum() + share * under[maybe].sum()) / under.sum()
 
 
 def plausible_range(statistic, n, rounds=1000):

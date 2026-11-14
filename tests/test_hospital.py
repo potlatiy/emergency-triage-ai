@@ -306,7 +306,7 @@ def test_the_patient_phone_never_shows_the_level():
     reg = assessed_visit("headache", 30, "Female")
     client.post("/api/line/join", json={"reg_no": reg, "level": 4})
     me = client.get(f"/api/me/{reg}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day"}
     assert not all_keys(me) & HIDDEN_FROM_PATIENT
     in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
     assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
@@ -775,4 +775,181 @@ def test_the_screens_say_that_meddy_does_not_diagnose():
     assert "Meddy never gives a diagnosis." in page and "Meddy does not diagnose." in page
     assert "filed under" not in page                          # the patient is not shown a department as a verdict
     assert "Meddy never gives a diagnosis" in client.get("/doctor").text
+
+
+# ---------------------------------------------------------------- found by the code review
+
+@pytest.mark.parametrize("complaint, department", [
+    ("face drooping and slurred speech", "Neurology"),           # "pee" used to match inside "speech"
+    ("chest pain during exercise", "Cardiology"),                # "urin" used to match inside "during"
+    ("short of breath during the night", "Respiratory medicine"),
+    ("gallbladder pain", "Gastroenterology and surgery"),        # "bladder" used to send it to urology
+    ("i feel warm and shivery", "General medicine"),             # "arm " used to match inside "warm "
+    ("tired for a year now", "General medicine"),                # "ear " used to match inside "year "
+    ("pain in my leg.", "Trauma and orthopaedics"),              # a full stop or a plural used to be missed
+    ("both arms hurt", "Trauma and orthopaedics"),
+    ("my ears hurt", "Eye, ear, nose and throat"),
+    ("heartburn after eating", "Gastroenterology and surgery"),  # not the heart
+])
+def test_key_words_are_whole_words(complaint, department):
+    assert core.department_for(complaint) == department
+    assert core.questionnaire(complaint, use_model=False)["topic"] == department
+
+
+@pytest.mark.parametrize("text", ["what type of hospital is this", "I like this hospital", "lorem ipsum dolor sit amet",
+                                  "no hay nada", "died", "during"])
+def test_ordinary_words_are_not_symptoms(text):
+    assert core.known_words(text) == []
+    result = core.assess(text, 40)
+    assert result["unread"] is True and core.review_advice(result)["quick"] is False
+
+
+def test_the_question_check_closes_the_loopholes_the_review_found():
+    fine = [{"topic": "onset", "question": "When did the pain start?"}, {"topic": "before", "question": "Have you had it before?"}]
+    cases = [("Have you had heart attacks before?", "chest pain"),            # a plural
+             ("Are you diabetic?", "very thirsty"),                            # a derived word
+             ("Do you think it is the flu?", "heartburn and reflux"),          # "flu" is not in "reflux"
+             ("Is this a stroke?", "sunstroke after the beach"),
+             ("This is very serious. When did it start?", "chest pain"),       # an opinion in front of the question
+             ("Take two aspirin now. When did the chest pain start?", "chest pain"),
+             ("You shouldn't wait any longer, when did it start?", "chest pain"),
+             ("What is your telephone number?", "chest pain"),
+             ("A" * 500 + "?", "chest pain")]
+    for question, complaint in cases:
+        with pytest.raises(ValueError):
+            core.checked_questions(fine + [{"topic": "medicine", "question": question}], complaint=complaint)
+
+
+@pytest.mark.parametrize("complaint, skipped", [
+    ("i am in agony", set()),                         # "ago" used to match inside "agony"
+    ("worse when i breathe in", set()),               # one "worse" does not say how it has changed
+    ("headache for four days", {"onset"}),
+    ("chest pain, started last week", {"onset"}),
+    ("chest pain since this morning, getting much worse", {"onset", "course"}),
+])
+def test_only_what_the_complaint_really_says_is_skipped(complaint, skipped):
+    assert core.already_answered(complaint) & {"onset", "course"} == skipped
+
+
+def test_the_written_questions_are_kept_per_allowed_topics(monkeypatch):
+    calls = []
+    def writer(complaint, skip=()):
+        calls.append(set(skip))
+        return [{"question": f"Question about {t}?", "topic": t} for t in core.TOPICS if t not in skip][:core.FOLLOW_UPS]
+    monkeypatch.setattr(core, "_written", {})
+    monkeypatch.setattr(core, "questions_from_model", writer)
+    with_injury = core.follow_up("i feel strange", injury=True)       # trauma: every topic is allowed
+    without = core.follow_up("i feel strange", injury=False)          # general medicine: no "background"
+    assert len(calls) == 2 and "background" in calls[1] and "background" not in calls[0]
+    assert "background" not in [q["topic"] for q in without["questions"]]
+    assert core.follow_up("i feel strange", injury=True) == with_injury and len(calls) == 2      # kept the second time
+
+
+def test_the_80_percent_rule_uses_the_real_probability_not_the_rounded_one():
+    result = {"level": 4, "unread": False, "warnings": [], "sure": 0.7996,
+              "probabilities": {"1": 0.0, "2": 0.0, "3": 0.2, "4": 0.8, "5": 0.0}}       # 0.7996 shown as 0.8
+    assert core.review_advice(result)["quick"] is False
+    assert core.review_advice({**result, "sure": 0.8001})["quick"] is True
+
+
+def test_a_vital_sign_that_could_not_be_measured_is_a_warning():
+    vitals = {**core.VITAL_PRESETS["normal"], "Saturation": None}
+    result = core.assess("ankle pain", 30, vitals=vitals, pain=4)
+    assert "unmeasurable vital signs" in result["warnings"] and core.review_advice(result)["quick"] is False
+
+
+def test_the_level_is_worked_out_for_the_registered_patient_not_for_the_request():
+    reg_no = new_visit("sore throat", 20, "Female")
+    honest = client.post("/api/triage", json={"reg_no": reg_no}).json()
+    forged = client.post("/api/triage", json={"reg_no": reg_no, "complaint": "cardiac arrest, not breathing",
+                                              "age": 95, "sex": "Male"}).json()
+    assert forged["level"] == honest["level"] and forged["probabilities"] == honest["probabilities"]
+    assert db.visit_for(reg_no)["complaint"] == "sore throat"
+
+
+def test_numbers_and_text_that_cannot_be_stored_are_refused_not_crashed_on():
+    crashes = TestClient(server.app, raise_server_exceptions=False)
+    for body in ('{"complaint": "cough", "age": NaN, "use_model": false}',
+                 '{"complaint": "cough", "age": 1e400, "use_model": false}',
+                 '{"complaint": "cough \\ud800", "age": 30, "use_model": false}'):
+        assert crashes.post("/api/register", content=body, headers={"Content-Type": "application/json"}).status_code == 422
+    reg_no = assessed_visit()
+    assert crashes.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "department_how": "x" * 500}).status_code == 422
+    too_long = [{"question": "q" * 5000, "answer": "Yes", "kind": "danger"}]
+    assert crashes.post("/api/triage", json={"reg_no": new_visit(), "answers": too_long}).status_code == 422
+
+
+def test_a_second_click_cannot_send_one_patient_to_two_doctors():
+    """The state is checked inside the database together with the change, not in a separate step before it."""
+    reg_no = assessed_visit()
+    before = db.staff()
+    db.refer(reg_no, 3, "Looks unwell", "Cardiology")
+    for again in (lambda: db.refer(reg_no, 3, "Looks unwell", "Cardiology"),
+                  lambda: db.join_line(reg_no, 3, False),
+                  lambda: db.admit(reg_no, 1, False)):
+        with pytest.raises(db.AlreadySent):
+            again()
+    after = db.staff()
+    assert after["visits"]["with doctor"] == before["visits"]["with doctor"] + 1 == sum(d["waiting"] for d in after["doctors"])
+    assert refer(reg_no).status_code == 409
+
+
+def test_an_emergency_is_joined_and_sent_in_one_step():
+    reg_no = assessed_visit("cant breathe")
+    ticket, called = db.admit(reg_no, 1, False, "Respiratory medicine", "nurse")
+    assert called["reg_no"] == reg_no and called["doctor_reg"] == "DR-1000" and called["ticket"] == ticket
+    assert db.visit_for(reg_no)["status"] == "with doctor"
+    ticket, called = db.admit(assessed_visit("sore throat"), 5, False)
+    assert called is None
+
+
+def test_joining_again_keeps_the_nurses_department():
+    reg_no = assessed_visit()
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 4, "department": "Cardiology",
+                                        "department_how": "nurse, from the suggested departments", "review": "checked"})
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 3})           # only the level changes
+    visit = db.visit_for(reg_no)
+    assert visit["department"] == "Cardiology" and visit["department_how"].startswith("nurse") and visit["level"] == 3
+    other, report = report_for("headache", pain=4)
+    refer(other, level=report["level"])                                          # no department given: not "changed"
+    assert db.staff()["reviews"]["department_changed"] == 0
+
+
+def test_every_made_up_patient_has_the_ai_level_of_that_patient():
+    rows = db._conn.execute("SELECT complaint, age, sex, ai_level, vitals FROM visits WHERE you = 0").fetchall()
+    assert len(rows) == 20
+    for row in rows:
+        vitals = json.loads(row["vitals"])
+        measured = {k: v for k, v in vitals.items() if k not in ("alert", "pain")}
+        fresh = core.assess(row["complaint"], row["age"], row["sex"], alert=vitals["alert"], pain=vitals["pain"], vitals=measured)
+        assert fresh["level"] == row["ai_level"], row["complaint"]
+
+
+def test_a_phone_can_tell_a_new_day_from_the_old_one():
+    """Registration numbers start again after a new day, so the number alone is not enough to find your visit."""
+    first = client.post("/api/register", json={"complaint": "cough", "age": 30, "use_model": False}).json()
+    assert client.get(f"/api/me/{first['reg_no']}").json()["day"] == first["day"]
+    client.post("/api/reset")
+    second = client.post("/api/register", json={"complaint": "collapsed", "age": 70, "use_model": False}).json()
+    assert second["reg_no"] == first["reg_no"]                # the same number, another patient
+    assert client.get(f"/api/me/{second['reg_no']}").json()["day"] == second["day"] != first["day"]
+
+
+def test_the_last_two_doctor_fallbacks():
+    for doctor in db.staff()["doctors"]:
+        if doctor["department"] in ("Cardiology", "General medicine"):
+            db.set_duty(doctor["reg_no"], False)
+    sent = refer(assessed_visit(), department="Cardiology").json()
+    assert sent["department"] not in ("Cardiology", "General medicine", "Resuscitation team") and "least busy" in sent["reason"]
+    for doctor in db.staff()["doctors"]:
+        db.set_duty(doctor["reg_no"], False)
+    sent = refer(assessed_visit(), department="Cardiology").json()
+    assert sent["doctor_reg"] == "DR-1000" and "No doctor is on duty" in sent["reason"]
+
+
+def test_the_mild_flag_is_the_part_between_the_two_rules():
+    odds = [0.0, 0.05, 0.40, 0.55, 0.0]            # 45% chance of being more urgent than level 4: not strong
+    assert core.second_check(odds, 4) == "mild"     # but playing safe Meddy would still say level 3
+    assert core.second_check([0.0, 0.05, 0.50, 0.45, 0.0], 4) == "strong"
+    assert core.second_check(odds, 3) is None and core.second_check(None, 3) is None
 

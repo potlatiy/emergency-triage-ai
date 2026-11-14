@@ -48,7 +48,7 @@ and `assignment.py`. A test (`tests/test_saved_models.py`) fails if the saved fi
 ## Three things to know
 
 - **They only load with the same version of scikit-learn** they were saved with (written in `model_info.json`).
-  With any other version, `trained_models.ready()` quietly trains the models again from the data, which takes
+  With any other version, `trained_models.ready()` trains the models again (and says so in one line) from the data, which takes
   about a second, so the project still works.
 - **Only load model files from this repository.** A `.joblib` file can run code when it is opened, so a file
   from an unknown source is a risk. `ready()` refuses a model file that does not match `model_info.json`.
