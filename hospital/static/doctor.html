@@ -122,6 +122,11 @@
   .answers.danger { background:var(--rose-tint); } .answers.extra { background:var(--violet-tint); }
   .answers .a { padding:4px 14px; border-radius:999px; background:#fff; font-weight:700; overflow-wrap:anywhere; }
   .answers .a.yes { background:var(--rose); color:#fff; }
+  .answers .topic { display:inline-block; margin:0 10px 4px 0; padding:2px 11px; border-radius:999px; background:#fff;
+                    color:#46358f; font-size:.88rem; font-weight:700; vertical-align:middle; }
+  .glance { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0; }
+  .glance span { padding:6px 14px; border-radius:999px; background:var(--violet-tint); color:#2f2466; font-size:1rem; font-weight:700;
+                 overflow-wrap:anywhere; }
   .answers .a.none { background:transparent; color:var(--soft); font-weight:500; padding-right:0; }
   .answers.extra li { grid-template-columns:minmax(0,1fr); }
   .answers.extra .a { justify-self:start; border-radius:14px; }
@@ -352,7 +357,7 @@ function vitalsBlock(v) {
     ${tile("Breathing", v.RR, "per min")}
     ${tile("Temperature", v.BT, "°C")}
     ${tile("Oxygen", v.Saturation, "%")}
-    ${v.pain === undefined ? "" : tile("Pain", v.pain, "of 10")}
+    ${v.pain === undefined ? "" : v.pain_word ? tile("Pain", v.pain_word, `score ${v.pain} of 10`) : tile("Pain", v.pain, "of 10")}
     ${v.alert === undefined ? "" : `<div class="wide"><dt>Alertness</dt><dd>${esc(v.alert)}</dd></div>`}
   </dl>`;
 }
@@ -367,9 +372,23 @@ function answersBlock(p) {
     <p class="hint">${yes ? `${yes} of ${danger.length} answered yes.` : "None answered yes."}
       A yes moves the patient up the line by half a level. It does not change the level.</p>
     <ul class="answers danger">${danger.map((a) => `<li><span>${esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}
-    ${extra.length ? `<h3>For the doctor</h3>
-    <p class="hint">Questions written by an AI model. Information only: the answers did not change the level or the line.</p>
-    <ul class="answers extra">${extra.map((a) => `<li><span>${esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}`;
+    ${extra.length ? `<h3>History for the doctor</h3>
+    <p class="hint">Chosen for this complaint, most of them worded by an AI model. Information only: the answers did not
+      change the level or the line.</p>
+    <ul class="answers extra">${extra.map((a) => `<li><span>${a.label ? `<span class="topic">${esc(a.label)}</span>` : ""}${
+      esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}`;
+}
+
+// The overview at the top of the card: put together by plain code from what the patient tapped. No AI summary.
+// Each history answer carries a topic label from the server ("Started", "Feels like"); older visits have none.
+function glance(p) {
+  const yes = p.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
+  const facts = [
+    p.vitals && p.vitals.pain_word ? "Pain: " + p.vitals.pain_word.toLowerCase() : null,
+    p.answers.some((a) => a.kind === "danger") ? (yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs") : null,
+    ...p.answers.filter((a) => a.kind !== "danger" && a.label && a.answer).map((a) => `${a.label}: ${a.answer}`)];
+  const shown = facts.filter(Boolean);
+  return shown.length ? `<div class="glance" aria-label="At a glance">${shown.map((f) => `<span>${esc(f)}</span>`).join("")}</div>` : "";
 }
 
 function drawCard() {
@@ -387,6 +406,7 @@ function drawCard() {
     <div class="ids"><span class="regno num">${esc(p.reg_no)}</span><span class="regno num">Ticket ${esc(p.ticket)}</span></div>
     <h2>${esc(p.complaint)}</h2>
     <p class="lede">${person(p) ? esc(person(p)) + " · " : ""}${waited}</p>
+    ${glance(p)}
     ${p.referred ? `<div class="note red"><b>⚠ The nurse sent this patient straight to you, past the line.</b>
       Her reason: ${esc(p.referral_reason || "not given")}</div>` : ""}
     <div class="verdict" style="border-color:${LEVEL_COLOUR[p.level]};background:${LEVEL_TINT[p.level]}">
