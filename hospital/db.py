@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS visits (
     department TEXT, department_how TEXT,
     ai_level INTEGER, vitals TEXT, referred INTEGER DEFAULT 0, referral_reason TEXT,
     ai_odds TEXT, second_check TEXT,
+    ai_department TEXT, quick_advised INTEGER, review TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
@@ -224,15 +225,16 @@ def answers_for(reg_no):
     return [{**r, "label": core.topic_label(r["topic"])} for r in rows]
 
 
-def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None):
+def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department=None, quick=None):
     """Keep what the AI suggested and what was measured, so the doctor can see it later.
 
     ai_level is stored apart from level: level is the nurse's final decision and may be different.
     The six vital signs, the alertness and the pain score go into one JSON text column."""
     record = json.dumps({**vitals, "alert": alert, "pain": pain})
     with _lock, _conn:
-        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ? WHERE reg_no = ?",
-                      (ai_level, record, json.dumps(odds) if odds else None, reg_no))
+        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_advised = ? "
+                      "WHERE reg_no = ?", (ai_level, record, json.dumps(odds) if odds else None, department,
+                                           None if quick is None else int(quick), reg_no))
 
 
 def _flag(reg_no, level):
@@ -248,7 +250,7 @@ def visit_for(reg_no):
     return dict(row) if row else None
 
 
-def join_line(reg_no, level, danger, department=None, department_how=None):
+def join_line(reg_no, level, danger, department=None, department_how=None, review=None):
     """The nurse's decision puts the patient in the line.
 
     Joining a second time (the nurse changed the level) keeps the same ticket and the same arrival time,
@@ -258,8 +260,9 @@ def join_line(reg_no, level, danger, department=None, department_how=None):
         ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
         arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
         _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = ?, "
-                      "department_how = ?, second_check = ?, status = 'waiting' WHERE reg_no = ?",
-                      (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), reg_no))
+                      "department_how = ?, second_check = ?, review = COALESCE(?, review), status = 'waiting' "
+                      "WHERE reg_no = ?",
+                      (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review, reg_no))
     return ticket
 
 
@@ -352,8 +355,9 @@ def refer(reg_no, level, reason, department=None):
         if visit is None:
             return None
         ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
+        # Sending a patient straight in is always the nurse's own check, never a quick acceptance.
         _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, second_check = ?, "
-                      "arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
+                      "review = 'checked', arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
                       (ticket, level, reason, _flag(reg_no, level), _meta("clock"), reg_no))
         if department:
             _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
@@ -382,6 +386,32 @@ def _send_to_doctor(patient):
     _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
                   (doctor["reg_no"], patient["reg_no"]))
     return doctor, reason
+
+
+def likely_doctor(level, department, complaint="", injury=False):
+    """Who this patient would be sent to right now, without sending them: Meddy's report shows it to the nurse.
+    It is an approximation, because the lists can change before the patient is called."""
+    with _lock:
+        doctor, reason = _pick_doctor({"level": level, "department": department, "department_how": None,
+                                       "complaint": complaint, "injury": injury})
+    return {"doctor": doctor["name"], "doctor_reg": doctor["reg_no"], "room": doctor["room"],
+            "department": doctor["department"], "waiting": doctor["waiting"]}
+
+
+def review_stats():
+    """The test regime: how the nurses judged Meddy's reports so far.
+
+    Every report the nurse sees is either accepted as it is or checked in person. Counting those, and how
+    often a personal check changed the level or the department, is a running test of the app in use."""
+    with _lock:
+        rows = [dict(r) for r in _conn.execute(
+            "SELECT review, level, ai_level, department, ai_department, quick_advised FROM visits WHERE review IS NOT NULL")]
+    accepted = [r for r in rows if r["review"] == "approved"]
+    checked = [r for r in rows if r["review"] == "checked"]
+    return {"reviewed": len(rows), "accepted": len(accepted), "checked": len(checked),
+            "accepted_against_advice": sum(r["quick_advised"] == 0 for r in accepted),
+            "level_changed": sum(r["ai_level"] is not None and r["level"] != r["ai_level"] for r in checked),
+            "department_changed": sum(bool(r["ai_department"]) and r["department"] != r["ai_department"] for r in checked)}
 
 
 def _pick_doctor(patient):
@@ -433,7 +463,7 @@ def doctor_patients(doctor_reg):
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
-         "level": p["level"], "ai_level": p["ai_level"], "second_check": p["second_check"],
+         "level": p["level"], "ai_level": p["ai_level"], "second_check": p["second_check"], "review": p["review"],
          "insurance": p["insurance"], "card_end": p["card_end"],
          "vitals": _measured(p["vitals"]),
          "answers": answers_for(p["reg_no"]), "referred": bool(p["referred"]),
@@ -463,7 +493,7 @@ def staff():
             "on_duty": sum(d["on_duty"] for d in regular), "total": len(regular),
             "visits": {"registered": sum(counts.values()), "waiting": counts.get("waiting", 0),
                        "with doctor": counts.get("with doctor", 0), "done": counts.get("done", 0)},
-            "people": people}
+            "people": people, "reviews": review_stats()}
 
 
 def set_duty(reg_no, on_duty):
@@ -479,5 +509,5 @@ with _conn:
     _conn.executescript(SCHEMA)
 _columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")} | {
     "answers." + r["name"] for r in _conn.execute("PRAGMA table_info(answers)")}
-if not {"department", "referral_reason", "second_check", "person", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+if not {"department", "referral_reason", "second_check", "person", "review", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()

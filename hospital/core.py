@@ -21,7 +21,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import trained_models  # noqa: E402
-from triage import LEVELS, NUMBERS, TEXT, flag_strength, load, safety_first, urgency_gap_score  # noqa: E402
+from triage import (LEVELS, NUMBERS, QUICK_SURE, TEXT, flag_strength, load, safety_first,  # noqa: E402
+                    urgency_gap_score, warning_signs)
 
 LEVEL_NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
 SURE_ENOUGH = 0.60
@@ -97,6 +98,35 @@ def known_words(complaint):
     return found
 
 
+def vital_warnings(vitals, alert="Alert", pain=0):
+    """The warning signs in one patient's measurements, by name. The same rule as in the tests (triage.py)."""
+    row = pd.DataFrame([{**vitals, "Mental": {"Alert": 1}.get(alert, 2), "NRS_pain": pain, "unmeasurable": 0}])
+    table = warning_signs(row)
+    return [name for name in table.columns if bool(table[name].iloc[0])]
+
+
+def review_advice(result, danger=False):
+    """Can the nurse accept Meddy's report after a quick look, or should she check the patient in person?
+
+    A quick review is advised only where Meddy's level held up in our tests: Meddy is at least 80% sure,
+    the level is 3 to 5 and nothing in the measurements or the answers is a warning. On such patients its
+    level was too low as rarely as the nurses' (7%). A suggested level 1 or 2 is also quick: accepting it
+    sends the patient in at once, which is the safe direction. The nurse decides either way."""
+    sure = max(result["probabilities"].values())
+    reasons = []
+    if result["unread"]:
+        reasons.append("Meddy found no symptom it knows in the complaint")
+    if result["level"] <= 2:
+        return {"quick": not reasons, "emergency": True, "reasons": reasons}
+    if sure < QUICK_SURE:
+        reasons.append(f"Meddy is only {sure:.0%} sure of the level")
+    if danger:
+        reasons.append("the patient answered yes to a danger sign")
+    if result["warnings"]:
+        reasons.append("warning signs: " + ", ".join(result["warnings"]))
+    return {"quick": not reasons, "emergency": False, "reasons": reasons}
+
+
 def second_check(probabilities, nurse_level):
     """The flag for one patient once the nurse has given her level: "strong", "mild" or None.
     The rule itself is in triage.py (flag_strength), where it is tested on the 1,267 patients."""
@@ -153,6 +183,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "more_urgent": {str(l): round(float(urgency_gap_score(probabilities[None, :], [l])[0]), 3) for l in LEVELS},
         "second_check": {str(l): second_check(probabilities, l) for l in LEVELS},
         "unread": not known_words(complaint),
+        "warnings": vital_warnings(vitals, alert, pain),
     }
 
 

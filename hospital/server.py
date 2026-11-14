@@ -87,6 +87,8 @@ class Joining(BaseModel):
     danger: bool = False
     department: str | None = None
     department_how: str | None = None
+    # What the nurse did with Meddy's report: accepted it as it was, or checked the patient in person.
+    review: Literal["approved", "checked"] | None = None
 
 
 class Referral(BaseModel):
@@ -174,9 +176,15 @@ def triage(body: Assessment):
     # Only the hand-written danger questions can mark a patient; AI-written ones are information only.
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
-    # Keep the AI's suggestion and the measurements: the doctor's screen needs them later.
+    # Meddy's report for the nurse: can she accept it after a quick look, and who would the doctor be?
+    result["advice"] = core.review_advice(result, result["danger"])
+    for option in result["department_options"]:
+        option["doctor"] = db.likely_doctor(result["level"], option["department"])
+    result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])
+    # Keep the AI's suggestion and the measurements: the doctor's screen and the test regime need them later.
     db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
-                       [result["probabilities"][str(l)] for l in core.LEVELS])
+                       [result["probabilities"][str(l)] for l in core.LEVELS],
+                       result["department"], result["advice"]["quick"])
     return result
 
 
@@ -188,7 +196,7 @@ def join(body: Joining):
     known_department(body.department)
     if visit["ai_level"] is None:
         raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
-    ticket = db.join_line(body.reg_no, body.level, body.danger, body.department, body.department_how)
+    ticket = db.join_line(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review)
     called = db.call_next(body.reg_no) if body.level <= 2 else None
     if called:
         called["answers"] = db.answers_for(called["reg_no"])

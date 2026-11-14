@@ -82,7 +82,7 @@ underneath.
 |---|---|---|
 | Entrance | The visit is registered under its own number | Database |
 | Check-in | A quick check for this complaint: three danger signs to tap, what the pain feels like, and three optional history questions for the doctor | Danger questions come from a hand-written list chosen by the kind of complaint. The three history questions are chosen from six topics and worded on the spot by a small language model running on the same computer; the answers to tap are fixed lists. Check-in never waits for the model |
-| Nurse station | The nurse gives her level, then sees Meddy's. A "look again" flag appears when Meddy rates the patient more urgent. She can send a critical patient straight to a doctor, with a reason | The model tested in this project. The nurse's level is the final one |
+| Nurse station | Meddy's report for the nurse: the patient at a glance, a suggested level, and the likely department and doctor. The nurse presses "Everything is correct" or "I want to check the patient myself". In a personal check she gives her own level, sees a "look again" flag when Meddy rates the patient more urgent, and can change the department or send a critical patient straight to a doctor, with a reason | The two models tested in this project. Meddy says when a quick review is reasonable and when it advises a personal check. Every verdict is counted ("test regime") |
 | Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
 | Doctor | Department and doctor | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
@@ -162,6 +162,22 @@ level is more urgent than the nurse's, it fires for 21% of patients and still re
 62–77%). About 1 of these flags in 3 is right, against 1 in 4 before. The digital hospital shows this one as the
 flag and the rest as a milder note.
 
+### 3b. When can the nurse accept the AI's report after a quick look?
+
+In the digital hospital the nurse reviews Meddy's report and either accepts it or checks the patient herself.
+Accepting is only reasonable where the AI's level holds up, so we tested one plain rule: the model is at least 80%
+sure, it suggests level 3 to 5, and the patient shows no warning sign.
+
+| | Patients | AI level right | AI too low | Nurses right | Nurses too low |
+|---|---|---|---|---|---|
+| Quick review offered | 325 (26%) | 84% | 7% | 89% | 7% |
+| Personal check advised | 942 (74%) | 63% | 19% | 84% | 11% |
+
+Where a quick review is offered, the AI's level is too low as rarely as the nurses' own, though it is still right
+less often. Everywhere else it is clearly worse than a nurse, so the app advises a personal check. Of the 246
+patients experts rated level 1 or 2, 10 would be offered a quick review, so the nurse's review is a real step.
+The hospital adds two conditions the data cannot test: no danger sign answered yes, and a complaint Meddy can read.
+
 It beats simple rules, not just chance. If nurses can re-check only a share of patients, this is the share of
 under-rated patients they reach (95% range in brackets):
 
@@ -206,6 +222,7 @@ least 70% sure (about half of patients).
 - **The data is not from patients typing for themselves.** The complaints in our data were written by nurses in
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - Hiding the level from patients is our design choice to avoid panic. We did not test how patients react.
+- **The nurse reviewing a report is not the same as the nurse deciding alone.** Our second-check result (107 of 131) was measured with the nurse giving her level first. When she reads Meddy's report before deciding, she may agree with it more often than she should. We count every verdict in the app ("test regime"), but we have not tried it with real nurses.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
