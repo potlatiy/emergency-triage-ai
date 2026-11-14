@@ -66,19 +66,19 @@ Viral infection,4,General medicine,"no, default"
 Injury of ankle,4,Trauma and orthopaedics,yes
 Hypoglycemia,4,General medicine,"no, default"
 Ascites,3,Gastroenterology and surgery,yes
-Herniated disc disease of lumbar spine with radiculopathy,3,Gastroenterology and surgery,yes
+Herniated disc disease of lumbar spine with radiculopathy,3,Trauma and orthopaedics,corrected by hand
 Ocular pain,3,"Eye, ear, nose and throat",yes
 Infectious or septic colitis,3,Gastroenterology and surgery,yes
 Vomiting,3,Gastroenterology and surgery,yes
 Laceration of oral cavity,3,Trauma and orthopaedics,yes
 Panic attack,3,General medicine,"no, default"
-Herniated disc disease of lumbar spine,3,Gastroenterology and surgery,yes
+Herniated disc disease of lumbar spine,3,Trauma and orthopaedics,corrected by hand
 Atypical chest pain,3,Cardiology,yes
 Toothache,3,"Eye, ear, nose and throat",yes
 "Acute pancreatitis, unspecified",3,Gastroenterology and surgery,yes
 "Upper abdominal pain, unspecified",3,Gastroenterology and surgery,yes
 Suicide tendency,3,General medicine,"no, default"
-Dysarthria,3,Trauma and orthopaedics,yes
+Dysarthria,3,Neurology,corrected by hand
 Observation for suspected malignant neoplasm,3,General medicine,"no, default"
 Injury of finger,3,Trauma and orthopaedics,yes
 Herpes zoster,3,General medicine,"no, default"
@@ -97,8 +97,8 @@ Otalgia,3,"Eye, ear, nose and throat",yes
 Injury of face,3,Trauma and orthopaedics,yes
 Injury of hand,3,Trauma and orthopaedics,yes
 Transient ischemia attack,3,Neurology,yes
-Contusion of abdomen wall,3,Gastroenterology and surgery,yes
-End stage renal disease,3,General medicine,"no, default"
+Contusion of abdomen wall,3,Trauma and orthopaedics,corrected by hand
+End stage renal disease,3,Urology and kidney,yes
 Vasovagal syncope,3,Neurology,yes
 Bell's palsy,3,Neurology,yes
 Haemoptysis,3,Respiratory medicine,yes
@@ -121,7 +121,7 @@ Tension-type headache,2,Neurology,yes
 Multiple contusion NOS,2,Trauma and orthopaedics,yes
 "Bacterial pneumonia, unspecified",2,Respiratory medicine,yes
 ,2,General medicine,"no, default"
-"Acute renal failure, unspecified",2,General medicine,"no, default"
+"Acute renal failure, unspecified",2,Urology and kidney,yes
 Illness NOS,2,General medicine,"no, default"
 "Encephalopathy, unspecified",2,Neurology,yes
 Hematochezia,2,Gastroenterology and surgery,yes
@@ -195,7 +195,7 @@ Vestibular neuritis,2,"Eye, ear, nose and throat",yes
 "Ingested mushrooms, toxic effect of",2,General medicine,"no, default"
 "Cardiac arrest, unspecified",2,Cardiology,yes
 "Viral infection, unspecified",2,General medicine,"no, default"
-Other acute renal failure,2,General medicine,"no, default"
+Other acute renal failure,2,Urology and kidney,yes
 Intracerebral hemorrhage,2,Neurology,yes
 Cerebral infarction due to embolism of middle cerebral artery,2,Neurology,yes
 Other syncope and collapse,2,Neurology,yes
@@ -237,7 +237,7 @@ Sprain of cervical spine,1,Trauma and orthopaedics,yes
 Gross hematuria,1,Urology and kidney,yes
 Non-ST elevation myocardial infarction,1,Cardiology,yes
 Chronic alcoholism,1,General medicine,"no, default"
-Torsion of testis,1,General medicine,"no, default"
+Torsion of testis,1,Urology and kidney,yes
 Low back pain lumbar region,1,Trauma and orthopaedics,yes
 Pelvic pain,1,Obstetrics and gynaecology,yes
 "Calculus of bile duct with cholangitis, With obstruction",1,Gastroenterology and surgery,yes
@@ -261,7 +261,7 @@ End stage kidney disease on dialysis,1,Urology and kidney,yes
 "Hydrocephalus, unspecified",1,Neurology,yes
 Community-acquired pneumonia,1,Respiratory medicine,yes
 Acidosis NOS,1,General medicine,"no, default"
-Hypokalaemic periodic paralysis(familial),1,Neurology,yes
+Hypokalaemic periodic paralysis(familial),1,General medicine,corrected by hand
 Intracerebral haemorrhage in basal ganglia,1,Neurology,yes
 "Cellulitis, unspecified",1,General medicine,"no, default"
 Cellulitis of external ear,1,"Eye, ear, nose and throat",yes
@@ -276,7 +276,7 @@ Fracture of clavicle closed,1,Trauma and orthopaedics,yes
 Symptomatic gallbladder stone without obstruction,1,Gastroenterology and surgery,yes
 Low back pain sacral and sacrococcygeal region,1,Trauma and orthopaedics,yes
 Injury of lower back,1,Trauma and orthopaedics,yes
-"Non-insulin-dependent diabetes of the young, with nonketotic hyperglycemic-hyperosmolar coma(NKHHC)",1,Neurology,yes
+"Non-insulin-dependent diabetes of the young, with nonketotic hyperglycemic-hyperosmolar coma(NKHHC)",1,General medicine,corrected by hand
 Acute conjunctivitis,1,"Eye, ear, nose and throat",yes
 "Abdomen pain, generalized",1,Gastroenterology and surgery,yes
 Hirschsprung's disease,1,Gastroenterology and surgery,yes
@@ -303,7 +303,7 @@ Hemangioma of knee,1,General medicine,"no, default"
 Acute HIV infection syndrome,1,General medicine,"no, default"
 "Gout, unspecified, ankle joint",1,Trauma and orthopaedics,yes
 Injury of neck,1,Trauma and orthopaedics,yes
-Herniated disc disease of cervical spine,1,Gastroenterology and surgery,yes
+Herniated disc disease of cervical spine,1,Trauma and orthopaedics,corrected by hand
 Abscess of liver,1,Gastroenterology and surgery,yes
 "Injury of head, closed",1,Trauma and orthopaedics,yes
 Alcohol abuse,1,General medicine,"no, default"
@@ -369,7 +369,7 @@ Contusion of eyelid and periocular area,1,"Eye, ear, nose and throat",yes
 "Fracture of clavicle, shaft closed",1,Trauma and orthopaedics,yes
 Somatization disorder,1,General medicine,"no, default"
 Injury of wrist,1,Trauma and orthopaedics,yes
-Contusion of abdominal wall,1,Gastroenterology and surgery,yes
+Contusion of abdominal wall,1,Trauma and orthopaedics,corrected by hand
 Sprain and strain of thorax,1,Trauma and orthopaedics,yes
 Fracture of femur shaft closed,1,Trauma and orthopaedics,yes
 Other acute pancreatitis,1,Gastroenterology and surgery,yes
@@ -393,7 +393,7 @@ Chondromalacia patellae,1,Trauma and orthopaedics,yes
 Urinary stone,1,Urology and kidney,yes
 Common cold,1,Respiratory medicine,yes
 Fracture of ankle closed,1,Trauma and orthopaedics,yes
-Hepatic failure without coma,1,Neurology,yes
+Hepatic failure without coma,1,Gastroenterology and surgery,corrected by hand
 Postnasal drip syndrome,1,"Eye, ear, nose and throat",yes
 Derangement of temporomandibular joint,1,Trauma and orthopaedics,yes
 Adenocarcinoma of prostate,1,Urology and kidney,yes
@@ -431,7 +431,7 @@ Functional dyspepsia,1,Gastroenterology and surgery,yes
 Spinal stenosis lumbosacral region,1,Trauma and orthopaedics,yes
 Laceration of wrist,1,Trauma and orthopaedics,yes
 Whiplash injury,1,Trauma and orthopaedics,yes
-"Injury of abdomen, lower back and pelvis",1,Gastroenterology and surgery,yes
+"Injury of abdomen, lower back and pelvis",1,Trauma and orthopaedics,corrected by hand
 Chronic pancreatitis,1,Gastroenterology and surgery,yes
 Ileus,1,Gastroenterology and surgery,yes
 Unclassified epithelial ovarian cancer unspecified side,1,Obstetrics and gynaecology,yes
@@ -440,7 +440,7 @@ Gingivitis,1,"Eye, ear, nose and throat",yes
 Advanced gastric cancer,1,Gastroenterology and surgery,yes
 Unspecified dislocation of shoulder,1,Trauma and orthopaedics,yes
 "Abdominal aortic aneurysm, ruptured",1,Cardiology,yes
-Borderzone infarction,1,Cardiology,yes
+Borderzone infarction,1,Neurology,corrected by hand
 Hyperglycemia,1,General medicine,"no, default"
 Bradycardia,1,Cardiology,yes
 Meningioma,1,Neurology,yes
@@ -450,7 +450,7 @@ Tinnitus,1,"Eye, ear, nose and throat",yes
 Alcoholic hepatitis with ascites,1,Gastroenterology and surgery,yes
 Liver cirrhosis with hepatitis B Unspecified,1,Gastroenterology and surgery,yes
 Nosocomial pneumonia,1,Respiratory medicine,yes
-Hepatic encephalopathy without coma,1,Neurology,yes
+Hepatic encephalopathy without coma,1,Gastroenterology and surgery,corrected by hand
 Liver cirrhosis with hepatitis C Unspecified,1,Gastroenterology and surgery,yes
 Other urinary difficulty,1,Urology and kidney,yes
 Benign prostatic hyperplasia,1,Urology and kidney,yes
@@ -496,7 +496,7 @@ Laceration of chin,1,Trauma and orthopaedics,yes
 Nausea alone,1,Gastroenterology and surgery,yes
 Other specified abnormal uterine and vaginal bleeding,1,Obstetrics and gynaecology,yes
 "Esophageal varices without bleeding, Sencondary",1,Gastroenterology and surgery,yes
-Peripheral vertigo,1,Neurology,yes
+Peripheral vertigo,1,"Eye, ear, nose and throat",corrected by hand
 "Pesticide, unspecified, toxic effect of",1,General medicine,"no, default"
 Bronchiectasis,1,Respiratory medicine,yes
 Abnormal finding on abdominal and retroperitoneal imaging,1,Gastroenterology and surgery,yes
@@ -576,7 +576,7 @@ Adrenocortical insufficiency NOS,1,General medicine,"no, default"
 Traumatic secondary and recurrent haemorrhage,1,Trauma and orthopaedics,yes
 Closed fracture of second cervical vertebra,1,Trauma and orthopaedics,yes
 "Open wound of lip and oral cavity, part unspecified",1,Trauma and orthopaedics,yes
-Swallowed foreign body NOS,1,Trauma and orthopaedics,yes
+Swallowed foreign body NOS,1,Gastroenterology and surgery,corrected by hand
 Submandibular abscess,1,"Eye, ear, nose and throat",yes
 "Premature rupture of membranes, onset of labor within 24 hours, Unspecified",1,Obstetrics and gynaecology,yes
 Alcoholic encephalopathy,1,Neurology,yes

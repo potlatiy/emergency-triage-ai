@@ -9,13 +9,15 @@ It holds three things:
 No names are stored for patients. The doctors are made up for the demonstration.
 """
 
+import os
 import sqlite3
 import threading
 from pathlib import Path
 
 import core
 
-DB_PATH = Path(__file__).parent / "hospital.db"
+# The tests point this at a throwaway file so they never touch the demonstration database.
+DB_PATH = Path(os.environ.get("HOSPITAL_DB", Path(__file__).parent / "hospital.db"))
 _lock = threading.Lock()
 _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 _conn.row_factory = sqlite3.Row

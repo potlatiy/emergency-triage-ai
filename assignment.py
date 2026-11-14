@@ -49,7 +49,7 @@ DIAGNOSIS_RULES = [
      r"pneumonia|asthma|\bcopd|chronic obstructive|pulmonary|bronch|dyspn|pneumothorax|pleural|pleurisy|"
      r"respiratory|hemoptysis|haemoptysis|hyperventilation|influenza|\blung|cough|tuberculosis|common cold"),
     ("Urology and kidney",
-     r"ureter|\\brenal|kidney|urinary|(?<!chole)cystitis|pyelonephritis|hematuria|haematuria|prostat|urethr|\\btesti|"
+     r"ureter|\brenal|kidney|urinary|(?<!chole)cystitis|pyelonephritis|hematuria|haematuria|prostat|urethr|\btesti|"
      r"epididym|orchitis|priapism|retention of urine|nephr|(?<!gall)bladder|percutaneous catheter|hydronephrosis|"
      r"urolith|calculus of (kidney|ureter)|dysuria|urinoma|anuria|oliguria"),
     ("Gastroenterology and surgery",
@@ -69,8 +69,29 @@ DIAGNOSIS_RULES = [
 ]
 DEPARTMENTS = [name for name, _ in DIAGNOSIS_RULES] + [GENERAL]
 
+# Corrections made after reading every row of the table. Each is a diagnosis a rule put in the wrong
+# place because of a word inside another word ("hernia" in "herniated disc", "arthr" in "dysarthria").
+CORRECTIONS = {
+    "Borderzone infarction": "Neurology",                                   # a kind of stroke, not a heart attack
+    "Dysarthria": "Neurology",                                              # slurred speech
+    "Peripheral vertigo": "Eye, ear, nose and throat",                      # inner-ear dizziness
+    "Herniated disc disease of cervical spine": "Trauma and orthopaedics",
+    "Herniated disc disease of lumbar spine": "Trauma and orthopaedics",
+    "Herniated disc disease of lumbar spine with radiculopathy": "Trauma and orthopaedics",
+    "Contusion of abdomen wall": "Trauma and orthopaedics",
+    "Contusion of abdominal wall": "Trauma and orthopaedics",
+    "Injury of abdomen, lower back and pelvis": "Trauma and orthopaedics",
+    "Swallowed foreign body NOS": "Gastroenterology and surgery",
+    "Hepatic encephalopathy without coma": "Gastroenterology and surgery",  # caused by liver failure
+    "Hepatic failure without coma": "Gastroenterology and surgery",
+    "Hypokalaemic periodic paralysis(familial)": GENERAL,                   # a blood-salt problem
+    "Non-insulin-dependent diabetes of the young, with nonketotic hyperglycemic-hyperosmolar coma(NKHHC)": GENERAL,
+}
+
 
 def department_of_diagnosis(diagnosis):
+    if diagnosis in CORRECTIONS:
+        return CORRECTIONS[diagnosis]
     text = (diagnosis or "").lower()
     for name, pattern in DIAGNOSIS_RULES:
         if re.search(pattern, text):
@@ -86,8 +107,8 @@ def build_table(df):
     for diagnosis, n in counts.items():
         department = department_of_diagnosis(diagnosis)
         matched = any(re.search(p, diagnosis.lower()) for _, p in DIAGNOSIS_RULES)
-        rows.append({"diagnosis": diagnosis, "patients": int(n), "department": department,
-                     "matched_by_rule": "yes" if matched else "no, default"})
+        how = "corrected by hand" if diagnosis in CORRECTIONS else "yes" if matched else "no, default"
+        rows.append({"diagnosis": diagnosis, "patients": int(n), "department": department, "matched_by_rule": how})
     return pd.DataFrame(rows)
 
 
@@ -139,7 +160,7 @@ def main():
         print(f"wrote {TABLE.name}")
     truth = labels(df)
     table = pd.read_csv(TABLE, keep_default_na=False)
-    unmatched = table[table["matched_by_rule"] != "yes"]
+    unmatched = table[table["matched_by_rule"] == "no, default"]
     print(f"{len(table)} distinct diagnoses. {len(unmatched)} matched no rule "
           f"({unmatched['patients'].sum()} patients) and default to general medicine.")
     print("\nPatients per department (from the real diagnosis):")
