@@ -731,3 +731,48 @@ def test_the_test_regime_counts_what_the_nurse_did_with_each_report():
     card = client.get(f"/api/doctor/{db.visit_for(d)['doctor_reg']}/patients").json()["patients"]
     assert next(p for p in card if p["reg_no"] == d)["review"] == "checked"
     assert client.post("/api/line/join", json={"reg_no": a, "level": 3, "review": "liked it"}).status_code == 422
+
+
+# ---------------------------------------------------------------- Meddy never gives a diagnosis
+
+def test_a_question_that_diagnoses_is_thrown_away():
+    fine = [{"topic": "onset", "question": "When did the pain start?"}, {"topic": "before", "question": "Have you had it before?"}]
+    for diagnosing in ("Has a doctor given you a diagnosis before?", "Were you diagnosed with something?",
+                       "Could this be a heart attack?", "Do you think it is appendicitis?", "Is it an infection?"):
+        with pytest.raises(ValueError):
+            core.checked_questions(fine + [{"topic": "medicine", "question": diagnosing}])
+    # a condition the patient named in their own complaint may be repeated back
+    own_words = fine + [{"topic": "medicine", "question": "Have you taken anything for the asthma attack?"}]
+    assert len(core.checked_questions(own_words, complaint="asthma attack since this morning")) == 3
+    with pytest.raises(ValueError):
+        core.checked_questions(own_words, complaint="i cant breathe")
+
+
+def test_the_models_can_only_answer_with_a_level_or_a_department():
+    """What the two trained models can say is a fixed list. A diagnosis is not on it, and never an input either."""
+    import assignment
+    import triage
+    assert sorted(core._model.classes_) == [1, 2, 3, 4, 5]
+    assert set(core._assignment.classes_) == set(core.DEPARTMENT_NAMES)
+    diagnoses = set(core._data["Diagnosis in ED"].dropna().str.strip().str.lower())
+    assert not diagnoses & {name.lower() for name in core.DEPARTMENT_NAMES}
+    inputs = triage.NUMBERS + triage.CATEGORIES + [triage.TEXT]
+    assert "Diagnosis in ED" not in inputs and assignment.make_assignment_model().named_steps["prepare"] is not None
+
+
+def test_nothing_the_ai_returns_is_called_a_diagnosis():
+    reg_no, report = report_for("crushing chest pain and sweating", 67, "Male", vitals="unstable")
+    sent = client.post("/api/refer", json={"reg_no": reg_no, "level": report["level"], "reason": "Looks very unwell"}).json()
+    card = client.get(f"/api/doctor/{sent['doctor_reg']}/patients").json()
+    for answer in (report, client.get(f"/api/me/{reg_no}").json(), card, core.follow_up("chest pain", use_model=False)):
+        assert not any("diagnos" in key.lower() for key in all_keys(answer))
+    assert report["department"] in core.DEPARTMENT_NAMES
+    assert {option["department"] for option in report["department_options"]} <= set(core.DEPARTMENT_NAMES)
+
+
+def test_the_screens_say_that_meddy_does_not_diagnose():
+    page = client.get("/").text
+    assert "Meddy never gives a diagnosis." in page and "Meddy does not diagnose." in page
+    assert "filed under" not in page                          # the patient is not shown a department as a verdict
+    assert "Meddy never gives a diagnosis" in client.get("/doctor").text
+
