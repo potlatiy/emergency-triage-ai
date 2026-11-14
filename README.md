@@ -209,6 +209,43 @@ The model's lead over the rule is 3.7 points (95% range 1.4 to 6.1). It is weake
 gynaecology and general medicine patients. The right department is among its top three suggestions 88% of the time. The model was trained on complaints as nurses write them, so it decides only when it is at
 least 70% sure (about half of patients).
 
+### 5. Does the whole chain save time? (a simulation with assumed timings)
+
+The line simulation above only changes the order of the line. It moves waiting time from the most urgent patients
+to everyone else and does not shorten the average wait: in that simulation the average is 85 minutes in arrival
+order and about 92 when the line is sorted by urgency. So we simulated the whole chain, before and after, with a
+nurse station in front of the doctors (`python chain_time.py`).
+
+**Every timing in it is our assumption**, because the data has no times at all: 5 minutes for a full assessment
+by the nurse, 20 for a consultation, 1.5 minutes saved for the nurse and 1 for the doctor because the patient
+answered the history questions on the phone, half a minute for the nurse to read Meddy's report, and 1.5 minutes
+for a quick review. What is real: the patients, their levels, and which of them would be offered a quick review
+or flagged.
+
+![Simulated minutes from the door to the doctor, before and after, and how the result changes with each assumption](images/chain_time.png)
+
+| Average minutes from the door to the doctor | Everyone | Most urgent |
+|---|---|---|
+| Before | 104 | 29 |
+| After, with our assumed timings | 55 | 17 |
+| After, if the doctor saves nothing | 97 | 21 |
+| After, if the doctor saves 2 minutes | 36 | 15 |
+| After, if nobody saves anything and the report takes the nurse 2 minutes | 316 | 269 |
+
+What we take from it:
+
+- **It does not prove that the app saves time.** With our timings the average falls from 104 to 55 minutes, but
+  most of that comes from one assumption: that the doctor saves a single minute per patient. Without it the
+  saving is 7 minutes.
+- **A busy department is very sensitive to small savings.** When doctors are occupied 95% of the time, one minute
+  less per patient nearly halves the wait for a doctor. That is true of any such department, not of our app.
+- **It cuts both ways.** If the report only costs the nurse time and saves nobody anything, the single nurse
+  becomes the bottleneck and the department gets far slower.
+- **Speeding up the nurse alone does little** while the doctors are the bottleneck: patients just wait in the
+  next line.
+- **What has to be measured** before anyone can claim a saving: the minutes a doctor saves by having the answers
+  already, and the minutes a nurse spends on a report compared with a full assessment.
+
 ### Where it fails
 
 - **Seven urgent patients sent to the slow queue.** They include a chest pain complaint written in Korean with
