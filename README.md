@@ -218,6 +218,7 @@ least 70% sure (about half of patients).
 ## Run it
 
 - **Notebook:** open `triage.ipynb`. All outputs are saved in it.
+- **Trained models:** both are saved in [`models/`](models/README.md), so nothing needs training. `python trained_models.py` makes them again.
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000. For AI-written questions,
   install Ollama and run `ollama pull gemma3:4b` first; without it the hand-written questions are used.

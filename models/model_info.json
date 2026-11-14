@@ -1,0 +1,69 @@
+{
+  "trained_on": "2026-11-14",
+  "patients": 1267,
+  "made_with": {
+    "python": "3.13.7",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.4"
+  },
+  "inputs": {
+    "numbers": [
+      "Age",
+      "NRS_pain",
+      "Patients number per hour",
+      "SBP",
+      "DBP",
+      "HR",
+      "RR",
+      "BT",
+      "Saturation",
+      "unmeasurable"
+    ],
+    "categories": [
+      "Sex",
+      "Arrival mode",
+      "Injury",
+      "Mental",
+      "Pain"
+    ],
+    "text": "Chief_complain"
+  },
+  "data": {
+    "data/ktas_data.csv": "9876383970fa0577",
+    "data/diagnosis_departments.csv": "945044a0de2a841f"
+  },
+  "models": {
+    "urgency_model.joblib": {
+      "predicts": "urgency level, 1 (most urgent) to 5",
+      "answers": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "kind": "logistic regression on scaled numbers, one-hot categories and letter patterns of the complaint",
+      "exact_level_on_unseen_patients": 0.681,
+      "fingerprint": "3ff6878774320756"
+    },
+    "department_model.joblib": {
+      "predicts": "hospital department",
+      "answers": [
+        "Cardiology",
+        "Eye, ear, nose and throat",
+        "Gastroenterology and surgery",
+        "General medicine",
+        "Neurology",
+        "Obstetrics and gynaecology",
+        "Respiratory medicine",
+        "Trauma and orthopaedics",
+        "Urology and kidney"
+      ],
+      "kind": "the same preparation and model type as the urgency model",
+      "right_department_on_unseen_patients": 0.702,
+      "right_department_in_top_three": 0.878,
+      "fingerprint": "e83793970cb02dae"
+    }
+  },
+  "note": "The figures were measured with 5-fold cross-validation: every patient scored by a model that never saw them. The saved files were then trained on all patients, for the demonstration."
+}

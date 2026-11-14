@@ -170,6 +170,7 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 - [x] Interactive mind map of the project (`docs/`)
 
 - [x] Assignment model trained on real diagnoses and compared with the key-word rule (`assignment.py`)
+- [x] Both trained models saved in the repository (`models/`, made by `trained_models.py`)
 - [x] Question writer steered by a system prompt (`hospital/core.py`)
 - [x] Diagnosis-to-department table read row by row; 14 corrections made (`data/diagnosis_departments.csv`)
 - [x] Department model added to the notebook (section 13)
@@ -217,7 +218,8 @@ pip install -r requirements.txt
 |---|---|---|
 | Urgency results | `python triage.py` | (prints to the screen) |
 | Assignment results | `python assignment.py` | (prints to the screen) |
-| Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (43 checks should pass) |
+| Save the trained models again | `python trained_models.py` | (writes the files in `models/`) |
+| Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (47 checks should pass) |
 | Notebook | open `triage.ipynb` | |
 | Second-check demo | `python app.py` | http://localhost:7861 |
 | Digital hospital | `python hospital/server.py` | http://localhost:8000 |

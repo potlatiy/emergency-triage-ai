@@ -12,7 +12,8 @@ import gradio as gr
 import numpy as np
 import pandas as pd
 
-from triage import CATEGORIES, LEVELS, NUMBERS, TEXT, load, make_model, safety_first
+import trained_models
+from triage import CATEGORIES, LEVELS, NUMBERS, TEXT, load, safety_first
 
 IMAGES = Path(__file__).parent / "images"
 NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
@@ -32,7 +33,7 @@ LABELS = {"Age": "Age", "NRS_pain": "Pain score", "Patients number per hour": "H
 SURE_ENOUGH = 0.60      # below this the tool says it is not sure
 
 df = load()
-model = make_model().fit(df, df["KTAS_expert"])
+model = trained_models.ready()[0]      # the saved urgency model from models/, or trained now if it does not fit
 BUSY = float(df["Patients number per hour"].median())
 
 

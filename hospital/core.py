@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from assignment import labels as department_labels, make_assignment_model  # noqa: E402
-from triage import LEVELS, NUMBERS, TEXT, load, make_model, safety_first  # noqa: E402
+import trained_models  # noqa: E402
+from triage import LEVELS, NUMBERS, TEXT, load, safety_first  # noqa: E402
 
 LEVEL_NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
 SURE_ENOUGH = 0.60
@@ -31,10 +31,11 @@ OLLAMA_MODEL = "gemma3:4b"
 # ---------------------------------------------------------------- the urgency model
 
 _data = load()
-_model = make_model().fit(_data, _data["KTAS_expert"])     # demo model, trained on all 1,267 patients
+# Both models were trained on all 1,267 patients and saved in models/ (see trained_models.py).
+# The saved files are loaded when they fit this computer; otherwise the models are trained again here.
+# The assignment model learned from each real patient's final diagnosis (see assignment.py).
+_model, _assignment = trained_models.ready()
 _BUSY = float(_data["Patients number per hour"].median())
-# The assignment model: learned from each real patient's final diagnosis (see assignment.py).
-_assignment = make_assignment_model().fit(_data, department_labels(_data))
 # The model was trained on complaints as nurses write them ("ant. chest pain"). Patients typing their own
 # words are less familiar to it, and at middling confidence it made odd choices in our trials. So it
 # decides only when it is at least 70% sure; otherwise the key-word rule decides.
