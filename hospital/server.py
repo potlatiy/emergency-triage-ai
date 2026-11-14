@@ -82,6 +82,8 @@ def triage(body: Assessment):
     # Only the hand-written danger questions can mark a patient; AI-written ones are information only.
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
+    # Keep the AI's suggestion and the measurements: the doctor's screen needs them later.
+    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain)
     return result
 
 

@@ -4,6 +4,8 @@ The language model is switched off here (use_model=False) so the tests are fast 
 same answer every time.
 """
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -166,3 +168,21 @@ def test_the_api_rejects_impossible_input():
 def test_the_page_is_served():
     page = client.get("/")
     assert page.status_code == 200 and "Digital hospital" in page.text
+
+
+# ---------------------------------------------------------------- saving the assessment
+
+def new_visit(complaint="chest pain since this morning", age=67, sex="Male"):
+    """Register a visit through the API (language model off) and return its registration number."""
+    body = {"complaint": complaint, "age": age, "sex": sex, "use_model": False}
+    return client.post("/api/register", json=body).json()["reg_no"]
+
+
+def test_triage_saves_the_ai_level_and_the_vitals():
+    reg = new_visit()
+    result = client.post("/api/triage", json={"reg_no": reg, "complaint": "chest pain", "age": 67, "sex": "Male",
+                                              "pain": 7, "vitals": "unstable"}).json()
+    visit = db.visit_for(reg)
+    assert visit["ai_level"] == result["level"] and visit["level"] is None     # level is still the nurse's to set
+    saved = json.loads(visit["vitals"])
+    assert saved["SBP"] == 88 and saved["Saturation"] == 89 and saved["pain"] == 7 and saved["alert"] == "Alert"
