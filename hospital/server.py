@@ -24,9 +24,11 @@ import core
 import db
 
 STATIC = Path(__file__).parent / "static"
-PORT = 8000
+PORT = int(os.environ.get("MEDDY_PORT", 8000))
 # Off by default: the demo stays on this computer unless someone starts it with MEDDY_LAN=1.
 LAN = os.environ.get("MEDDY_LAN") == "1"
+# Set when the hospital runs online (see deploy/huggingface): the QR code then points to this address.
+PUBLIC_URL = os.environ.get("MEDDY_PUBLIC_URL") or None
 app = FastAPI(title="Digital hospital")
 
 
@@ -283,7 +285,10 @@ def reset():
 
 @app.get("/api/address")
 def address():
-    """Where a phone on the same Wi-Fi can open the hospital, for the QR code. None unless MEDDY_LAN=1."""
+    """Where a phone can open the hospital, for the QR code: the online address when there is one,
+    otherwise this computer on the same Wi-Fi when started with MEDDY_LAN=1, otherwise None."""
+    if PUBLIC_URL:
+        return {"url": PUBLIC_URL}
     ip = lan_ip() if LAN else None
     return {"url": f"http://{ip}:{PORT}/" if ip else None}
 
@@ -292,4 +297,5 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 if __name__ == "__main__":
     db.reset()                 # every start of the server begins a fresh demonstration day
-    uvicorn.run(app, host="0.0.0.0" if LAN else "127.0.0.1", port=PORT, log_level="warning")
+    online = LAN or PUBLIC_URL
+    uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning")

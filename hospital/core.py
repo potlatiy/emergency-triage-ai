@@ -10,6 +10,7 @@ The doctors, the registration numbers and the line itself live in the database (
 """
 
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -27,7 +28,9 @@ LEVEL_NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent"
 SURE_ENOUGH = 0.60
 MOVE_UP_EVERY = 45          # minutes of waiting that lift a level 3-5 patient by one level
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "gemma3:4b"
+# The online copy runs on a plain processor, so it can choose a smaller Gemma and wait longer for it.
+OLLAMA_MODEL = os.environ.get("MEDDY_OLLAMA_MODEL", "gemma3:4b")
+OLLAMA_TIMEOUT = int(os.environ.get("MEDDY_OLLAMA_TIMEOUT", 20))
 
 # ---------------------------------------------------------------- the urgency model
 
@@ -343,7 +346,7 @@ def checked_questions(written, skip=()):
     return kept[:FOLLOW_UPS]
 
 
-def questions_from_model(complaint, skip=(), timeout=20):
+def questions_from_model(complaint, skip=(), timeout=OLLAMA_TIMEOUT):
     """History questions for this exact complaint, chosen and worded by the local language model."""
     allowed = [t for t in TOPICS if t not in skip]
     body = {"model": OLLAMA_MODEL, "stream": False, "format": _extra_schema(allowed), "keep_alive": "30m",

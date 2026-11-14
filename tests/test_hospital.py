@@ -652,6 +652,13 @@ def test_address_points_phones_to_this_computer(monkeypatch):
     assert TestClient(server.app).get("/api/address").json() == {"url": "http://192.168.1.20:8000/"}
 
 
+def test_online_the_address_is_the_public_one(monkeypatch):
+    # On the Hugging Face Space the QR code must point to the Space, not to the container's own address.
+    monkeypatch.setattr(server, "LAN", True)
+    monkeypatch.setattr(server, "PUBLIC_URL", "https://meddy-example.hf.space/")
+    assert TestClient(server.app).get("/api/address").json() == {"url": "https://meddy-example.hf.space/"}
+
+
 # ---------------------------------------------------------------- Meddy's report and the nurse's verdict
 
 def report_for(complaint, age=30, sex="Female", yes=False, **more):
@@ -724,4 +731,3 @@ def test_the_test_regime_counts_what_the_nurse_did_with_each_report():
     card = client.get(f"/api/doctor/{db.visit_for(d)['doctor_reg']}/patients").json()["patients"]
     assert next(p for p in card if p["reg_no"] == d)["review"] == "checked"
     assert client.post("/api/line/join", json={"reg_no": a, "level": 3, "review": "liked it"}).status_code == 422
-
