@@ -464,6 +464,35 @@ def call_next(reg_no=None):
         return _called(rows[0], clock)
 
 
+def call_for_doctor(doctor_reg):
+    """The doctor presses "Call my next patient": the first patient in line for this doctor's department comes
+    to this doctor. Their phone then says which room to go to.
+
+    The line's order is kept: the patient called is the first of this department, so a more urgent patient of
+    the department is never overtaken. General medicine covers everyone, so it takes the first in line when
+    nobody of its own is waiting. Returns the call, None when nobody is waiting for this doctor, or raises
+    LookupError for an unknown doctor."""
+    with _lock, _conn:
+        doctor = _conn.execute("SELECT * FROM doctors WHERE reg_no = ?", (doctor_reg,)).fetchone()
+        if doctor is None:
+            raise LookupError(doctor_reg)
+        clock, rows = _waiting()
+        department = doctor["department"]
+        mine = [p for p in rows if (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]
+        if not mine and department == core.DEFAULT_DEPARTMENT:
+            mine = rows
+        if not mine:
+            return None
+        patient = mine[0]
+        _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor_reg,))
+        _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
+                      (doctor_reg, patient["reg_no"]))
+    return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
+            "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
+            "department": department, "doctor": doctor["name"], "doctor_reg": doctor_reg, "room": doctor["room"],
+            "reason": f"Called by {doctor['name']}: first in line for {department.lower()}."}
+
+
 def refer(reg_no, level, reason, department=None):
     """The nurse sends a critical patient straight to a doctor, past the line.
 

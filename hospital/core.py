@@ -340,9 +340,16 @@ _SAYS_COURSE = re.compile(r"\b(getting (\w+ )?(worse|better)|worsening|comes and
 _written = {}       # complaints the model has already answered, so a repeated complaint is instant
 
 
+# "In your own words": the one open question at check-in, typed by the patient. Information only, like the others.
+OWN_WORDS = {"question": "Tell the nurse in your own words what happened", "kind": "extra", "topic": "story",
+             "label": "In their own words"}
+
+
 def topic_label(topic):
     if topic == PAIN_FEEL["topic"]:
         return PAIN_FEEL["label"]
+    if topic == OWN_WORDS["topic"]:
+        return OWN_WORDS["label"]
     return TOPICS[topic]["label"] if topic in TOPICS else None
 
 
@@ -487,7 +494,10 @@ def _report_for_summary(complaint, age, sex, answers, injury=False):
         lines.append("Caused by an injury: yes")
     danger = [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"]
     lines += [f"Danger sign, answered yes: {q}" for q in danger] or ["Danger signs: answered no to all"]
-    lines += [f"{a['question']} {a['answer']}" for a in answers if a.get("kind") == "extra" and a.get("answer")]
+    story = [a["answer"] for a in answers if a.get("topic") == OWN_WORDS["topic"] and a.get("answer")]
+    lines += [f'The patient wrote, in their own words: "{text}"' for text in story]
+    lines += [f"{a['question']} {a['answer']}" for a in answers
+              if a.get("kind") == "extra" and a.get("answer") and a.get("topic") != OWN_WORDS["topic"]]
     return "\n".join(lines)
 
 

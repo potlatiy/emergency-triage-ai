@@ -107,7 +107,11 @@
   input[type=text], input[type=number], select { width:100%; min-height:62px; padding:14px 20px; border:2px solid #aab8b0;
      border-radius:16px; background:var(--card); font-size:1.2rem; color:var(--ink);
      transition:border-color .15s ease, box-shadow .15s ease; }
-  input::placeholder { color:#6f7e78; }
+  textarea { display:block; width:100%; min-height:110px; padding:14px 20px; border:2px solid #aab8b0; border-radius:16px;
+     background:#fff; font:inherit; font-size:1.15rem; color:var(--ink); resize:vertical; }
+  textarea:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 5px rgba(33,82,196,.18); }
+  .q .count { float:none; display:block; margin-top:6px; text-align:right; }
+  input::placeholder, textarea::placeholder { color:#6f7e78; }
   input:hover, select:hover { border-color:var(--soft); }
   input:focus, select:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 5px rgba(33,82,196,.18); }
   input[aria-invalid=true] { border-color:var(--error); box-shadow:0 0 0 5px rgba(180,48,47,.14); }
@@ -513,11 +517,18 @@ let watching = null;                    // the timer of the patient's phone in t
 let tick = 0;                           // counts the changes of step; an answer that arrives for an older step is dropped
 
 // A reload must not lose the visit: a patient who refreshes their phone would lose their place and leave a
-// ghost in the line. The visit is kept in this tab's session storage and looked up again on the server.
-function remember(step, called) {
-  try { sessionStorage.setItem("meddy-visit", JSON.stringify({ me, step, called: called || null })); } catch (e) {}
+// ghost in the line. The visit, with every answer tapped so far, is kept in this tab (session storage) and on
+// this device (local storage), and looked up again on the server. A reload goes back to the same step; a new tab
+// on the same device offers to continue the open visit.
+const KEPT = "meddy-visit";
+let step = "entrance";
+function remember(where, called) {
+  if (where) step = where;
+  const saved = JSON.stringify({ me, step, called: called || null });
+  try { sessionStorage.setItem(KEPT, saved); localStorage.setItem(KEPT, saved); } catch (e) {}
 }
-function forget() { try { sessionStorage.removeItem("meddy-visit"); } catch (e) {} }
+function forget() { try { sessionStorage.removeItem(KEPT); localStorage.removeItem(KEPT); } catch (e) {} }
+function kept(store) { try { return JSON.parse(store.getItem(KEPT)); } catch (e) { return null; } }
 // A message says why the phone is back at the entrance (for example: the hospital started a new day).
 function startOver(message) {
   me = fresh(); forget(); entrance();
@@ -527,9 +538,12 @@ function startOver(message) {
 // got the same registration number on a later day.
 const sameVisit = (now) => now.day === undefined || me.day === undefined || me.day === null || now.day === me.day;
 async function start() {
-  let saved = null;
-  try { saved = JSON.parse(sessionStorage.getItem("meddy-visit")); } catch (e) {}
-  if (!(saved && saved.me && saved.me.reg)) { entrance(); return; }
+  const saved = kept(sessionStorage), elsewhere = saved ? null : kept(localStorage);
+  if (elsewhere && elsewhere.me && elsewhere.me.reg) { entrance(); offerToContinue(elsewhere); return; }
+  if (!(saved && saved.me && saved.me.reg)) {
+    if (saved && saved.me) me = { ...fresh(), ...saved.me };     // what was typed at the entrance before a reload
+    entrance(); return;
+  }
   let now;
   try { now = await api("/api/me/" + encodeURIComponent(saved.me.reg)); }
   catch (e) {
@@ -541,7 +555,6 @@ async function start() {
   me = { ...fresh(), ...saved.me };
   if (!sameVisit(now)) { startOver(); return; }
   if (now.status === "waiting") return waiting("Welcome back. Your place in line was kept.");
-  if (now.status === "called" && me.result) return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
   if (now.status === "nurse") return atNurse();
   if (now.status === "called") return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
   if (now.status === "registered") {
@@ -551,6 +564,21 @@ async function start() {
     return;
   }
   startOver();                                                   // the visit is finished
+}
+
+function offerToContinue(other) {
+  const box = document.createElement("div");
+  box.className = "note"; box.style.margin = "0 0 18px";
+  box.innerHTML = `<b>This device has an open visit${other.me.code ? ", code " + esc(other.me.code) : ""}.</b>
+    <span class="hint">“${esc(other.me.complaint)}”</span>
+    <div class="row" style="margin-top:12px"><button class="go" id="continue" style="margin:0">Continue my visit</button>
+      <button class="go light" id="new-visit" style="margin:0">Start a new visit</button></div>`;
+  panel.prepend(box);
+  document.getElementById("continue").addEventListener("click", () => {
+    try { sessionStorage.setItem(KEPT, JSON.stringify(other)); } catch (e) {}
+    start();
+  });
+  document.getElementById("new-visit").addEventListener("click", () => { box.remove(); try { localStorage.removeItem(KEPT); } catch (e) {} });
 }
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -708,13 +736,14 @@ function entrance() {
     <p class="hint">Insurance never changes your level or your place in line.</p>
     <p class="error" id="error" role="alert"></p>
     <button class="go" id="go">Register and go to check-in</button>`;
-  bindChoice("sex", (v) => me.sex = v);
+  bindChoice("sex", (v) => { me.sex = v; remember("entrance"); });
   const cardBox = document.getElementById("card");
   bindChoice("insurance", (v) => { me.insurance = { Public: "public", Private: "private", "No insurance": "none" }[v];
     document.getElementById("card-row").hidden = me.insurance === "none";
     document.getElementById("no-insurance").hidden = me.insurance !== "none";
     document.getElementById("error").textContent = "";
-    if (me.insurance === "none") stopScan(); else cardBox.focus({ preventScroll: true }); });
+    if (me.insurance === "none") stopScan(); else cardBox.focus({ preventScroll: true });
+    remember("entrance"); });
   cardBox.addEventListener("input", () => { cardBox.removeAttribute("aria-invalid"); document.getElementById("error").textContent = ""; });
   cardBox.addEventListener("keydown", (event) => { if (event.key === "Enter") document.getElementById("go").click(); });
   document.getElementById("made-up").addEventListener("click", () => {
@@ -724,6 +753,11 @@ function entrance() {
   document.getElementById("scan-stop").addEventListener("click", stopScan);
   const complaintBox = document.getElementById("complaint");
   complaintBox.focus({ preventScroll: true });
+  // Whatever is typed is kept, so a reload before registering does not empty the form.
+  const keepDraft = () => { me.complaint = complaintBox.value; me.arrival = document.getElementById("arrival").value;
+    const age = Number(document.getElementById("age").value); if (age) me.age = age; remember("entrance"); };
+  for (const id of ["complaint", "age", "arrival"]) document.getElementById(id).addEventListener("change", keepDraft);
+  complaintBox.addEventListener("input", keepDraft);
   complaintBox.addEventListener("input", () => {
     document.getElementById("count").textContent = complaintBox.value.length + " / 200";
     complaintBox.removeAttribute("aria-invalid"); document.getElementById("error").textContent = ""; });
@@ -777,7 +811,6 @@ function entrance() {
 // ---------------------------------------------------------------- 2. check-in
 // Check-in is a few taps. The three history questions for the doctor are fetched in the background
 // (GET /api/follow-up), so nobody waits for the language model; a patient who is quicker simply skips them.
-const ELSE = "Something else";
 function askFollowUp() {
   const reg = me.reg;
   api("/api/follow-up/" + encodeURIComponent(reg)).then((data) => {
@@ -789,31 +822,37 @@ function askFollowUp() {
     drawFollowUp();
   }).catch(() => { if (me.reg === reg) { me.followUp = "none"; drawFollowUp(); } });
 }
+// Each question for the doctor offers quick answers to tap AND a box to write in. A written answer is kept
+// as the patient wrote it; with a tapped answer too, both are kept ("Less than an hour ago. Started on the stairs").
+const joined = (q) => { const typed = (q.typed || "").trim();
+  return [q.chip, q.chip && typed ? typed[0].toUpperCase() + typed.slice(1) : typed].filter(Boolean).join(". ") || null; };
 function drawFollowUp() {
   const box = document.getElementById("follow-up"); if (!box) return;
   const extra = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "extra" && q.choices && q.topic !== "feel");
   if (me.followUp === "writing") {
-    box.innerHTML = `<p class="writing"><i aria-hidden="true"></i>Meddy is choosing three quick questions for your doctor. You don't have to wait for them.</p>`;
+    box.innerHTML = `<p class="writing"><i aria-hidden="true"></i>Meddy is choosing three questions for your doctor. You don't have to wait for them.</p>`;
     return;
   }
   if (!extra.length) { box.innerHTML = ""; return; }
   box.innerHTML = `<section class="section sec-doctor">
     ${sectionHead("doctor", "For your doctor (optional)", (me.source === "ai"
-      ? "Chosen and worded for your complaint by an AI model on this computer. " : "") +
-      "One tap each. Your answers go to the doctor and don't change your place.")}
+      ? "Chosen and worded for your complaint by an AI model. " : "") +
+      "Tap a quick answer, write your own, or both. Your answers go to the nurse and the doctor and don't change your place.")}
     ${extra.map(([q, i]) => `<div class="q"><p id="xl${i}">${esc(q.question)}</p>
-      <div class="choice chips" id="x${i}" role="group" aria-labelledby="xl${i}">${q.choices.concat(ELSE).map((c) =>
-        `<button type="button" data-v="${esc(c)}" aria-pressed="false">${esc(c)}</button>`).join("")}</div>
-      <input type="text" id="xt${i}" maxlength="80" hidden aria-labelledby="xl${i}" placeholder="Type your answer"></div>`).join("")}
+      <div class="choice chips" id="x${i}" role="group" aria-labelledby="xl${i}">${q.choices.map((c) =>
+        `<button type="button" data-v="${esc(c)}" class="${c === q.chip ? "on" : ""}" aria-pressed="${c === q.chip}">${esc(c)}</button>`).join("")}</div>
+      <input type="text" id="xt${i}" maxlength="120" aria-labelledby="xl${i}" placeholder="Or write it in your own words"
+             value="${esc(q.typed || "")}"></div>`).join("")}
   </section>`;
-  extra.forEach(([q, i]) => document.getElementById("x" + i).addEventListener("click", (event) => {
-    const button = event.target.closest("button"); if (!button) return;
-    const on = button.getAttribute("aria-pressed") !== "true";                        // a second tap takes the answer back
-    for (const b of button.parentNode.children) { b.classList.toggle("on", on && b === button); b.setAttribute("aria-pressed", on && b === button); }
-    const typed = document.getElementById("xt" + i), other = on && button.dataset.v === ELSE;
-    typed.hidden = !other; if (other) typed.focus();
-    q.answer = on && !other ? button.dataset.v : null;
-  }));
+  extra.forEach(([q, i]) => {
+    document.getElementById("x" + i).addEventListener("click", (event) => {
+      const button = event.target.closest("button"); if (!button) return;
+      const on = button.getAttribute("aria-pressed") !== "true";                      // a second tap takes the answer back
+      for (const b of button.parentNode.children) { b.classList.toggle("on", on && b === button); b.setAttribute("aria-pressed", on && b === button); }
+      q.chip = on ? button.dataset.v : null; q.answer = joined(q); remember();
+    });
+    document.getElementById("xt" + i).addEventListener("input", (event) => { q.typed = event.target.value; q.answer = joined(q); remember(); });
+  });
 }
 function checkin() {
   walkTo(2);
@@ -839,9 +878,18 @@ function checkin() {
           `<button type="button" data-v="${esc(c)}" class="${c === me.feel ? "on" : ""}" aria-pressed="${c === me.feel}">${esc(c)}</button>`).join("")}</div></div>
       <div class="q"><p id="injury-label">Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No", "injury-label")}</div>
     </section>
+    <section class="section sec-doctor">
+      ${sectionHead("doctor", "In your own words (optional)", "What happened, and how do you feel now? The nurse reads this before she sees you.")}
+      <div class="q"><textarea id="story" maxlength="200" rows="3" aria-label="In your own words: what happened, and how do you feel now?"
+        placeholder="For example: I was climbing the stairs when my chest went tight">${esc(me.story || "")}</textarea>
+        <span class="count" id="story-count">${(me.story || "").length} / 200</span></div>
+    </section>
     <div id="follow-up" aria-live="polite"></div>
     <p class="error" id="error" role="alert"></p>
     <button class="go" id="go">Go to the nurse</button>`;
+  const storyBox = document.getElementById("story");
+  storyBox.addEventListener("input", () => { me.story = storyBox.value;
+    document.getElementById("story-count").textContent = storyBox.value.length + " / 200"; remember(); });
   drawFollowUp();
   const ticks = document.getElementById("ticks");
   ticks.addEventListener("click", (event) => {
@@ -853,12 +901,13 @@ function checkin() {
       b.classList.toggle("on", on); b.setAttribute("aria-pressed", on);
     }
     document.getElementById("error").textContent = "";
+    remember();
   });
-  bindChoice("injury", (v) => me.injury = v === "Yes");
+  bindChoice("injury", (v) => { me.injury = v === "Yes"; remember(); });
   // We ask what the pain feels like, not how bad it is. The urgency model still needs a 0-10 score, so the
   // server says which score stands for "there is pain" (the typical score in our data); no pain is 0.
   bindChoice("feel", (v) => { me.feel = v; me.pain = v === me.painForm.none ? 0 : me.painForm.score;
-    document.getElementById("error").textContent = ""; });
+    document.getElementById("error").textContent = ""; remember(); });
   document.getElementById("go").addEventListener("click", async () => {
     if (!me.noDanger && !danger.some(([q]) => q.answer === "Yes")) {
       document.getElementById("error").textContent = "Tap what is true for you under “Is any of this true for you?”, or tap “No, none of these”.";
@@ -868,9 +917,9 @@ function checkin() {
       document.getElementById("feel").scrollIntoView({ block: "center" });
       document.getElementById("feel").firstElementChild.focus({ preventScroll: true }); return; }
     danger.forEach(([q]) => { if (q.answer !== "Yes") q.answer = "No"; });
-    me.questions.forEach((q, i) => { const typed = document.getElementById("xt" + i);
-      if (q.kind === "extra" && typed && !typed.hidden) q.answer = typed.value.trim() || null; });
-    const answers = [...me.questions, { ...me.painForm.feel, answer: me.feel }]               // last, so nothing above shifts
+    const story = (me.story || "").trim();
+    const answers = [...me.questions, { ...me.painForm.feel, answer: me.feel },               // last, so nothing above shifts
+                     ...(story ? [{ question: "Tell the nurse in your own words what happened", answer: story, kind: "extra", topic: "story" }] : [])]
       .map(({ question, answer, kind, topic }) => ({ question, answer, kind, topic: topic || null }));
     const go = document.getElementById("go");
     busy(go, "Sending your answers…");
@@ -973,7 +1022,9 @@ async function waiting(message) {
     the further you move up. This screen updates by itself.</p>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
-    <p class="hint">This screen updates by itself. Staff call the next patient on the <a href="/nurse" target="_blank" rel="noopener">nurse's screen</a>.</p>`;
+    <p class="hint">Your doctor calls you from their own screen, and this screen then shows the room.
+      In the demo: press “Call my next patient” on the <a href="/doctor" target="_blank" rel="noopener">doctor's screen</a>
+      (or “Call next patient” on the <a href="/nurse" target="_blank" rel="noopener">nurse's screen</a>).</p>`;
   // The patient's phone asks again every 5 seconds, so it also follows a nurse working on another screen.
   watching = setInterval(async () => {
     try {
