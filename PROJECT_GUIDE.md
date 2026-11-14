@@ -66,10 +66,11 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 ### The patient's path in our system
 
 1. **Entrance.** The patient says what is wrong. The visit gets a registration number in the hospital database.
-2. **Check-in.** The system reads the complaint and builds a questionnaire: three danger-sign questions for
-   that kind of problem, and two follow-up questions written for the exact complaint.
-3. **Nurse station.** The nurse measures vital signs. The model suggests an urgency level and says when it is
-   not sure. The nurse decides.
+2. **Check-in.** A quick check built for the complaint: three danger signs to tap, the pain score, and two
+   optional history questions for the doctor, each answered with one tap.
+3. **Nurse station.** The nurse measures vital signs and gives her level. Then she sees the model's level;
+   if the model rates the patient more urgent, a "look again" flag appears. The nurse's level is final, and
+   she can send a critical patient straight to a doctor with a written reason.
 4. **Waiting room.** The electronic line orders everyone by urgency, then by waiting time.
 5. **Doctor.** When called, the patient is matched to the right department and to the least busy doctor on
    duty there. The doctor receives the complaint, level, vital signs and questionnaire answers.
@@ -134,11 +135,19 @@ To reproduce these numbers: `python assignment.py`
 - **How we steer it:** with a **system prompt**. This is a fixed set of written instructions sent to the model
   before every request: its role, the rules for a good question, what it must never do, and worked examples.
   Ours is in `hospital/core.py` under `QUESTION_SYSTEM_PROMPT`.
-- **What the prompt tells it:** write two questions about this patient's own complaint, in plain words, that
-  the patient can answer in a few words; never repeat the nurse's questions; never suggest a diagnosis, give
-  advice or ask for identity details.
-- **A second safety net:** plain code checks every question the model returns and drops any that is too long
-  or contains banned wording. If fewer than two survive, the patient simply gets no extra questions.
+- **What the prompt tells it:** choose the two history questions that give the doctor the best first picture
+  of this patient, from six topics a doctor asks first (when it started, how it has changed, what the patient
+  was doing, whether it happened before, what was taken for it, long-term illness), and word them with the
+  patient's own words; never suggest a diagnosis, give advice or ask for identity details.
+- **What plain code does around it:** code decides which topics are allowed (a topic the complaint already
+  answers, such as "since this morning", is not offered to the model), supplies the answers to tap from a fixed
+  list per topic, and checks every question the model returns. If fewer than two survive, or the model is
+  switched off, two standard questions on the same topics are used instead.
+- **Why so little is left to the model:** the first version let it write any question and the answers too.
+  That took about 30 seconds on our laptop and sometimes asked what the patient had already said. Choosing
+  topics takes about 3 seconds, and the page asks for the questions in the background, so check-in never waits.
+- **What the doctor gets:** each answer carries its topic, so the doctor's card starts with a short overview
+  put together by plain code ("Started: under an hour ago"). The model never summarises the patient.
 
 **A note on "fine-tuning with a system prompt".** These are two different things, and it matters for what we
 can claim.
