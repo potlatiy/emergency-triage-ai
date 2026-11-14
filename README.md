@@ -160,13 +160,13 @@ one of nine departments ourselves (`data/diagnosis_departments.csv`, reproduce w
 
 | Method | Picks the right department |
 |---|---|
-| Baseline: always gastroenterology and surgery | 22% |
-| Key-word rule on the complaint | 66% |
-| Trained model | 71% |
-| What the digital hospital uses: model when 70%+ sure, key-word rule otherwise | 68% |
+| Baseline: always gastroenterology and surgery | 21% |
+| Key-word rule on the complaint | 67% |
+| Trained model | 70% |
+| What the digital hospital uses: model when 70%+ sure, key-word rule otherwise | 69% |
 
-The model's lead over the rule is 4.3 points (95% range 2.1 to 6.6). It is weaker than the rule for respiratory and
-gynaecology patients. The model was trained on complaints as nurses write them, so it decides only when it is at
+The model's lead over the rule is 3.7 points (95% range 1.4 to 6.1). It is weaker than the rule for respiratory,
+gynaecology and general medicine patients. The right department is among its top three suggestions 88% of the time. The model was trained on complaints as nurses write them, so it decides only when it is at
 least 70% sure (about half of patients).
 
 ### Where it fails
@@ -185,7 +185,7 @@ least 70% sure (about half of patients).
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - The waiting times are a simulation with invented arrivals.
-- The department answer key is our own diagnosis-to-department table. 87 rarer diagnoses matched no rule and default to general medicine, and the table has not yet been reviewed by hand.
+- The department answer key is our own diagnosis-to-department table. 83 rarer diagnoses matched no rule and default to general medicine. We read every row and corrected 14 by hand, but no clinician has reviewed it.
 - The three-to-one safety weighting and the 45-minute rule are our choices.
 - We did not test whether real nurses would act on the flags or the suggested order.
 - The QR registration, phone screen and digital hospital are demonstrations, not tried in a real department.

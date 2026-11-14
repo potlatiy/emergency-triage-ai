@@ -1,7 +1,8 @@
 # Project guide: cutting the wait in the emergency department
 
 This document explains the problem we are working on, what we built to address it, and what each team
-member does next. The results and the technical write-up are in [README.md](README.md).
+member does next. The results and the technical write-up are in [README.md](README.md). The video script,
+the numbers to remember and answers to likely judge questions are in [PRESENTATION.md](PRESENTATION.md).
 
 *This project is a prototype and is not medical advice.*
 
@@ -60,7 +61,7 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 |---|---|---|---|
 | The level is sometimes wrong | A **second check**: a model reads the same facts as the nurse and flags patients it rates more urgent than she did | Yes | Yes. It flags 107 of the 131 under-rated patients (82%) |
 | Urgent and minor cases share a line | An **electronic line** ordered by urgency, where waiting slowly moves a patient up | No, plain rules | Simulated only |
-| Too many hand-offs | A **questionnaire at check-in** built for the complaint, and **direct assignment** to a doctor who is on duty, with the answers passed on so the story is told once | Partly | Assignment: yes. The trained model picks the right department 71% of the time, against 66% for a key-word rule. Questionnaire: not tested |
+| Too many hand-offs | A **questionnaire at check-in** built for the complaint, and **direct assignment** to a doctor who is on duty, with the answers passed on so the story is told once | Partly | Assignment: yes. The trained model picks the right department 70% of the time, against 67% for a key-word rule. Questionnaire: not tested |
 
 ### The patient's path in our system
 
@@ -103,26 +104,27 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
 - **What it reads:** the same facts as Part A.
 - **What it learned from:** each real patient's final diagnosis. We matched all 584 distinct diagnoses in the
   data to one of nine departments (the table is `data/diagnosis_departments.csv`), and the model learned which
-  complaints and vital signs lead to which department.
-- **How well it does:** tested on patients it never saw, it picks the department of the real diagnosis 71% of
-  the time. A key-word rule on the complaint gets 66%, and always guessing the most common department gets 22%.
-  The model's lead over the rule is 4.3 points, with a 95% range of 2.1 to 6.6.
-- **Why it stops near 71%:** we tried eleven versions and none passed 71%. The same complaint leads to
-  different departments ("dyspnea" was respiratory for 31 patients, cardiac for 15 and general medical for 10),
+  complaints and vital signs lead to which department. Word rules matched 487 diagnoses; we then read every
+  row and corrected 14 by hand.
+- **How well it does:** tested on patients it never saw, it picks the department of the real diagnosis 70% of
+  the time. A key-word rule on the complaint gets 67%, and always guessing the most common department gets 21%.
+  The model's lead over the rule is 3.7 points, with a 95% range of 1.4 to 6.1.
+- **Why it stops near 70%:** we tried eleven versions and none passed 71%. The same complaint leads to
+  different departments ("dyspnea" was respiratory for 31 patients, cardiac for 15 and general medical for 8),
   so what a patient says at the door does not fully determine where they belong. Scores of 90% or more are
   only possible by testing a model on the patients it trained on, which is memorising. We do not do that.
-- **What reaches about 90%:** the right department is among the model's top three 89% of the time. The hospital
+- **What comes close to 90%:** the right department is among the model's top three 88% of the time. The hospital
   therefore shows the nurse three suggestions and she chooses.
-- **Where it is weaker than the rule:** respiratory and gynaecology patients. It is stronger for neurology,
+- **Where it is weaker than the rule:** respiratory, gynaecology and general medicine patients. It is stronger for neurology,
   cardiology and gastroenterology.
 - **How the hospital uses it:** the model was trained on complaints as nurses write them ("ant. chest pain").
   A patient typing "it burns when I pee" is less familiar to it, and at middling confidence it made some odd
   choices in our trials. So the model decides only when it is at least 70% sure (about half of patients) and
-  the key-word rule decides otherwise. That combination is right 68% of the time. The screen always says which
+  the key-word rule decides otherwise. That combination is right 69% of the time. The screen always says which
   of the two decided.
 - **What it outputs:** a department. A plain rule then picks the least busy doctor on duty there from the database.
-- **A limit to state:** the answer key depends on our own diagnosis-to-department table. 87 rarer diagnoses
-  matched no rule and default to general medicine. Someone on the team should review the table.
+- **A limit to state:** the answer key depends on our own diagnosis-to-department table. 83 rarer diagnoses
+  matched no rule and default to general medicine. We reviewed it ourselves; no clinician has.
 
 To reproduce these numbers: `python assignment.py`
 
@@ -169,10 +171,15 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 
 - [x] Assignment model trained on real diagnoses and compared with the key-word rule (`assignment.py`)
 - [x] Question writer steered by a system prompt (`hospital/core.py`)
+- [x] Diagnosis-to-department table read row by row; 14 corrections made (`data/diagnosis_departments.csv`)
+- [x] Department model added to the notebook (section 13)
+- [x] Automated tests for the backend (`tests/`, run with `python -m pytest tests`)
+- [x] Clean copy installed from `requirements.txt` and run from scratch
+- [x] Digital hospital checked at phone width
 
 ### In progress
 
-- [ ] Review the diagnosis-to-department table (`data/diagnosis_departments.csv`) by hand
+- [ ] Ask a clinician to look over the diagnosis-to-department table
 - [ ] Ask a nurse or doctor to rate a sample of the AI-written questions
 
 ### Before submitting (deadline: Sunday, November 15, 11:59 PM US Eastern time)
@@ -210,6 +217,7 @@ pip install -r requirements.txt
 |---|---|---|
 | Urgency results | `python triage.py` | (prints to the screen) |
 | Assignment results | `python assignment.py` | (prints to the screen) |
+| Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (43 checks should pass) |
 | Notebook | open `triage.ipynb` | |
 | Second-check demo | `python app.py` | http://localhost:7861 |
 | Digital hospital | `python hospital/server.py` | http://localhost:8000 |

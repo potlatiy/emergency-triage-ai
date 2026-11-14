@@ -1,0 +1,97 @@
+# Presentation notes
+
+Everything needed to record the video, answer the judges and fill in the submission form.
+All numbers here come from `triage.ipynb` and `assignment.py`. If you change the code, re-check them.
+
+## The one sentence
+
+Our AI is worse than a triage nurse at giving an urgency level, so the nurse always decides; but it catches most
+of the patients nurses rate too low, and a line sorted by urgency gets the most urgent patients seen far sooner.
+
+## Two-minute video script
+
+Record the screen with your voice over it. No editing needed.
+
+| Time | What is on screen | What to say |
+|---|---|---|
+| 0:00–0:15 | The digital hospital, entrance step | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
+| 0:15–0:35 | Type "crushing chest pain and sweating", age 67, male. Go to check-in | "You are the patient. You say what is wrong, and the system builds a questionnaire for your complaint: three danger-sign questions, and two follow-ups written by an AI model running on this laptop." |
+| 0:35–0:55 | Nurse station: choose Unstable, press Measure and assess | "The nurse takes your vital signs. Our model, trained on 1,267 real emergency patients, suggests a level. Here it says level 2, and the patient goes straight to the resuscitation bay." |
+| 0:55–1:15 | Start again: "bad stomach pain and vomiting", feverish. Show the line, press 15 minutes pass, then Call next | "A less urgent patient joins the electronic line. It is ordered by urgency, and waiting moves you up so nobody is stuck. When called, a second model suggests the department and the database picks the least busy doctor on duty." |
+| 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
+| 1:45–2:00 | The limits section of the README | "The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
+
+## Demo checklist before recording
+
+1. Start the hospital: `python hospital/server.py`, then open http://localhost:8000
+2. Run one patient through first. The first questionnaire takes about 15 seconds while the AI model loads.
+3. Press "Start a new day" on the last screen so the recording begins with a clean waiting room.
+4. Keep the browser window around 1,200 pixels wide so the floor plan and the panel sit side by side.
+
+## Numbers to know by heart
+
+| What | Figure |
+|---|---|
+| Patients in the data | 1,267, from two emergency departments in South Korea |
+| Exact level: always guessing level 3 / our model / nurses | 38% / 68% / 85% |
+| Patients nurses rated too low | 131 (about 1 in 10) |
+| Of those, flagged by the second check | 107 (82%; plausible range 75–88%) |
+| Share of all patients the nurse must re-check | 36% |
+| Under-rated patients reached when re-checking 1 in 5: simple rules / our model | 34–38% / 67% |
+| Simulated wait for the most urgent: arrival order / AI levels / nurse levels / expert levels | 88 / 24 / 13 / 7 minutes |
+| Right department: most common / key-word rule / our model | 21% / 67% / 70% |
+| Right department among the model's top three | 88% |
+| Exact level when the model moves to the other hospital | 55–58% (down from 68%) |
+
+## Questions judges may ask
+
+**Why is your AI worse than nurses?**
+It reads a few words and seven numbers. A nurse sees and hears the patient. That is why we did not build a
+replacement; we built a second check and a way to sort the line.
+
+**If it is worse, why use it at all?**
+Because it makes different mistakes. It flags 82% of the patients nurses under-rated. And in our simulation,
+sorting the line by even a rough level cuts the wait of the most urgent patients from 88 minutes to 24.
+
+**How do you know the test is fair?**
+Every patient was scored by a model that never saw them. The nurse's level, the diagnosis and the outcome were
+never given to the model. We compare against always guessing the most common answer, against two simple rules,
+and against real nurses.
+
+**Are the waiting times real?**
+No. The data has no arrival times, so we simulated a busy department with three doctors. We say so wherever the
+figures appear.
+
+**Why does the department model only reach 70%?**
+We tried eleven versions and none passed 71%. The same complaint leads to different departments: of the patients
+who arrived with "dyspnea", 31 had a lung diagnosis, 15 a heart diagnosis and 8 a general medical one. So the
+model offers three suggestions, the right one is among them 88% of the time, and the nurse chooses.
+
+**Did you train the AI that writes the questions?**
+No. It is a general language model that we steer with written instructions, called a system prompt. Only the
+urgency model and the department model are trained on real data. The questions are untested, so their answers
+are passed to the doctor and never change the level.
+
+**Where does it fail?**
+It sent seven level 1–2 patients to the slow queue; nurses got five of those right. It is worse at a hospital it
+was not trained on. It asks for a re-check on about a third of patients.
+
+**Is any patient data stored?**
+No names are asked for. The demonstration database is wiped every time the server starts.
+
+**Which parts are AI and which are plain rules?**
+AI: the urgency level, the department suggestion, the two follow-up questions. Plain rules: the order of the line,
+the choice of doctor, the danger-sign questions.
+
+## Submission form
+
+- **Track:** Health
+- **Code:** https://github.com/potlatiy/emergency-triage-ai
+- **Write-up:** the same link (the README is the write-up)
+- **What we added:** "Our own idea."
+- **Disclaimer line (already in the README):** "This project is a prototype and is not medical advice."
+- **Credits:** copy the Sources section at the end of the README. It lists the dataset, the libraries, the
+  language model and the AI tools used.
+
+Before submitting: open every link in a private window, check all three names and emails, and send a first
+version by Sunday afternoon. The deadline is Sunday, November 15 at 11:59 PM US Eastern time.

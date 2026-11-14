@@ -62,7 +62,8 @@ class Duty(BaseModel):
 
 @app.get("/")
 def page():
-    return FileResponse(STATIC / "index.html")
+    # no-cache: the browser always asks for the latest page, so an update is seen without a hard refresh
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/register")
