@@ -1,4 +1,4 @@
-# Triage Queue Assistant: the nurse decides, the app shortens the wait after triage
+# Meddy: the nurse decides, the app shortens the wait after triage
 
 **Track:** Health
 **Team:** Yegor (backend), Denys (project decisions), Ostap (front end)
@@ -17,7 +17,7 @@
 
 **Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
 
-**Website:** the public website is called **Meddy** ("Your triage buddy"). Its plan and design prompt are in [design/](design/README.md).
+**Name and design:** the product is called **Meddy** ("Your triage buddy"). The design guideline, the build plan and the design prompt for its screens are in [design/](design/README.md).
 
 ## The problem
 
