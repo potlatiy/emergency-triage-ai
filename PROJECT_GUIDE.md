@@ -68,9 +68,12 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 1. **Entrance.** The patient says what is wrong and shows their insurance: scan the card, type the number, or
    "no insurance". The visit gets a registration number, and the registry allows one open visit per card.
    Insurance is only an identity check: it never reaches either model and never changes the level or the line.
-2. **Check-in.** A quick check built for the complaint: three danger signs to tap, what the pain feels
-   like, and three optional history questions for the doctor, each answered with one tap.
-3. **Nurse station.** The nurse measures vital signs. Meddy writes a report: the patient at a glance, a
+2. **Check-in, on the patient's phone.** A quick check built for the complaint: three danger signs to tap, what
+   the pain feels like, three optional history questions with quick answers and room to write, and "in your own
+   words". The phone then shows a short code for the nurse and follows the visit by itself from there.
+3. **Nurse station, on the nurse's own screen (`/nurse`).** She opens the patient by the code (tap, type or scan
+   the QR code on the phone) and reads what they said, with a two-sentence summary by the language model. She
+   measures vital signs. Meddy writes a report: the patient at a glance, a
    suggested level, and the likely department and doctor, with advice on whether a quick review is
    reasonable. The nurse presses **"Everything is correct"** or **"I want to check the patient myself"**.
    In a personal check she gives her own level, sees a "look again" flag if Meddy rates the patient more
@@ -192,6 +195,10 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 - [x] Assignment model trained on real diagnoses and compared with the key-word rule (`assignment.py`)
 - [x] Both trained models saved in the repository (`models/`, made by `trained_models.py`)
 - [x] The doctor's screen (`/doctor`), with a "Visit finished" button that closes the visit
+- [x] One screen per role: the patient's phone (`/`), the nurse's screen (`/nurse`) and the doctor's screen
+      (`/doctor`). The phone shows a code for the nurse and never the level; the doctor calls the next patient
+- [x] Online on a Hugging Face Space that rebuilds itself when `main` changes (`deploy/huggingface/`):
+      https://darkshdws-meddy.hf.space
 - [x] The chain checked end to end for weak links: a patient who is with a doctor cannot be assessed or queued again, joining the line needs an assessment, unknown values
       are refused, emergencies never sit in the line, a reload keeps the patient's place, and every doctor's
       list is made of real visits
@@ -247,7 +254,8 @@ pip install -r requirements.txt
 | Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (every check should pass) |
 | Notebook | open `triage.ipynb` | |
 | Second-check demo | `python app.py` | http://localhost:7861 |
-| Digital hospital | `python hospital/server.py` | http://localhost:8000 |
+| Digital hospital | `python hospital/server.py` | http://localhost:8000 (patient), `/nurse`, `/doctor` |
+| Digital hospital online | nothing to run | https://darkshdws-meddy.hf.space (patient), `/nurse`, `/doctor` |
 
 For AI-written questions in the digital hospital, install [Ollama](https://ollama.com) and run
 `ollama pull gemma3:4b` once. Without it, the hospital still works with the hand-written questions.
