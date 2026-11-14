@@ -41,7 +41,7 @@ How a visit would work, and how much of it we built and tested:
 
 | Step | What happens | Status |
 |---|---|---|
-| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they scan a QR code (or a nurse helps) and give age, what hurts, why, and what could have caused it. | Built as a demo step. There is no real QR scanner. |
+| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they scan their insurance card (or type the number, or say they have none) and give age, what hurts, why, and what could have caused it. One person can have one open visit. | Built as a demo step. The scanner reads a barcode or QR code with the camera; we tried it only on our own sample card. |
 | 2. Follow-up questions | The AI chooses three history questions for this complaint (for example when it started, or what was taken for it) and the patient answers each with one tap. | Built, **not tested**. The answers go to the doctor and never change the level. |
 | 3. Suggested level | At triage the nurse measures vital signs and enters them. The AI suggests a level from 1 to 5 with the probability of each level. When no level is likely enough, it says it is not sure. | **Built and tested.** |
 | 4. Number on the phone | The patient sees their ticket number and place in line, never their level and never a promised time. | Built as a demo. Each stop of the walk-through is marked "Patient's phone" or "staff only", and the patient's parts show no level. The whole line with levels sits in a closed drawer marked as the nurse's screen. |
@@ -81,14 +81,15 @@ underneath.
 | Stop | What happens | How |
 |---|---|---|
 | Entrance | The visit is registered under its own number | Database |
-| Check-in | A quick check for this complaint: three danger signs to tap, how bad the pain is and what it feels like (in words), and three optional history questions for the doctor | Danger questions come from a hand-written list chosen by the kind of complaint. The three history questions are chosen from six topics and worded on the spot by a small language model running on the same computer; the answers to tap are fixed lists. Check-in never waits for the model |
+| Check-in | A quick check for this complaint: three danger signs to tap, what the pain feels like, and three optional history questions for the doctor | Danger questions come from a hand-written list chosen by the kind of complaint. The three history questions are chosen from six topics and worded on the spot by a small language model running on the same computer; the answers to tap are fixed lists. Check-in never waits for the model |
 | Nurse station | The nurse gives her level, then sees Meddy's. A "look again" flag appears when Meddy rates the patient more urgent. She can send a critical patient straight to a doctor, with a reason | The model tested in this project. The nurse's level is the final one |
 | Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
 | Doctor | Department and doctor | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
-The internal database is one SQLite file with three tables: doctors, visits and the questionnaire answers. The
-doctors and their registration numbers are made up. No patient names are asked for, and the database is wiped each
-time the server starts.
+The internal database is one SQLite file with four tables: doctors, visits, the questionnaire answers, and a
+registry of people that keeps one open visit per insurance card. The doctors, their registration numbers and the
+patients already in the department are made up. No patient names are asked for, no card number is stored (only a
+one-way fingerprint), and the database is wiped each time the server starts.
 
 **Two things have been tested on real data:** the urgency level and the choice of department. The questionnaire, the line and the choice of doctor are demonstrations.
 
@@ -156,6 +157,11 @@ why the nurse stays the decision-maker in our design.
 When the nurse has already given a level, the AI flags 107 of the 131 patients that nurses rated too low (82%,
 with a 95% range of 75–88%). The price is a re-check on 36% of all patients, most of whom were rated correctly.
 
+A stricter flag gives fewer false alarms: raised only when the model thinks it more likely than not that the right
+level is more urgent than the nurse's, it fires for 21% of patients and still reaches 91 of the 131 (69%, range
+62–77%). About 1 of these flags in 3 is right, against 1 in 4 before. The digital hospital shows this one as the
+flag and the rest as a milder note.
+
 It beats simple rules, not just chance. If nurses can re-check only a share of patients, this is the share of
 under-rated patients they reach (95% range in brackets):
 
@@ -201,7 +207,8 @@ least 70% sure (about half of patients).
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - Hiding the level from patients is our design choice to avoid panic. We did not test how patients react.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
-- **Pain is asked in words, and the number behind each word is our choice.** The model was trained on the 0 to 10 score nurses recorded. We turn "mild", "moderate" and "severe" into 3, 5 and 7, the typical scores of those ranges in our data. We did not test whether patients choosing a word match what a nurse would have recorded.
+- **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
+- **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
 - **Patients may exaggerate or play things down.** Someone who writes "I am dying" about a sore finger can jump the line, and someone who plays down chest pain can be missed. The model cannot tell. We reduce the risk in three ways: vital signs are measured and not self-reported, the nurse sees every answer and decides, and the check-in screen asks people to describe what they feel and not what they fear. We did not test how well this works. The half-level boost for a "yes" to a danger question could be gamed.
 - **Who measures the vital signs is not solved.** In the demo the nurse types them in. In a real department it could be a self-service blood pressure cuff and finger pulse meter, or an assistant at the door, with people who answered "yes" to a danger question measured first. None of this is built or tested.
 - The waiting times are a simulation with invented arrivals.

@@ -252,6 +252,17 @@
   .glance span { padding:6px 14px; border-radius:999px; background:var(--violet-tint); color:#2f2466; font-size:1rem; font-weight:700; }
   .tag.topic { margin:0 8px 0 0; background:var(--violet-tint); color:#46358f; }
 
+  /* ---------- entrance: insurance ---------- */
+  .card-tools { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  .mini { display:inline-flex; align-items:center; min-height:46px; padding:8px 18px; border:2px solid #aab8b0; border-radius:999px;
+          background:var(--card); color:var(--ink); font-size:1rem; font-weight:700; text-decoration:none; cursor:pointer; }
+  .mini:hover { border-color:var(--blue); background:var(--blue-tint); }
+  .scanner { margin-top:14px; padding:16px; border-radius:var(--round); background:var(--page); }
+  .scanner video { display:block; width:100%; max-height:260px; border-radius:14px; background:#16252a; object-fit:cover; }
+  .scanner video[hidden] { display:none; }
+  .scanner .hint { margin:10px 0; }
+  #card-row > .hint, #no-insurance { margin:12px 0 0; }
+
   /* ---------- check-in: tap what is true ---------- */
   .ticks { display:grid; gap:12px; margin:16px 0 14px; }
   .ticks button { position:relative; min-height:60px; padding:14px 18px 14px 60px; border:2px solid #aab8b0; border-radius:18px;
@@ -281,6 +292,7 @@
   .levels button.on { background:var(--c); border-color:var(--c); color:#fff; }
   .note.amber { background:var(--amber-tint); color:#633a00; }
   .note.amber .hint { display:block; margin-top:8px; color:inherit; opacity:.9; }
+  .note > .hint { display:block; margin-top:6px; }
   .refer { margin-top:14px; padding:20px; border-radius:var(--round); background:var(--rose-tint); }
   .refer label { margin-top:0; }
   .demo .moved { margin-top:8px; font-weight:700; color:var(--ink); }
@@ -468,8 +480,8 @@ const SAFETY = ["Don't take any medicine until a nurse says it's OK.",
                 "Don't eat or drink until a nurse says it's OK.",
                 "Tell the staff straight away if you feel worse."];
 const panel = document.getElementById("panel");
-const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:null, painWord:null, feel:null,
-                       painForm:null, injury:false, alert:"Alert",
+const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:null, feel:null,
+                       painForm:null, insurance:null, cardEnd:null, injury:false, alert:"Alert",
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null,
                        noDanger:false, followUp:"none", nurseLevel:null, showLine:false });
 let me = fresh();
@@ -536,7 +548,7 @@ const sectionHead = (kind, title, note) => `<div class="section-head"><span clas
 
 // ---------------------------------------------------------------- floor plan and database card
 function walkTo(stop, room) {
-  clearInterval(watching);
+  clearInterval(watching); stopScan();
   const [x, y] = SPOT[room || stop];
   document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
   for (let i = 1; i <= 6; i++) document.getElementById("room-" + i).classList.toggle("on", i === (room || stop));
@@ -590,6 +602,43 @@ const role = (who, label) => `<span class="role ${who}">${who === "patient" ? "P
 const head = (who, label) => `<div class="ids">${me.reg ? regTag() : ""}${role(who, label)}</div>`;
 const regTag = () => `<span class="regno">Registration no. ${me.reg}${me.ticket ? ", ticket " + me.ticket : ""}</span>`;
 
+// ---------------------------------------------------------------- scanning the insurance card
+// The camera reads a barcode or QR code on the card (BarcodeDetector, built into Chrome). Nothing is uploaded:
+// the picture stays in the browser and only the number that was read goes into the field. In a browser without
+// it, or without a camera, the patient types the number or makes one up.
+let scanTimer = null;
+function stopScan() {
+  clearInterval(scanTimer); scanTimer = null;
+  const video = document.getElementById("scan-video");
+  if (video && video.srcObject) { video.srcObject.getTracks().forEach((track) => track.stop()); video.srcObject = null; }
+  const box = document.getElementById("scanner"); if (box) box.hidden = true;
+}
+async function scanCard(field) {
+  const box = document.getElementById("scanner"), hint = document.getElementById("scan-hint"), video = document.getElementById("scan-video");
+  box.hidden = false; video.hidden = true;
+  if (!("BarcodeDetector" in window) || !navigator.mediaDevices) {
+    hint.textContent = "This browser cannot scan. Type the number, or open Meddy in Chrome."; return; }
+  try {
+    hint.textContent = "Starting the camera…";
+    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    video.hidden = false; await video.play();
+    const detector = new BarcodeDetector();
+    hint.textContent = "Hold the barcode or QR code of the card in front of the camera.";
+    scanTimer = setInterval(async () => {
+      try {
+        const codes = await detector.detect(video);
+        if (!codes.length) return;
+        field.value = codes[0].rawValue.trim().slice(0, 24);
+        field.dispatchEvent(new Event("input"));
+        stopScan();
+      } catch (e) {}
+    }, 300);
+  } catch (e) {
+    video.hidden = true;
+    hint.textContent = "Meddy could not use the camera. Allow the camera for this page, or type the number.";
+  }
+}
+
 // ---------------------------------------------------------------- 1. entrance
 function entrance() {
   walkTo(1);
@@ -607,9 +656,44 @@ function entrance() {
     <label for="arrival">How did you get here?</label>
     <select id="arrival">${["Walked in", "Private car", "Public ambulance", "Private ambulance"].map((o) =>
       `<option ${o === me.arrival ? "selected" : ""}>${o}</option>`).join("")}</select>
+    <span class="label" id="insurance-label">Insurance</span>
+    ${choice("insurance", ["Public", "Private", "No insurance"],
+             { public: "Public", private: "Private", none: "No insurance" }[me.insurance], "insurance-label")}
+    <div id="card-row" ${me.insurance && me.insurance !== "none" ? "" : "hidden"}>
+      <label for="card">Card number</label>
+      <input type="text" id="card" maxlength="24" autocomplete="off" autocapitalize="characters" spellcheck="false"
+             placeholder="For example: MD-4829-1375">
+      <div class="card-tools">
+        <button type="button" class="mini" id="scan">Scan the card</button>
+        <button type="button" class="mini" id="made-up">Make up a number</button>
+        <a class="mini" href="/static/card.html" target="_blank" rel="noopener">Sample card to scan</a>
+      </div>
+      <div class="scanner" id="scanner" hidden>
+        <video id="scan-video" playsinline muted></video>
+        <p class="hint" id="scan-hint" role="status"></p>
+        <button type="button" class="mini" id="scan-stop">Stop scanning</button>
+      </div>
+      <p class="hint">This is a demonstration, so never type a real card number. Meddy keeps a one-way fingerprint of the
+        number and its last four characters, never the number itself. One card, one visit at a time.</p>
+    </div>
+    <p class="hint" id="no-insurance" ${me.insurance === "none" ? "" : "hidden"}>You will be seen all the same.</p>
+    <p class="hint">Insurance never changes your level or your place in line.</p>
     <p class="error" id="error" role="alert"></p>
     <button class="go" id="go">Register and go to check-in</button>`;
   bindChoice("sex", (v) => me.sex = v);
+  const cardBox = document.getElementById("card");
+  bindChoice("insurance", (v) => { me.insurance = { Public: "public", Private: "private", "No insurance": "none" }[v];
+    document.getElementById("card-row").hidden = me.insurance === "none";
+    document.getElementById("no-insurance").hidden = me.insurance !== "none";
+    document.getElementById("error").textContent = "";
+    if (me.insurance === "none") stopScan(); else cardBox.focus({ preventScroll: true }); });
+  cardBox.addEventListener("input", () => { cardBox.removeAttribute("aria-invalid"); document.getElementById("error").textContent = ""; });
+  cardBox.addEventListener("keydown", (event) => { if (event.key === "Enter") document.getElementById("go").click(); });
+  document.getElementById("made-up").addEventListener("click", () => {
+    cardBox.value = "DEMO-" + String(Math.floor(1000 + Math.random() * 9000)) + "-" + String(Math.floor(1000 + Math.random() * 9000));
+    cardBox.dispatchEvent(new Event("input")); });
+  document.getElementById("scan").addEventListener("click", () => scanCard(cardBox));
+  document.getElementById("scan-stop").addEventListener("click", stopScan);
   const complaintBox = document.getElementById("complaint");
   complaintBox.focus({ preventScroll: true });
   complaintBox.addEventListener("input", () => {
@@ -627,10 +711,29 @@ function entrance() {
       complaintBox.setAttribute("aria-invalid", "true"); complaintBox.focus(); return; }
     if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Enter an age between 15 and 110.";
       document.getElementById("age").setAttribute("aria-invalid", "true"); document.getElementById("age").focus(); return; }
+    const card = cardBox.value.replace(/[\s\-./]/g, "");
+    if (!me.insurance) { error.textContent = "Choose your insurance. If you have none, tap “No insurance”.";
+      document.getElementById("insurance").firstElementChild.focus(); return; }
+    if (me.insurance !== "none" && !/^[A-Za-z0-9]{6,20}$/.test(card)) {
+      error.textContent = "Enter the card number (6 to 20 letters and digits), scan the card, or tap “No insurance”.";
+      cardBox.setAttribute("aria-invalid", "true"); cardBox.focus(); return; }
+    stopScan();
     const go = document.getElementById("go");
     busy(go, "Registering…");
     try {
-      const data = await api("/api/register", { complaint: me.complaint, age: me.age, sex: me.sex, use_model: false });
+      const response = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ complaint: me.complaint, age: me.age, sex: me.sex, use_model: false,
+                               insurance: me.insurance, card: me.insurance === "none" ? null : card }) });
+      if (response.status === 409) {                       // one person, one open visit
+        const open = (await response.json()).detail;
+        error.textContent = `This card already has an open visit${open.ticket ? " (ticket " + open.ticket + ")" : ""}. ` +
+          "One person can have one visit at a time: the doctor has to finish that visit first.";
+        cardBox.setAttribute("aria-invalid", "true"); idle(go); return; }
+      if (response.status === 422) { error.textContent = "The hospital did not accept the card number. Use 6 to 20 letters and digits.";
+        cardBox.setAttribute("aria-invalid", "true"); idle(go); return; }
+      if (!response.ok) throw new Error();
+      const data = await response.json();
+      me.cardEnd = me.insurance === "none" ? null : card.slice(-4).toUpperCase();      // the number itself is not kept
       me.reg = data.reg_no; me.topic = data.topic; me.source = data.source;
       me.questions = data.questions.map((q) => ({ ...q, answer: null }));
       me.painForm = data.pain;
@@ -702,12 +805,8 @@ function checkin() {
     </section>
     <section class="section sec-pain">
       ${sectionHead("pain", "About the pain")}
-      <div class="q"><p id="pain-label">${esc(me.painForm.question)}</p>
-        <div class="choice chips" id="pain" role="group" aria-labelledby="pain-label">${me.painForm.scale.map((step) =>
-          `<button type="button" data-v="${esc(step.word)}" class="${step.word === me.painWord ? "on" : ""}"
-             aria-pressed="${step.word === me.painWord}">${esc(step.word)}</button>`).join("")}</div></div>
-      <div class="q" id="feel-row" ${me.pain ? "" : "hidden"}><p id="feel-label">${esc(me.painForm.feel.question)}</p>
-        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.map((c) =>
+      <div class="q"><p id="feel-label">${esc(me.painForm.feel.question)}</p>
+        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.concat(me.painForm.none).map((c) =>
           `<button type="button" data-v="${esc(c)}" class="${c === me.feel ? "on" : ""}" aria-pressed="${c === me.feel}">${esc(c)}</button>`).join("")}</div></div>
       <div class="q"><p id="injury-label">Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No", "injury-label")}</div>
     </section>
@@ -727,27 +826,22 @@ function checkin() {
     document.getElementById("error").textContent = "";
   });
   bindChoice("injury", (v) => me.injury = v === "Yes");
-  // Pain is chosen as a word. The server says which 0-10 score each word stands for (the urgency model needs a number).
-  bindChoice("pain", (v) => { me.painWord = v; me.pain = me.painForm.scale.find((step) => step.word === v).score;
-    document.getElementById("feel-row").hidden = !me.pain; if (!me.pain) me.feel = null;
+  // We ask what the pain feels like, not how bad it is. The urgency model still needs a 0-10 score, so the
+  // server says which score stands for "there is pain" (the typical score in our data); no pain is 0.
+  bindChoice("feel", (v) => { me.feel = v; me.pain = v === me.painForm.none ? 0 : me.painForm.score;
     document.getElementById("error").textContent = ""; });
-  document.getElementById("feel").addEventListener("click", (event) => {
-    const button = event.target.closest("button"); if (!button) return;
-    me.feel = me.feel === button.dataset.v ? null : button.dataset.v;                 // a second tap takes the answer back
-    for (const b of button.parentNode.children) { b.classList.toggle("on", b.dataset.v === me.feel); b.setAttribute("aria-pressed", b.dataset.v === me.feel); }
-  });
   document.getElementById("go").addEventListener("click", () => {
     if (!me.noDanger && !danger.some(([q]) => q.answer === "Yes")) {
       document.getElementById("error").textContent = "Tap what is true for you under “Is any of this true for you?”, or tap “No, none of these”.";
       ticks.scrollIntoView({ block: "center" }); ticks.firstElementChild.focus({ preventScroll: true }); return; }
-    if (me.painWord === null) {
-      document.getElementById("error").textContent = "Tap how bad the pain is. If nothing hurts, tap “No pain”.";
-      document.getElementById("pain").scrollIntoView({ block: "center" });
-      document.getElementById("pain").firstElementChild.focus({ preventScroll: true }); return; }
+    if (me.feel === null) {
+      document.getElementById("error").textContent = "Tap what the pain feels like. If nothing hurts, tap “No pain”.";
+      document.getElementById("feel").scrollIntoView({ block: "center" });
+      document.getElementById("feel").firstElementChild.focus({ preventScroll: true }); return; }
     danger.forEach(([q]) => { if (q.answer !== "Yes") q.answer = "No"; });
     me.questions.forEach((q, i) => { const typed = document.getElementById("xt" + i);
       if (q.kind === "extra" && typed && !typed.hidden) q.answer = typed.value.trim() || null; });
-    if (me.pain && me.feel) me.questions.push({ ...me.painForm.feel, answer: me.feel });       // last, so nothing above shifts
+    me.questions.push({ ...me.painForm.feel, answer: me.feel });                              // last, so nothing above shifts
     nurse();
   });
 }
@@ -811,13 +905,19 @@ function showLevel() {
 }
 function afterLevel() {
   const r = me.result, mine = me.nurseLevel, urgent = mine <= 2;
-  const opinion = r.level < mine
-    ? `<div class="note amber" role="status"><b>▲ Look again: Meddy rates this patient more urgent.</b>
-        Meddy suggests level ${r.level} (${r.name}); the nurse chose level ${mine}. Check the patient again, then keep the level or change it above.
-        <span class="hint">In our tests this flag caught 107 of the 131 patients nurses had rated too low. It is also raised for about
-        1 patient in 3, and most of those were rated correctly.</span></div>`
+  const flag = r.second_check[mine], chance = Math.round(r.more_urgent[mine] * 100);
+  const opinion = flag === "strong"
+    ? `<div class="note amber" role="status"><b>▲ Look again: Meddy thinks this patient is more urgent.</b>
+        Meddy puts the chance that the right level is more urgent than level ${mine} at ${chance}%. Its most likely level is
+        ${r.level} (${r.name}). Check the patient again, then keep the level or change it above.
+        <span class="hint">In our tests this flag was raised for about 1 patient in 5 and caught 91 of the 131 patients nurses
+        had rated too low. About 1 flag in 3 was right.</span></div>`
+    : flag === "mild"
+    ? `<div class="note" role="status"><b>Meddy leans more urgent, but not strongly (${chance}%).</b> No flag is raised.
+        <span class="hint">Counting these milder cases as flags too would catch 107 of the 131, at the price of re-checking
+        1 patient in 3.</span></div>`
     : r.level === mine ? `<div class="note" role="status"><b>✓ Meddy agrees with the nurse.</b></div>`
-    : `<div class="note" role="status"><b>Meddy suggested a less urgent level.</b> The nurse's level stands.</div>`;
+    : `<div class="note" role="status"><b>Meddy sees no reason to rate this patient more urgent.</b> The nurse's level stands.</div>`;
   document.getElementById("after").innerHTML = `
     <h3 class="sub">Meddy's second opinion</h3>
     ${opinion}
@@ -939,8 +1039,11 @@ async function waiting(message) {
   document.getElementById("staff-line").addEventListener("toggle", (event) => me.showLine = event.target.open);
   document.getElementById("wait").addEventListener("click", async (event) => {
     busy(event.currentTarget, "Moving the clock…");
-    await api("/api/line/wait", {});
-    waiting("Fifteen minutes passed."); });
+    const passed = await api("/api/line/wait", {});
+    refreshDatabase();
+    if (passed.called && passed.called.reg_no === me.reg) { doctor(passed.called); return; }
+    waiting("Fifteen minutes passed. " + (passed.called ? `Ticket ${esc(passed.called.ticket)} was called, and a` : "A") +
+            " new patient walked in."); });
   document.getElementById("next").addEventListener("click", async (event) => {
     busy(event.currentTarget, "Calling…");
     const result = await api("/api/line/next", {});
@@ -961,7 +1064,7 @@ async function waiting(message) {
 // A short overview for the doctor, put together by plain code from what the patient tapped. No AI summary.
 function glance() {
   const yes = me.questions.filter((q) => q.kind === "danger" && q.answer === "Yes").length;
-  const facts = [`“${me.complaint}”`, `${me.age} years, ${me.sex.toLowerCase()}`, `Pain: ${me.painWord.toLowerCase()}`,
+  const facts = [`“${me.complaint}”`, `${me.age} years, ${me.sex.toLowerCase()}`, 
     yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs", me.injury ? "Injury" : null,
     ...me.questions.filter((q) => q.kind === "extra" && q.answer).map((q) => `${q.label}: ${q.answer}`)];
   return `<div class="glance">${facts.filter(Boolean).map((f) => `<span>${esc(f)}</span>`).join("")}</div>`;
@@ -996,6 +1099,7 @@ function doctor(called) {
         <dt>Level</dt><dd>${level}: ${LEVEL_NAME[level]}, set by the nurse. Meddy suggested level ${r.level}${r.unsure ? " and was not sure" : ""}.</dd>
         <dt>Vital signs</dt><dd>${v.SBP}/${v.DBP}, pulse ${v.HR}, breathing ${v.RR}, ${v.BT}°C, oxygen ${v.Saturation}%</dd>
         <dt>Arrived</dt><dd>${esc(me.arrival)}, ${esc(me.alert.toLowerCase())}</dd>
+        <dt>Insurance</dt><dd>${me.insurance === "none" ? "None" : (me.insurance === "private" ? "Private" : "Public") + ", card ending " + esc(me.cardEnd)}</dd>
         ${answers}
       </dl>
     </div>

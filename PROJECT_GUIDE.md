@@ -65,10 +65,11 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 
 ### The patient's path in our system
 
-1. **Entrance.** The patient says what is wrong. The visit gets a registration number in the hospital database.
-2. **Check-in.** A quick check built for the complaint: three danger signs to tap, how bad the pain is and
-   what it feels like (words to tap, not a 0 to 10 scale), and three optional history questions for the doctor,
-   each answered with one tap.
+1. **Entrance.** The patient says what is wrong and shows their insurance: scan the card, type the number, or
+   "no insurance". The visit gets a registration number, and the registry allows one open visit per card.
+   Insurance is only an identity check: it never reaches either model and never changes the level or the line.
+2. **Check-in.** A quick check built for the complaint: three danger signs to tap, what the pain feels
+   like, and three optional history questions for the doctor, each answered with one tap.
 3. **Nurse station.** The nurse measures vital signs and gives her level. Then she sees the model's level;
    if the model rates the patient more urgent, a "look again" flag appears. The nurse's level is final, and
    she can send a critical patient straight to a doctor with a written reason.
@@ -147,10 +148,10 @@ To reproduce these numbers: `python assignment.py`
 - **Why so little is left to the model:** the first version let it write any question and the answers too.
   That took about 30 seconds on our laptop and sometimes asked what the patient had already said. Choosing
   topics takes about 3 seconds, and the page asks for the questions in the background, so check-in never waits.
-- **Pain in words:** the patient taps "mild", "moderate", "severe" or "worst ever" and, if there is pain,
-  what it feels like. The urgency model needs the 0 to 10 score it was trained on, so each word stands for the
-  typical score of its range in our data (3, 5, 7 and 10; see `PAIN_SCALE` in `hospital/core.py`). This mapping
-  is our choice and is not tested.
+- **Pain is described, not scored:** the patient taps what the pain feels like, or "No pain". We do not ask how
+  bad it is. The urgency model needs the 0 to 10 score it was trained on, so a patient with pain gets the typical
+  score of patients with pain in our data (4; see `PAIN_TYPICAL` in `hospital/core.py`). This is our choice and
+  is not tested.
 - **What the doctor gets:** each answer carries its topic, so the doctor's card starts with a short overview
   put together by plain code ("Started: under an hour ago"). The model never summarises the patient.
 

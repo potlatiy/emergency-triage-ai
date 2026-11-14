@@ -20,7 +20,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import trained_models  # noqa: E402
-from triage import LEVELS, NUMBERS, TEXT, load, safety_first  # noqa: E402
+from triage import LEVELS, NUMBERS, TEXT, flag_strength, load, safety_first, urgency_gap_score  # noqa: E402
 
 LEVEL_NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
 SURE_ENOUGH = 0.60
@@ -48,16 +48,58 @@ VITAL_PRESETS = {
 }
 
 
-def familiar(complaint):
-    """A rough check of whether the model can read a complaint: the share of its letter patterns that the
-    model met in training. Another alphabet scores 0, typed nonsense scores low, plain English scores high.
-    It is only a warning for the nurse. It does not catch every unreadable complaint."""
-    reader = _model.named_steps["prepare"].named_transformers_["complaint"]
-    patterns = reader.build_analyzer()((complaint or "").lower())
-    return round(sum(p in reader.vocabulary_ for p in patterns) / len(patterns), 2) if patterns else 0.0
+# ---------------------------------------------------------------- can Meddy read this complaint?
+# The model reads letter patterns, so it gives a confident answer even to a complaint it cannot understand
+# (another language, typed nonsense, or no symptom named). To warn the nurse we look for at least one word
+# Meddy knows as a symptom or a body part: a word nurses wrote in the training complaints, a word from the
+# department rules below, or an everyday word from this list.
+_EVERYDAY = set("""
+pain hurt ache sore burn sting itch rash swollen swelling bleed blood bruise
+breath breathe cough wheeze choke chest heart stomach belly tummy head throat nose ear eye mouth tooth teeth
+neck back arm leg hand foot feet finger toe knee ankle wrist shoulder elbow hip skin bone
+fever temperature shiver chill sweat dizzy faint weak tired numb tingling
+sick vomit nausea diarrhea diarrhoea constipated pee urine poop stool period pregnant
+fell fall hit cut twist broke broken sprain injure injury accident crash bite bitten stung
+seizure shaking confused unconscious collapse vision blurry blind hearing swallow sleep
+allergy allergic lump wound infection infected pressure tight cramp""".split())
+_NOT_A_SYMPTOM = set("""a an and are as at be both but by can for from had has have her him his how if in into is it its
+me my no not of on or our out she since so than that the their them then there these they this to too up was we
+were what when where which who why will with you your after before about more very still some any just only also
+day days week weeks hour hours month months year years today yesterday morning night ago last left right side old
+both area pt am do go he us ok hi oh im ive id did get got feel feeling felt bad really""".split())
 
 
-READS_ENOUGH = 0.50         # below this share the nurse is told that the level rests on the vital signs
+def _words(text):
+    """The words of a complaint, in any alphabet, two letters or more (nurses write "ha" for headache)."""
+    return [w for w in re.findall(r"[^\W\d_]+", (text or "").lower()) if len(w) >= 2]
+
+
+_NURSE_WORDS = {w for text in _data[TEXT].fillna("") for w in _words(text)} - _NOT_A_SYMPTOM
+
+
+def known_words(complaint):
+    """The words of a complaint that Meddy knows as a symptom or a body part.
+
+    A word needs three letters to count. Shorter ones ("ha" for headache) count only when the whole
+    complaint is written in nurses' shorthand, so that "di" in an Italian sentence does not pass."""
+    def known(word):
+        forms = {word, word.removesuffix("s"), word.removesuffix("es"), word.removesuffix("ed"),
+                 word.removesuffix("ing"), word.removesuffix("ing") + "e", word.removesuffix("d"),
+                 word.removesuffix("y"), word.removesuffix("ness")}
+        return bool(forms & _NURSE_WORDS or forms & _EVERYDAY or _SYMPTOM_RULES.search(word))
+    words = [w for w in _words(complaint) if w not in _NOT_A_SYMPTOM]
+    found = [w for w in words if len(w) >= 3 and known(w)]
+    if not found and words and all(w in _NURSE_WORDS for w in words):
+        return words
+    return found
+
+
+def second_check(probabilities, nurse_level):
+    """The flag for one patient once the nurse has given her level: "strong", "mild" or None.
+    The rule itself is in triage.py (flag_strength), where it is tested on the 1,267 patients."""
+    if probabilities is None or nurse_level is None:
+        return None
+    return str(flag_strength(np.asarray(probabilities, dtype=float)[None, :], [nurse_level])[0]) or None
 
 
 def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, alert="Alert", pain=0, vitals=None):
@@ -77,7 +119,10 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "unmeasurable": 0,
     }]).astype({c: float for c in NUMBERS})
     probabilities = _model.predict_proba(row)[0]
-    level = int(safety_first(probabilities[None, :])[0])
+    # Meddy shows its most likely level (right 68% of the time in our tests). The safety-first level, which
+    # rates higher when in doubt, is kept for the second check: shown as the suggestion it rated 1 patient
+    # in 3 too high.
+    level = int(LEVELS[int(probabilities.argmax())])
     # Which department? The trained model answers when it is sure enough, the key-word rule otherwise.
     department_odds = _assignment.predict_proba(row)[0]
     best = int(department_odds.argmax())
@@ -99,7 +144,12 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
         "unsure": bool(probabilities.max() < SURE_ENOUGH),
-        "unread": familiar(complaint) < READS_ENOUGH,
+        "careful_level": int(safety_first(probabilities[None, :])[0]),
+        # For every level the nurse could give: how sure Meddy is that the patient is more urgent than that,
+        # and the flag it would raise ("strong", "mild" or none).
+        "more_urgent": {str(l): round(float(urgency_gap_score(probabilities[None, :], [l])[0]), 3) for l in LEVELS},
+        "second_check": {str(l): second_check(probabilities, l) for l in LEVELS},
+        "unread": not known_words(complaint),
     }
 
 
@@ -120,6 +170,7 @@ DEPARTMENTS = [
 ]
 DEFAULT_DEPARTMENT = "General medicine"
 DEPARTMENT_NAMES = [name for name, _ in DEPARTMENTS] + [DEFAULT_DEPARTMENT]
+_SYMPTOM_RULES = re.compile("|".join(pattern for _, pattern in DEPARTMENTS))
 
 def department_for(complaint, injury=False):
     text = f" {(complaint or '').lower()} "
@@ -177,26 +228,22 @@ TOPICS = {
 }
 FOLLOW_UPS = 3      # all optional and answered with one tap, so check-in stays quick
 
-# Pain is asked in words, not as a number from 0 to 10: a word is easier to choose and tells the doctor more.
-# The urgency model was trained on the 0-10 score that nurses recorded, so each word is turned into the
-# typical score of its range in our data (the median of 1-3, 4-6 and 7-9 among the 1,267 patients).
-PAIN_SCALE = [("No pain", 0), ("Mild", 3), ("Moderate", 5), ("Severe", 7), ("Worst ever", 10)]
+# Pain: we only ask what it feels like (or "No pain"). We do not ask how bad it is. The urgency model was
+# trained with a 0-10 pain score, so a patient with pain gets the typical score of the patients who had pain
+# in our data (their median), and a patient without pain gets 0.
+PAIN_NONE = "No pain"
+PAIN_TYPICAL = int(_data.loc[_data["NRS_pain"] > 0, "NRS_pain"].median())
+# The answer is information for the doctor only, like the history questions.
+PAIN_FEEL = {"question": "What does the pain feel like?", "kind": "extra", "topic": "feel", "label": "Pain",
+             "choices": ["Sharp or stabbing", "Dull or aching", "Burning", "Pressure or tightness", "Cramping"]}
 
 
 def pain_word(score):
-    """The word for a 0-10 pain score, for the doctor's screen. The ranges are the usual ones:
-    0 no pain, 1-3 mild, 4-6 moderate, 7-9 severe, 10 the worst."""
+    """What the doctor's screen says about pain. How bad it is was not asked, so only yes or no."""
     if score is None:
         return None
-    for (word, _), highest in zip(PAIN_SCALE, (0, 3, 6, 9, 10)):
-        if score <= highest:
-            return word
-    return PAIN_SCALE[-1][0]
+    return "Has pain" if score > 0 else PAIN_NONE
 
-
-# Asked only when there is pain. Like the history questions, the answer is information for the doctor only.
-PAIN_FEEL = {"question": "What does the pain feel like?", "kind": "extra", "topic": "feel", "label": "Feels like",
-             "choices": ["Sharp or stabbing", "Dull or aching", "Burning", "Pressure or tightness", "Cramping"]}
 
 QUESTION_SYSTEM_PROMPT = """You help at the check-in desk of a hospital emergency department. A patient has typed what is wrong.
 Choose the 3 history questions whose answers give the doctor the best first picture of THIS patient.
@@ -326,14 +373,13 @@ def questionnaire(complaint, injury=False, use_model=True):
     - "danger" questions: picked by the kind of complaint from the hand-written list. A yes counts.
     - "extra" questions: optional history questions for the doctor (see follow_up). The page asks for
       them separately, with use_model=False here, so that registration never waits for the language model.
-    - "pain": how bad the pain is, in words, with the score each word stands for, and what it feels like.
+    - "pain": what the pain feels like, the "no pain" answer, and the score the model gets when there is pain.
     """
     department = department_for(complaint, injury)
     extra = follow_up(complaint, injury) if use_model else {"source": "list", "questions": []}
     return {"topic": department, "source": extra["source"],
             "questions": [{"question": q, "kind": "danger"} for q in DANGER_QUESTIONS[department]] + extra["questions"],
-            "pain": {"question": "How bad is the pain?", "feel": PAIN_FEEL,
-                     "scale": [{"word": word, "score": score} for word, score in PAIN_SCALE]}}
+            "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL}}
 
 
 # ---------------------------------------------------------------- the electronic line (plain rules)

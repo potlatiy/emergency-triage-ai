@@ -33,6 +33,10 @@ class Arrival(BaseModel):
     age: float = Field(ge=15, le=110)
     sex: Sex = "Female"
     use_model: bool = True
+    # Insurance only identifies the person, so that one person has one open visit. It is never given to
+    # either model and never changes the level, the department or the place in line.
+    insurance: Literal["public", "private", "none"] = "none"
+    card: str | None = Field(default=None, max_length=40)
 
 
 class Answer(BaseModel):
@@ -117,7 +121,14 @@ def doctor_page():
 @app.post("/api/register")
 def register(body: Arrival):
     """The patient arrives: give the visit a registration number and build its questionnaire."""
-    reg_no = db.register(body.complaint.strip(), body.age, body.sex)
+    if body.insurance != "none" and db.person_key(body.card) is None:
+        raise HTTPException(422, "Enter the card number: 6 to 20 letters and digits. Without a card, choose no insurance.")
+    try:
+        reg_no = db.register(body.complaint, body.age, body.sex, body.insurance, body.card)
+    except db.AlreadyRegistered as already:
+        # One person, one open visit. The answer points to the visit that is already open.
+        raise HTTPException(409, {"message": "This card already has an open visit. One person, one visit at a time.",
+                                  **already.visit})
     return {"reg_no": reg_no, **core.questionnaire(body.complaint, use_model=body.use_model)}
 
 
@@ -144,7 +155,8 @@ def triage(body: Assessment):
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
     # Keep the AI's suggestion and the measurements: the doctor's screen needs them later.
-    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain)
+    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
+                       [result["probabilities"][str(l)] for l in core.LEVELS])
     return result
 
 
@@ -152,8 +164,10 @@ def triage(body: Assessment):
 def join(body: Joining):
     """The nurse's level puts the patient in the line. Levels 1 and 2 do not wait there: the patient is sent
     to the resuscitation team at once, and "called" in the answer says where they went."""
-    open_visit(body.reg_no)
+    visit = open_visit(body.reg_no)
     known_department(body.department)
+    if visit["ai_level"] is None:
+        raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
     ticket = db.join_line(body.reg_no, body.level, body.danger, body.department, body.department_how)
     called = db.call_next(body.reg_no) if body.level <= 2 else None
     if called:
@@ -177,8 +191,11 @@ def me(reg_no: str):
 
 @app.post("/api/line/wait")
 def wait():
-    db.wait(15)
-    return db.line()
+    """Fifteen minutes pass in the department: the first patient is called and a made-up patient walks in."""
+    happened = db.pass_time(15)
+    if happened["called"]:
+        happened["called"]["answers"] = db.answers_for(happened["called"]["reg_no"])
+    return {**happened, **db.line()}
 
 
 @app.post("/api/line/next")

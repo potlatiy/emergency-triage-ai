@@ -1,16 +1,20 @@
 """The hospital's internal database (SQLite, one file: hospital.db).
 
-It holds three things:
+It holds four things:
 - doctors : every doctor's registration number, department, room, whether they are on duty,
             and how many patients they have now (always equal to their open visits)
 - visits  : every patient visit, under its own registration number, from arrival to the doctor
 - answers : what each patient answered at check-in
+- people  : the registry that keeps one open visit per person. It holds a one-way fingerprint of each
+            insurance card, never the card number itself
 
 No names are stored for patients. The doctors are made up for the demonstration.
 """
 
+import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -32,7 +36,11 @@ CREATE TABLE IF NOT EXISTS visits (
     level INTEGER, danger INTEGER DEFAULT 0, you INTEGER DEFAULT 0, arrived INTEGER,
     department TEXT, department_how TEXT,
     ai_level INTEGER, vitals TEXT, referred INTEGER DEFAULT 0, referral_reason TEXT,
+    ai_odds TEXT, second_check TEXT,
+    person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
+CREATE TABLE IF NOT EXISTS people (
+    person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT NOT NULL REFERENCES visits(reg_no),
     question TEXT NOT NULL, answer TEXT, kind TEXT NOT NULL, topic TEXT);
@@ -78,6 +86,20 @@ SEED_WITH_DOCTOR = [
     ("DR-1012", "flank pain", 44, "Male", 3, "normal", 7, "Alert", 28),
 ]
 _seed_levels = {}       # Meddy's level for each made-up patient, worked out once and kept
+# Made-up patients who walk in while the demonstration runs, one for every 15 minutes that pass:
+# (complaint, age, sex, nurse's level, vital signs, pain score)
+SEED_ARRIVALS = [
+    ("cough for a week", 33, "Male", 4, "normal", 0),
+    ("cut finger", 27, "Female", 5, "normal", 4),
+    ("abd pain and vomiting", 58, "Female", 3, "feverish", 4),
+    ("back pain", 46, "Male", 4, "normal", 4),
+    ("sore throat", 21, "Female", 5, "normal", 4),
+    ("palpitations", 63, "Male", 3, "feverish", 0),
+    ("ankle sprain", 30, "Male", 4, "normal", 4),
+    ("ear pain", 19, "Female", 5, "normal", 4),
+]
+# Insurance of the made-up patients (type, last four characters of the card): made up as well.
+MADE_UP_INSURANCE = [("public", "4471"), ("private", "0932"), ("public", "7715"), ("none", None), ("public", "2208")]
 # Patients already in the waiting room when the demonstration starts: (complaint, level, minutes ago)
 SEED_WAITING = [("sore throat", 5, 40), ("ankle pain", 4, 31), ("abd pain", 3, 22), ("headache", 4, 14), ("dizziness", 3, 6)]
 START_CLOCK = 40
@@ -101,37 +123,87 @@ def reset():
     and five sample patients in the waiting room."""
     with _lock, _conn:
         _conn.executescript("DROP TABLE IF EXISTS answers; DROP TABLE IF EXISTS visits; DROP TABLE IF EXISTS doctors;"
-                            "DROP TABLE IF EXISTS meta;" + SCHEMA)
+                            "DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS meta;" + SCHEMA)
         _conn.executemany("INSERT INTO doctors (reg_no, name, department, room) VALUES (?, ?, ?, ?)", SEED_DOCTORS)
         _meta("clock", START_CLOCK)
         _meta("visit", 0)
         _meta("ticket", 0)
+        _meta("arrivals", 0)
         departments = {reg_no: department for reg_no, _, department, _ in SEED_DOCTORS}
         for doctor, complaint, age, sex, level, preset, pain, alert, minutes_ago in SEED_WITH_DOCTOR:
-            vitals = core.VITAL_PRESETS[preset]
-            if complaint not in _seed_levels:
-                _seed_levels[complaint] = core.assess(complaint, age, sex, alert=alert, pain=pain, vitals=vitals)["level"]
-            _conn.execute(
-                "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, vitals, arrived, department, "
-                "department_how, status, doctor_reg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'made-up patient', 'with doctor', ?)",
-                (f"P-2026-{_next_number('visit'):04d}", f"A{_next_number('ticket'):03d}", complaint, age, sex, level,
-                 _seed_levels[complaint], json.dumps({**vitals, "alert": alert, "pain": pain}),
-                 START_CLOCK - minutes_ago, departments[doctor], doctor))
+            _made_up_visit(complaint, age, sex, level, preset, pain, alert, START_CLOCK - minutes_ago,
+                           departments[doctor], doctor)
             _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor,))
         for complaint, level, minutes_ago in SEED_WAITING:
-            reg_no = f"P-2026-{_next_number('visit'):04d}"
-            _conn.execute("INSERT INTO visits (reg_no, ticket, complaint, level, arrived, status) VALUES (?, ?, ?, ?, ?, 'waiting')",
-                          (reg_no, f"A{_next_number('ticket'):03d}", complaint, level, START_CLOCK - minutes_ago))
+            _made_up_visit(complaint, 40, "Female", level, "normal", 3, "Alert", START_CLOCK - minutes_ago)
+
+
+def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, department=None, doctor=None):
+    """Write one made-up patient, already assessed: the nurse's level is invented, Meddy's level and its
+    second check are really computed. With a doctor the visit is 'with doctor', otherwise it is waiting.
+    The caller holds the lock and the transaction."""
+    vitals = core.VITAL_PRESETS[preset]
+    if complaint not in _seed_levels:
+        result = core.assess(complaint, age, sex, alert=alert, pain=pain, vitals=vitals)
+        _seed_levels[complaint] = (result["level"], [result["probabilities"][str(l)] for l in core.LEVELS])
+    ai_level, odds = _seed_levels[complaint]
+    number = _next_number("visit")
+    reg_no, ticket = f"P-2026-{number:04d}", f"A{_next_number('ticket'):03d}"
+    _conn.execute(
+        "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, ai_odds, second_check, vitals, arrived, "
+        "department, department_how, insurance, card_end, status, doctor_reg) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (reg_no, ticket, complaint, age, sex, level, ai_level, json.dumps(odds), core.second_check(odds, level),
+         json.dumps({**vitals, "alert": alert, "pain": pain}), arrived, department,
+         "made-up patient" if department else None, *MADE_UP_INSURANCE[number % len(MADE_UP_INSURANCE)],
+         "with doctor" if doctor else "waiting", doctor))
+    return reg_no, ticket
 
 
 # ---------------------------------------------------------------- patients
 
-def register(complaint, age, sex):
-    """A new visit gets its registration number the moment the patient arrives."""
+class AlreadyRegistered(Exception):
+    """This person already has an open visit. The visit is carried along so the desk can point to it."""
+
+    def __init__(self, visit):
+        super().__init__("already registered")
+        self.visit = visit
+
+
+def person_key(card):
+    """The person behind an insurance card, as a fingerprint of the card number.
+
+    The registry never keeps the card number itself: only this one-way fingerprint (enough to see that the
+    same card came twice) and the last four characters (enough for staff to recognise the card).
+    Returns (cleaned number, fingerprint) or None when the number is not 6 to 20 letters and digits."""
+    cleaned = re.sub(r"[\s\-./]", "", card or "").upper()
+    if not re.fullmatch(r"[A-Z0-9]{6,20}", cleaned):
+        return None
+    return cleaned, hashlib.sha256(("meddy-registry:" + cleaned).encode()).hexdigest()[:24]
+
+
+def register(complaint, age, sex, insurance="none", card=None):
+    """A new visit gets its registration number the moment the patient arrives.
+
+    One person, one open visit: a card that already has a visit which is not finished is refused with
+    AlreadyRegistered. A patient without insurance has no card to recognise them by, so they are always
+    registered; nobody is turned away or slowed down for having no insurance."""
+    person, card_end = None, None
+    if insurance != "none":
+        cleaned, person = person_key(card)
+        card_end = cleaned[-4:]
     with _lock, _conn:
+        if person:
+            open_visit = _conn.execute("SELECT reg_no, ticket, status FROM visits WHERE person = ? AND status != 'done'",
+                                       (person,)).fetchone()
+            if open_visit:
+                raise AlreadyRegistered(dict(open_visit))
+            _conn.execute("INSERT INTO people (person, insurance, card_end, visits) VALUES (?, ?, ?, 1) "
+                          "ON CONFLICT(person) DO UPDATE SET visits = visits + 1, insurance = excluded.insurance",
+                          (person, insurance, card_end))
         reg_no = f"P-2026-{_next_number('visit'):04d}"
-        _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you) VALUES (?, ?, ?, ?, 1)",
-                      (reg_no, complaint, age, sex))
+        _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you, person, insurance, card_end) "
+                      "VALUES (?, ?, ?, ?, 1, ?, ?, ?)", (reg_no, complaint, age, sex, person, insurance, card_end))
     return reg_no
 
 
@@ -152,14 +224,21 @@ def answers_for(reg_no):
     return [{**r, "label": core.topic_label(r["topic"])} for r in rows]
 
 
-def save_assessment(reg_no, ai_level, vitals, alert, pain):
+def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None):
     """Keep what the AI suggested and what was measured, so the doctor can see it later.
 
     ai_level is stored apart from level: level is the nurse's final decision and may be different.
     The six vital signs, the alertness and the pain score go into one JSON text column."""
     record = json.dumps({**vitals, "alert": alert, "pain": pain})
     with _lock, _conn:
-        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ? WHERE reg_no = ?", (ai_level, record, reg_no))
+        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ? WHERE reg_no = ?",
+                      (ai_level, record, json.dumps(odds) if odds else None, reg_no))
+
+
+def _flag(reg_no, level):
+    """Meddy's second check on the nurse's level ("strong", "mild" or None), from the odds saved at triage."""
+    saved = _conn.execute("SELECT ai_odds FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    return core.second_check(json.loads(saved["ai_odds"]), level) if saved and saved["ai_odds"] else None
 
 
 def visit_for(reg_no):
@@ -179,8 +258,8 @@ def join_line(reg_no, level, danger, department=None, department_how=None):
         ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
         arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
         _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = ?, "
-                      "department_how = ?, status = 'waiting' WHERE reg_no = ?",
-                      (ticket, level, int(danger), arrived, department, department_how, reg_no))
+                      "department_how = ?, second_check = ?, status = 'waiting' WHERE reg_no = ?",
+                      (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), reg_no))
     return ticket
 
 
@@ -231,6 +310,19 @@ def wait(minutes=15):
         _meta("clock", _meta("clock") + minutes)
 
 
+def pass_time(minutes=15):
+    """Fifteen minutes in a working department: the clock moves, the first patient in line is called,
+    and one made-up patient walks in. This is what makes waiting visible in the demonstration: a patient
+    who has waited long is overtaken by a more urgent newcomer but stays ahead of a less urgent one."""
+    wait(minutes)
+    called = call_next()
+    with _lock, _conn:
+        turn = _next_number("arrivals")
+        complaint, age, sex, level, preset, pain = SEED_ARRIVALS[(turn - 1) % len(SEED_ARRIVALS)]
+        reg_no, ticket = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _meta("clock"))
+    return {"called": called, "arrived": {"reg_no": reg_no, "ticket": ticket, "who": complaint, "level": level}}
+
+
 def call_next(reg_no=None):
     """Call the first patient in line, match them with a doctor, and record it all.
 
@@ -260,9 +352,9 @@ def refer(reg_no, level, reason, department=None):
         if visit is None:
             return None
         ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
-        _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, "
+        _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, second_check = ?, "
                       "arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
-                      (ticket, level, reason, _meta("clock"), reg_no))
+                      (ticket, level, reason, _flag(reg_no, level), _meta("clock"), reg_no))
         if department:
             _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
                           (department, reg_no))
@@ -341,7 +433,8 @@ def doctor_patients(doctor_reg):
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
-         "level": p["level"], "ai_level": p["ai_level"],
+         "level": p["level"], "ai_level": p["ai_level"], "second_check": p["second_check"],
+         "insurance": p["insurance"], "card_end": p["card_end"],
          "vitals": _measured(p["vitals"]),
          "answers": answers_for(p["reg_no"]), "referred": bool(p["referred"]),
          "referral_reason": p["referral_reason"], "waited": clock - p["arrived"]}
@@ -364,11 +457,13 @@ def staff():
     with _lock:
         doctors = [dict(r) for r in _conn.execute("SELECT * FROM doctors ORDER BY reg_no")]
         counts = {r["status"]: r["n"] for r in _conn.execute("SELECT status, COUNT(*) AS n FROM visits GROUP BY status")}
+        people = _conn.execute("SELECT COUNT(*) AS n FROM people").fetchone()["n"]
     regular = [d for d in doctors if d["department"] != "Resuscitation team"]
     return {"doctors": [{**d, "on_duty": bool(d["on_duty"])} for d in doctors],
             "on_duty": sum(d["on_duty"] for d in regular), "total": len(regular),
             "visits": {"registered": sum(counts.values()), "waiting": counts.get("waiting", 0),
-                       "with doctor": counts.get("with doctor", 0), "done": counts.get("done", 0)}}
+                       "with doctor": counts.get("with doctor", 0), "done": counts.get("done", 0)},
+            "people": people}
 
 
 def set_duty(reg_no, on_duty):
@@ -384,5 +479,5 @@ with _conn:
     _conn.executescript(SCHEMA)
 _columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")} | {
     "answers." + r["name"] for r in _conn.execute("PRAGMA table_info(answers)")}
-if not {"department", "referral_reason", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+if not {"department", "referral_reason", "second_check", "person", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()
