@@ -312,7 +312,14 @@ def _extra_schema(allowed):
                   "properties": {"topic": {"type": "string", "enum": allowed}, "question": {"type": "string"}}}}}}
 
 
-_BANNED = re.compile(r"\b(you (should|must|need to)|diagnos|name|address|phone|call an ambulance)\b", re.I)
+# Meddy never gives a diagnosis. It suggests an urgency level and a department, and it asks questions; saying
+# what is wrong with the patient is the doctor's job. The prompt tells the model so, and this check enforces
+# it in plain code: a question that speaks of a diagnosis or names a condition is thrown away.
+_BANNED = re.compile(r"\b(you (should|must|need to)|diagnos\w*|names?|address|phone|call an ambulance)\b", re.I)
+_NAMES_A_CONDITION = re.compile(
+    r"\b(heart attack|stroke|cancer|tumou?r|infection|infected|appendicitis|pneumonia|asthma|diabetes|covid|flu|"
+    r"migraine|epilepsy|fracture|broken (bone|arm|leg|rib|wrist|ankle)|blood clot|embolism|sepsis|meningitis|"
+    r"kidney stones?|gallstones?|ulcer|hernia|concussion|angina|arrhythmia|bronchitis)\b", re.I)
 # Words in a complaint that already answer a topic, so that topic is not asked again.
 _SAYS_WHEN = re.compile(r"\b(since|ago|yesterday|today|tonight|this morning|last night|for (a|an|one|two|three|\d+) )", re.I)
 _SAYS_COURSE = re.compile(r"\b(getting (worse|better)|worse|comes and goes|on and off)\b", re.I)
@@ -325,7 +332,7 @@ def topic_label(topic):
     return TOPICS[topic]["label"] if topic in TOPICS else None
 
 
-def checked_questions(written, skip=()):
+def checked_questions(written, skip=(), complaint=""):
     """A second safety net in plain code: keep only what follows the rules the prompt sets.
 
     A question is dropped when its topic is unknown, repeated or already covered, or when it is not a
@@ -338,6 +345,10 @@ def checked_questions(written, skip=()):
         if topic not in TOPICS or topic in used:
             continue
         if not question.endswith("?") or len(question.split()) > 16 or _BANNED.search(question):
+            continue
+        # "Could it be a heart attack?" is a diagnosis in disguise. A condition the patient named themselves
+        # ("asthma attack") may be repeated back: those are the patient's words, not Meddy's opinion.
+        if any(found.group(0).lower() not in complaint.lower() for found in _NAMES_A_CONDITION.finditer(question)):
             continue
         kept.append({"question": question, "topic": topic})
         used.add(topic)
@@ -357,7 +368,7 @@ def questions_from_model(complaint, skip=(), timeout=OLLAMA_TIMEOUT):
                                      headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         answer = json.loads(json.loads(response.read())["message"]["content"])
-    return checked_questions(answer.get("questions"), skip)
+    return checked_questions(answer.get("questions"), skip, complaint)
 
 
 def standard_questions(complaint, skip=()):

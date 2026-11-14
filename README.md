@@ -93,6 +93,8 @@ one-way fingerprint), and the database is wiped each time the server starts.
 
 **Two things have been tested on real data:** the urgency level and the choice of department. The questionnaire, the line and the choice of doctor are demonstrations.
 
+**Meddy never gives a diagnosis.** It suggests an urgency level and a department, and it asks questions. Saying what is wrong with the patient is the doctor's job. Its outputs are limited to the five levels and the nine department names, the patient's screens do not even name the department, and a check in plain code throws away any AI-written question that speaks of a diagnosis or names a condition.
+
 ## What we added
 
 Our own idea. Three things go beyond a standard classifier:

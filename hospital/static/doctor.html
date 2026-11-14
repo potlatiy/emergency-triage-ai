@@ -203,6 +203,7 @@
   <div class="wrap">
     <span class="disclaimer">This project is a prototype and is not medical advice.</span>
     <span>Meddy suggests, the nurse decides.</span>
+    <span>Meddy never gives a diagnosis: that is yours.</span>
     <a href="/">Patient walk-through</a>
     <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
   </div>
@@ -434,6 +435,7 @@ function drawCard() {
     <h3>Measured at the nurse station</h3>
     ${vitalsBlock(p.vitals)}
     ${answersBlock(p)}
+    <p class="hint" style="margin:24px 2px 0">Meddy has given no diagnosis: only a level, a department, and the patient's own answers.</p>
     <div class="finish">
       <button type="button" class="done" id="finish">Visit finished</button>
       <p class="hint" id="finish-hint" role="status">Closes the visit and takes the patient off your list.</p>

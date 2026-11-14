@@ -461,6 +461,7 @@
 <footer class="bottom">
   <div class="wrap">
     <span class="disclaimer">This project is a prototype and is not medical advice.</span>
+    <span>Meddy never gives a diagnosis.</span>
     <span>Made by Koch Team</span>
     <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
   </div>
@@ -839,7 +840,8 @@ function checkin() {
     ${head("patient")}
     ${stepNo(2)}
     <h2>Quick check</h2>
-    <p class="lede">A few taps, then you go to the nurse. Chosen for your complaint, which Meddy filed under <b>${esc(me.topic.toLowerCase())}</b>.</p>
+    <p class="lede">A few taps, then you go to the nurse. The questions were chosen for the kind of problem you described.
+      Meddy does not tell you what is wrong: only a doctor can.</p>
     <section class="section sec-danger">
       ${sectionHead("danger", "Is any of this true for you?", "Tap each one you would answer yes to. A yes moves you up the line.")}
       <div class="ticks" id="ticks" role="group" aria-label="Danger signs">
@@ -949,6 +951,8 @@ function showLevel() {
   document.getElementById("result").innerHTML = `
     <div class="report">
       <span class="role staff">Meddy's report · for the nurse to review</span>
+      <p class="hint" style="margin:10px 0 0"><b>Meddy does not diagnose.</b> It suggests how urgent the patient is and which
+        department fits. What is wrong with the patient is for the doctor to say.</p>
       <h3 class="sub" style="margin-top:14px">The patient at a glance</h3>
       ${glance()}
       <p class="measured" style="margin-top:0">Measured: blood pressure <b>${v.SBP}/${v.DBP}</b>, pulse <b>${v.HR}</b>, breathing <b>${v.RR}</b>,
@@ -1087,7 +1091,7 @@ function tipsCard() {
     <div class="section-head"><span class="icon">${ICON.comfort}</span><div><h3 id="tips-title">While you wait: tips from Meddy</h3></div></div>
     <ul>${tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
     <ul class="safety">${SAFETY.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
-    <p class="source">Comfort tips for ${esc(me.topic.toLowerCase())} complaints, written with an AI assistant from
+    <p class="source">Comfort tips for this kind of complaint, written with an AI assistant from
     common first-aid advice. Not yet checked by a clinician. Not medical advice.</p>
   </section>`;
 }
@@ -1205,8 +1209,8 @@ function doctor(called) {
     <div class="note" style="margin-top:24px"><b>What was real here.</b> Meddy's level comes from a model tested on 1,267 real patients;
     it matched experts 68% of the time against 85% for nurses, so the nurse sets the level and Meddy is her second check. The department
     comes from a second model trained on the same patients' real diagnoses, used only when it is at least 70% sure, with a key-word rule
-    otherwise. Together they pick the right department 69% of the time, against 67% for the rule alone. The questions, the overview and
-    the line are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
+    otherwise. Together they pick the right department 69% of the time, against 67% for the rule alone. Meddy suggests a level and a department and never a diagnosis.
+    The questions, the overview and the line are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
     <button class="go" id="again">Start again as a new patient</button>`;
   document.getElementById("again").addEventListener("click", () => { me = fresh(); forget(); entrance(); });
 }
