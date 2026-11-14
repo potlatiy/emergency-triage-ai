@@ -503,11 +503,20 @@ def _without_guess(sentence):
     return kept + "." if len(kept.split()) >= 3 else ""
 
 
+# The same thing in other words counts as said: "stomach pain" summed up as "abdominal pain" is not invented.
+_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
+               {"blee", "bloo"}, {"swel", "swol"}, {"dizz", "ligh"}, {"numb", "ting"}]
+
+
 def _grounded(sentence, report):
     """True when every body part or symptom the sentence names was in what the patient reported."""
     said = report.lower()
-    return all(re.search(r"\b" + re.escape(found.group(0).lower().rstrip("s")[:4]), said)
-               for found in _BODY_AND_SYMPTOMS.finditer(sentence))
+
+    def mentioned(word):
+        stem = word.lower().rstrip("s")[:4]
+        stems = next((group for group in _SAME_THING if stem in group), {stem})
+        return any(re.search(r"\b" + re.escape(s), said) for s in stems)
+    return all(mentioned(found.group(0)) for found in _BODY_AND_SYMPTOMS.finditer(sentence))
 
 
 _summaries = {}        # one summary per visit and set of answers, so the nurse's screen can ask again for free

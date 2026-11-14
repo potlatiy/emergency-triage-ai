@@ -1097,3 +1097,9 @@ def test_a_guessed_cause_is_cut_off_and_the_rest_is_kept():
 def test_a_summary_never_says_how_serious_it_is():
     text = "The patient reports knee pain following a fall. He is a 30-year-old male with no signs of a serious condition."
     assert core.checked_summary(text, "knee pain after a fall") == "The patient reports knee pain following a fall."
+
+
+def test_the_same_thing_in_other_words_is_not_invented():
+    report = core._report_for_summary("bad stomach pain and vomiting", 40, "Female", [])
+    assert core.checked_summary("The patient reports abdominal pain and vomiting.", "bad stomach pain", report)
+    assert core.checked_summary("The patient reports belly pain and feeling sick.", "bad stomach pain", report)
