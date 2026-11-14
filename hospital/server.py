@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import core
 import db
@@ -55,6 +55,15 @@ class Joining(BaseModel):
     department_how: str | None = None
 
 
+class Referral(BaseModel):
+    # Spaces are trimmed before the length check, so a reason made only of spaces is refused.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    reg_no: str
+    level: int = Field(ge=1, le=5)
+    reason: str = Field(min_length=3, max_length=300)       # required: the doctor must know why
+    department: str | None = None
+
+
 class Duty(BaseModel):
     reg_no: str
     on_duty: bool
@@ -82,6 +91,8 @@ def triage(body: Assessment):
     # Only the hand-written danger questions can mark a patient; AI-written ones are information only.
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
+    # Keep the AI's suggestion and the measurements: the doctor's screen needs them later.
+    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain)
     return result
 
 
@@ -94,6 +105,15 @@ def join(body: Joining):
 @app.get("/api/line")
 def line():
     return db.line()
+
+
+@app.get("/api/me/{reg_no}")
+def me(reg_no: str):
+    """The patient's phone: ticket, place in line and doctor. Never the urgency level (see db.where_is)."""
+    status = db.where_is(reg_no)
+    if status is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return status
 
 
 @app.post("/api/line/wait")
@@ -109,6 +129,26 @@ def call_next():
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"called": called, **db.line()}
+
+
+@app.post("/api/refer")
+def refer(body: Referral):
+    """The nurse sends a critical patient straight to a doctor, past the line. Her reason is required."""
+    visit = db.visit_for(body.reg_no)
+    if visit is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    if visit["status"] == "with doctor":
+        raise HTTPException(409, "This patient is already with a doctor.")
+    return db.refer(body.reg_no, body.level, body.reason, body.department)
+
+
+@app.get("/api/doctor/{doctor_reg}/patients")
+def doctor_patients(doctor_reg: str):
+    """The doctor's screen: every patient now with this doctor, with the full card."""
+    screen = db.doctor_patients(doctor_reg)
+    if screen is None:
+        raise HTTPException(404, "No doctor with this registration number.")
+    return screen
 
 
 @app.get("/api/staff")

@@ -9,6 +9,7 @@ It holds three things:
 No names are stored for patients. The doctors are made up for the demonstration.
 """
 
+import json
 import os
 import sqlite3
 import threading
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS visits (
     reg_no TEXT PRIMARY KEY, ticket TEXT, complaint TEXT NOT NULL, age REAL, sex TEXT, injury INTEGER DEFAULT 0,
     level INTEGER, danger INTEGER DEFAULT 0, you INTEGER DEFAULT 0, arrived INTEGER,
     department TEXT, department_how TEXT,
+    ai_level INTEGER, vitals TEXT, referred INTEGER DEFAULT 0, referral_reason TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT NOT NULL REFERENCES visits(reg_no),
@@ -113,6 +115,23 @@ def answers_for(reg_no):
             "SELECT question, answer, kind FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
 
 
+def save_assessment(reg_no, ai_level, vitals, alert, pain):
+    """Keep what the AI suggested and what was measured, so the doctor can see it later.
+
+    ai_level is stored apart from level: level is the nurse's final decision and may be different.
+    The six vital signs, the alertness and the pain score go into one JSON text column."""
+    record = json.dumps({**vitals, "alert": alert, "pain": pain})
+    with _lock, _conn:
+        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ? WHERE reg_no = ?", (ai_level, record, reg_no))
+
+
+def visit_for(reg_no):
+    """One visit as a plain dictionary, or None when the registration number is unknown."""
+    with _lock:
+        row = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    return dict(row) if row else None
+
+
 def join_line(reg_no, level, danger, department=None, department_how=None):
     with _lock, _conn:
         ticket = f"A{_next_number('ticket'):03d}"
@@ -141,6 +160,27 @@ def line():
         for i, p in enumerate(rows, 1)]}
 
 
+def where_is(reg_no):
+    """What the patient's own phone may show: the ticket, the place in line and, once called, the doctor.
+
+    On purpose there is no level, no danger mark and no waiting time in here. Patients must never see
+    their urgency level (it could frighten them), so the server does not even send it. The answer is
+    built from a short list of allowed keys, never by copying the visit row."""
+    with _lock:
+        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        _, rows = _waiting()            # the same order as the line the nurse sees
+        doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
+    me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None}
+    if visit["status"] == "waiting":
+        position = [p["reg_no"] for p in rows].index(reg_no) + 1
+        me.update(status="waiting", position=position, ahead=position - 1)
+    elif visit["status"] == "with doctor":
+        me.update(status="called", doctor=doctor["name"], room=doctor["room"])
+    return me
+
+
 def wait(minutes=15):
     with _lock, _conn:
         _meta("clock", _meta("clock") + minutes)
@@ -153,14 +193,34 @@ def call_next():
         if not rows:
             return None
         patient = rows[0]
-        doctor, reason = _pick_doctor(patient)
-        _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
-        _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
-                      (doctor["reg_no"], patient["reg_no"]))
+        doctor, reason = _send_to_doctor(patient)
     return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
             "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
             "department": doctor["department"], "doctor": doctor["name"], "doctor_reg": doctor["reg_no"],
             "room": doctor["room"], "reason": reason}
+
+
+def refer(reg_no, level, reason, department=None):
+    """The nurse sends a critical patient straight to a doctor, past the line.
+
+    Her reason is stored so the doctor can read it. The doctor is chosen by the same rules as
+    call_next (levels 1-2 always go to the resuscitation team), inside one locked transaction."""
+    with _lock, _conn:
+        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
+        _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, "
+                      "arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
+                      (ticket, level, reason, _meta("clock"), reg_no))
+        if department:
+            _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
+                          (department, reg_no))
+        patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
+        doctor, match_reason = _send_to_doctor(patient)
+    return {"ticket": ticket, "department": doctor["department"], "doctor": doctor["name"],
+            "doctor_reg": doctor["reg_no"], "room": doctor["room"], "referral_reason": reason,
+            "match_reason": match_reason, "reason": match_reason}
 
 
 # ---------------------------------------------------------------- doctors
@@ -168,6 +228,18 @@ def call_next():
 def _on_duty(department):
     return [dict(r) for r in _conn.execute(
         "SELECT * FROM doctors WHERE department = ? AND on_duty = 1 ORDER BY waiting, reg_no", (department,))]
+
+
+def _send_to_doctor(patient):
+    """Match one patient with a doctor and write it down: the visit gets the doctor, the doctor gets one more patient.
+
+    Shared by call_next and refer. The caller already holds the lock and the transaction, so both
+    changes are saved together or not at all."""
+    doctor, reason = _pick_doctor(patient)
+    _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
+    _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
+                  (doctor["reg_no"], patient["reg_no"]))
+    return doctor, reason
 
 
 def _pick_doctor(patient):
@@ -194,6 +266,29 @@ def _pick_doctor(patient):
     return _on_duty("Resuscitation team")[0], "No doctor is on duty, so the resuscitation team takes the patient."
 
 
+def doctor_patients(doctor_reg):
+    """The doctor's screen: who the doctor is, and the full card of every patient now with them.
+
+    Unlike the patient's phone, the doctor sees everything: the nurse's level, the AI's level, the vital
+    signs and the answers. Patients the nurse sent straight in come first, then the most urgent."""
+    with _lock:
+        doctor = _conn.execute("SELECT reg_no, name, department, room FROM doctors WHERE reg_no = ?",
+                               (doctor_reg,)).fetchone()
+        if doctor is None:
+            return None
+        clock = _meta("clock")
+        rows = [dict(r) for r in _conn.execute(
+            "SELECT * FROM visits WHERE status = 'with doctor' AND doctor_reg = ?", (doctor_reg,))]
+    rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
+    return {"doctor": dict(doctor), "patients": [
+        {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
+         "level": p["level"], "ai_level": p["ai_level"],
+         "vitals": json.loads(p["vitals"]) if p["vitals"] else None,      # None for visits from before this column
+         "answers": answers_for(p["reg_no"]), "referred": bool(p["referred"]),
+         "referral_reason": p["referral_reason"], "waited": clock - p["arrived"]}
+        for p in rows]}
+
+
 def staff():
     with _lock:
         doctors = [dict(r) for r in _conn.execute("SELECT * FROM doctors ORDER BY reg_no")]
@@ -216,5 +311,5 @@ def set_duty(reg_no, on_duty):
 with _conn:
     _conn.executescript(SCHEMA)
 _columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")}
-if "department" not in _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+if not {"department", "referral_reason"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()
