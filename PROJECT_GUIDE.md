@@ -66,8 +66,9 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 ### The patient's path in our system
 
 1. **Entrance.** The patient says what is wrong. The visit gets a registration number in the hospital database.
-2. **Check-in.** A quick check built for the complaint: three danger signs to tap, the pain score, and two
-   optional history questions for the doctor, each answered with one tap.
+2. **Check-in.** A quick check built for the complaint: three danger signs to tap, how bad the pain is and
+   what it feels like (words to tap, not a 0 to 10 scale), and three optional history questions for the doctor,
+   each answered with one tap.
 3. **Nurse station.** The nurse measures vital signs and gives her level. Then she sees the model's level;
    if the model rates the patient more urgent, a "look again" flag appears. The nurse's level is final, and
    she can send a critical patient straight to a doctor with a written reason.
@@ -135,17 +136,21 @@ To reproduce these numbers: `python assignment.py`
 - **How we steer it:** with a **system prompt**. This is a fixed set of written instructions sent to the model
   before every request: its role, the rules for a good question, what it must never do, and worked examples.
   Ours is in `hospital/core.py` under `QUESTION_SYSTEM_PROMPT`.
-- **What the prompt tells it:** choose the two history questions that give the doctor the best first picture
+- **What the prompt tells it:** choose the three history questions that give the doctor the best first picture
   of this patient, from six topics a doctor asks first (when it started, how it has changed, what the patient
   was doing, whether it happened before, what was taken for it, long-term illness), and word them with the
   patient's own words; never suggest a diagnosis, give advice or ask for identity details.
 - **What plain code does around it:** code decides which topics are allowed (a topic the complaint already
   answers, such as "since this morning", is not offered to the model), supplies the answers to tap from a fixed
-  list per topic, and checks every question the model returns. If fewer than two survive, or the model is
-  switched off, two standard questions on the same topics are used instead.
+  list per topic, and checks every question the model returns. If fewer than three survive, or the model is
+  switched off, three standard questions on the same topics are used instead.
 - **Why so little is left to the model:** the first version let it write any question and the answers too.
   That took about 30 seconds on our laptop and sometimes asked what the patient had already said. Choosing
   topics takes about 3 seconds, and the page asks for the questions in the background, so check-in never waits.
+- **Pain in words:** the patient taps "mild", "moderate", "severe" or "worst ever" and, if there is pain,
+  what it feels like. The urgency model needs the 0 to 10 score it was trained on, so each word stands for the
+  typical score of its range in our data (3, 5, 7 and 10; see `PAIN_SCALE` in `hospital/core.py`). This mapping
+  is our choice and is not tested.
 - **What the doctor gets:** each answer carries its topic, so the doctor's card starts with a short overview
   put together by plain code ("Started: under an hour ago"). The model never summarises the patient.
 

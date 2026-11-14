@@ -468,7 +468,8 @@ const SAFETY = ["Don't take any medicine until a nurse says it's OK.",
                 "Don't eat or drink until a nurse says it's OK.",
                 "Tell the staff straight away if you feel worse."];
 const panel = document.getElementById("panel");
-const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:0, injury:false, alert:"Alert",
+const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:null, painWord:null, feel:null,
+                       painForm:null, injury:false, alert:"Alert",
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null,
                        noDanger:false, followUp:"none", nurseLevel:null, showLine:false });
 let me = fresh();
@@ -560,7 +561,6 @@ function bindChoice(id, onPick) {
 const role = (who, label) => `<span class="role ${who}">${who === "patient" ? "Patient's phone" : label + " · staff only"}</span>`;
 const head = (who, label) => `<div class="ids">${me.reg ? regTag() : ""}${role(who, label)}</div>`;
 const regTag = () => `<span class="regno">Registration no. ${me.reg}${me.ticket ? ", ticket " + me.ticket : ""}</span>`;
-const painWord = (n) => n === 0 ? "No pain" : n <= 3 ? "Mild" : n <= 6 ? "Moderate" : n <= 9 ? "Severe" : "Worst possible";
 
 // ---------------------------------------------------------------- 1. entrance
 function entrance() {
@@ -605,6 +605,7 @@ function entrance() {
       const data = await api("/api/register", { complaint: me.complaint, age: me.age, sex: me.sex, use_model: false });
       me.reg = data.reg_no; me.topic = data.topic; me.source = data.source;
       me.questions = data.questions.map((q) => ({ ...q, answer: null }));
+      me.painForm = data.pain;
       me.followUp = "writing";
       refreshDatabase();
       checkin();
@@ -631,9 +632,9 @@ function askFollowUp() {
 }
 function drawFollowUp() {
   const box = document.getElementById("follow-up"); if (!box) return;
-  const extra = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "extra");
+  const extra = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "extra" && q.choices && q.topic !== "feel");
   if (me.followUp === "writing") {
-    box.innerHTML = `<p class="writing"><i aria-hidden="true"></i>Meddy is choosing two quick questions for your doctor. You don't have to wait for them.</p>`;
+    box.innerHTML = `<p class="writing"><i aria-hidden="true"></i>Meddy is choosing three quick questions for your doctor. You don't have to wait for them.</p>`;
     return;
   }
   if (!extra.length) { box.innerHTML = ""; return; }
@@ -672,12 +673,14 @@ function checkin() {
     </section>
     <section class="section sec-pain">
       ${sectionHead("pain", "About the pain")}
+      <div class="q"><p id="pain-label">${esc(me.painForm.question)}</p>
+        <div class="choice chips" id="pain" role="group" aria-labelledby="pain-label">${me.painForm.scale.map((step) =>
+          `<button type="button" data-v="${esc(step.word)}" class="${step.word === me.painWord ? "on" : ""}"
+             aria-pressed="${step.word === me.painWord}">${esc(step.word)}</button>`).join("")}</div></div>
+      <div class="q" id="feel-row" ${me.pain ? "" : "hidden"}><p id="feel-label">${esc(me.painForm.feel.question)}</p>
+        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.map((c) =>
+          `<button type="button" data-v="${esc(c)}" class="${c === me.feel ? "on" : ""}" aria-pressed="${c === me.feel}">${esc(c)}</button>`).join("")}</div></div>
       <div class="q"><p id="injury-label">Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No", "injury-label")}</div>
-      <div class="q"><p id="pain-label">How bad is the pain? <span class="pain-now" id="pain-value">${me.pain} · ${painWord(me.pain)}</span></p>
-        <div class="pain" id="pain" role="group" aria-labelledby="pain-label">${Array.from({ length: 11 }, (_, n) =>
-          `<button type="button" data-v="${n}" class="${n <= 3 ? "low" : n <= 6 ? "mid" : "high"} ${n === me.pain ? "on" : ""}"
-             aria-pressed="${n === me.pain}" aria-label="${n}, ${painWord(n)}">${n}</button>`).join("")}</div>
-        <div class="pain-ends" aria-hidden="true"><span>0: no pain</span><span>10: worst pain</span></div></div>
     </section>
     <div id="follow-up" aria-live="polite"></div>
     <p class="error" id="error" role="alert"></p>
@@ -695,15 +698,27 @@ function checkin() {
     document.getElementById("error").textContent = "";
   });
   bindChoice("injury", (v) => me.injury = v === "Yes");
-  bindChoice("pain", (v) => { me.pain = Number(v);
-    document.getElementById("pain-value").textContent = `${me.pain} · ${painWord(me.pain)}`; });
+  // Pain is chosen as a word. The server says which 0-10 score each word stands for (the urgency model needs a number).
+  bindChoice("pain", (v) => { me.painWord = v; me.pain = me.painForm.scale.find((step) => step.word === v).score;
+    document.getElementById("feel-row").hidden = !me.pain; if (!me.pain) me.feel = null;
+    document.getElementById("error").textContent = ""; });
+  document.getElementById("feel").addEventListener("click", (event) => {
+    const button = event.target.closest("button"); if (!button) return;
+    me.feel = me.feel === button.dataset.v ? null : button.dataset.v;                 // a second tap takes the answer back
+    for (const b of button.parentNode.children) { b.classList.toggle("on", b.dataset.v === me.feel); b.setAttribute("aria-pressed", b.dataset.v === me.feel); }
+  });
   document.getElementById("go").addEventListener("click", () => {
     if (!me.noDanger && !danger.some(([q]) => q.answer === "Yes")) {
       document.getElementById("error").textContent = "Tap what is true for you under “Is any of this true for you?”, or tap “No, none of these”.";
       ticks.scrollIntoView({ block: "center" }); ticks.firstElementChild.focus({ preventScroll: true }); return; }
+    if (me.painWord === null) {
+      document.getElementById("error").textContent = "Tap how bad the pain is. If nothing hurts, tap “No pain”.";
+      document.getElementById("pain").scrollIntoView({ block: "center" });
+      document.getElementById("pain").firstElementChild.focus({ preventScroll: true }); return; }
     danger.forEach(([q]) => { if (q.answer !== "Yes") q.answer = "No"; });
     me.questions.forEach((q, i) => { const typed = document.getElementById("xt" + i);
       if (q.kind === "extra" && typed && !typed.hidden) q.answer = typed.value.trim() || null; });
+    if (me.pain && me.feel) me.questions.push({ ...me.painForm.feel, answer: me.feel });       // last, so nothing above shifts
     nurse();
   });
 }
@@ -914,7 +929,7 @@ async function waiting(message) {
 // A short overview for the doctor, put together by plain code from what the patient tapped. No AI summary.
 function glance() {
   const yes = me.questions.filter((q) => q.kind === "danger" && q.answer === "Yes").length;
-  const facts = [`“${me.complaint}”`, `${me.age} years, ${me.sex.toLowerCase()}`, `Pain ${me.pain} of 10`,
+  const facts = [`“${me.complaint}”`, `${me.age} years, ${me.sex.toLowerCase()}`, `Pain: ${me.painWord.toLowerCase()}`,
     yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs", me.injury ? "Injury" : null,
     ...me.questions.filter((q) => q.kind === "extra" && q.answer).map((q) => `${q.label}: ${q.answer}`)];
   return `<div class="glance">${facts.filter(Boolean).map((f) => `<span>${esc(f)}</span>`).join("")}</div>`;

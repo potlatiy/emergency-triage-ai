@@ -1,7 +1,7 @@
 """The logic behind the digital hospital. No web code here, so it can be tested on its own.
 
 What is here, and what uses AI:
-1. questionnaire - danger-sign questions from a hand-written list, plus two optional history questions that a
+1. questionnaire - danger-sign questions from a hand-written list, plus optional history questions that a
                    local language model chooses and words for the exact complaint
 2. triage        - the urgency level, from the model tested in the notebook
 3. line order    - who is seen next (plain rules)
@@ -143,8 +143,8 @@ DANGER_QUESTIONS = {
 # The question writer is a general language model. We do not retrain it. We steer it with a system
 # prompt: fixed instructions sent before every request (its role, the rules, and an example).
 #
-# To give the doctor a useful first picture from only two questions, the model does not ask whatever it
-# likes. It chooses two of six history topics (the things a doctor asks first), skips a topic the patient
+# To give the doctor a useful first picture from only three questions, the model does not ask whatever it
+# likes. It chooses three of six history topics (the things a doctor asks first), skips a topic the patient
 # has already answered in the complaint, and words each question with the patient's own words.
 # The answers to tap are ours, one fixed list per topic, so they always fit and the model stays quick.
 TOPICS = {
@@ -161,10 +161,18 @@ TOPICS = {
     "background": {"label": "Background", "ask": "Do you have a long-term illness or take medicine every day?",
                    "choices": ["No", "A long-term illness", "Daily medicine", "Both"]},
 }
-FOLLOW_UPS = 2      # both optional and answered with one tap, so check-in stays quick
+FOLLOW_UPS = 3      # all optional and answered with one tap, so check-in stays quick
+
+# Pain is asked in words, not as a number from 0 to 10: a word is easier to choose and tells the doctor more.
+# The urgency model was trained on the 0-10 score that nurses recorded, so each word is turned into the
+# typical score of its range in our data (the median of 1-3, 4-6 and 7-9 among the 1,267 patients).
+PAIN_SCALE = [("No pain", 0), ("Mild", 3), ("Moderate", 5), ("Severe", 7), ("Worst ever", 10)]
+# Asked only when there is pain. Like the history questions, the answer is information for the doctor only.
+PAIN_FEEL = {"question": "What does the pain feel like?", "kind": "extra", "topic": "feel", "label": "Feels like",
+             "choices": ["Sharp or stabbing", "Dull or aching", "Burning", "Pressure or tightness", "Cramping"]}
 
 QUESTION_SYSTEM_PROMPT = """You help at the check-in desk of a hospital emergency department. A patient has typed what is wrong.
-Choose the 2 history questions whose answers give the doctor the best first picture of THIS patient.
+Choose the 3 history questions whose answers give the doctor the best first picture of THIS patient.
 
 Each question has a topic and a fixed shape. Put the patient's own words in place of "...":
 - onset: "When did ... start?"
@@ -175,7 +183,7 @@ Each question has a topic and a fixed shape. Put the patient's own words in plac
 - background: "Do you have a long-term illness or take medicine every day?"
 
 Rules:
-- Use 2 different topics. Choose what a doctor would ask first for this complaint.
+- Use 3 different topics. Choose what a doctor would ask first for this complaint.
 - Skip a topic the complaint already answers. If it says "since this morning" or "for three days", do not use onset.
 - Plain everyday words, under 14 words, no medical terms.
 - Never suggest a diagnosis, never give advice, never say how serious it is, never ask for a name, address or phone number.
@@ -184,7 +192,7 @@ Rules:
 - The question must read as correct English. For "dizzy and weak" write "When did you start feeling dizzy and weak?"
 
 Example. Complaint: "chest pain since this morning". Allowed topics: course, trigger, before, medicine, background
-{"questions":[{"topic":"trigger","question":"What were you doing when the chest pain started?"},{"topic":"before","question":"Have you had this chest pain before?"}]}"""
+{"questions":[{"topic":"trigger","question":"What were you doing when the chest pain started?"},{"topic":"before","question":"Have you had this chest pain before?"},{"topic":"medicine","question":"Have you taken anything for the chest pain?"}]}"""
 
 
 
@@ -204,6 +212,8 @@ _written = {}       # complaints the model has already answered, so a repeated c
 
 
 def topic_label(topic):
+    if topic == PAIN_FEEL["topic"]:
+        return PAIN_FEEL["label"]
     return TOPICS[topic]["label"] if topic in TOPICS else None
 
 
@@ -211,7 +221,7 @@ def checked_questions(written, skip=()):
     """A second safety net in plain code: keep only what follows the rules the prompt sets.
 
     A question is dropped when its topic is unknown, repeated or already covered, or when it is not a
-    short plain question. Fewer than two usable questions is an error, and the standard ones are used."""
+    short plain question. Too few usable questions is an error, and the standard ones are used."""
     kept, used = [], set(skip)
     for item in written if isinstance(written, list) else []:
         if not isinstance(item, dict):
@@ -229,7 +239,7 @@ def checked_questions(written, skip=()):
 
 
 def questions_from_model(complaint, skip=(), timeout=20):
-    """Two history questions for this exact complaint, chosen and worded by the local language model."""
+    """History questions for this exact complaint, chosen and worded by the local language model."""
     allowed = [t for t in TOPICS if t not in skip]
     body = {"model": OLLAMA_MODEL, "stream": False, "format": _extra_schema(allowed), "keep_alive": "30m",
             "messages": [{"role": "system", "content": QUESTION_SYSTEM_PROMPT},
@@ -243,8 +253,8 @@ def questions_from_model(complaint, skip=(), timeout=20):
 
 
 def standard_questions(complaint, skip=()):
-    """The same two kinds of question without the language model: fixed wording, chosen by a plain rule."""
-    wanted = ["onset", "course", "medicine", "before"]
+    """The same kind of questions without the language model: fixed wording, chosen by a plain rule."""
+    wanted = ["onset", "course", "medicine", "before", "trigger"]
     topics = [t for t in wanted if t not in skip][:FOLLOW_UPS]
     return [{"question": TOPICS[t]["ask"], "topic": t} for t in topics]
 
@@ -262,7 +272,7 @@ def already_answered(complaint, injury=False):
 
 
 def follow_up(complaint, injury=False, use_model=True):
-    """Two optional history questions for the doctor, each with a topic and answers to tap.
+    """The optional history questions for the doctor, each with a topic and answers to tap.
 
     Written by the AI for this exact complaint when it answers in time, and the standard wording otherwise,
     so the doctor always gets the same kind of overview. The answers are information only: they never
@@ -287,13 +297,16 @@ def questionnaire(complaint, injury=False, use_model=True):
     """Build the check-in questionnaire for one complaint.
 
     - "danger" questions: picked by the kind of complaint from the hand-written list. A yes counts.
-    - "extra" questions: two optional history questions for the doctor (see follow_up). The page asks for
+    - "extra" questions: optional history questions for the doctor (see follow_up). The page asks for
       them separately, with use_model=False here, so that registration never waits for the language model.
+    - "pain": how bad the pain is, in words, with the score each word stands for, and what it feels like.
     """
     department = department_for(complaint, injury)
     extra = follow_up(complaint, injury) if use_model else {"source": "list", "questions": []}
     return {"topic": department, "source": extra["source"],
-            "questions": [{"question": q, "kind": "danger"} for q in DANGER_QUESTIONS[department]] + extra["questions"]}
+            "questions": [{"question": q, "kind": "danger"} for q in DANGER_QUESTIONS[department]] + extra["questions"],
+            "pain": {"question": "How bad is the pain?", "feel": PAIN_FEEL,
+                     "scale": [{"word": word, "score": score} for word, score in PAIN_SCALE]}}
 
 
 # ---------------------------------------------------------------- the electronic line (plain rules)

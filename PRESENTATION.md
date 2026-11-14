@@ -15,7 +15,7 @@ Record the screen with your voice over it. No editing needed.
 | Time | What is on screen | What to say |
 |---|---|---|
 | 0:00–0:15 | The digital hospital, entrance step | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
-| 0:15–0:35 | Type "crushing chest pain and sweating", age 67, male. At check-in tap one danger sign, a pain score and the two answers for the doctor | "You are the patient. You say what is wrong and get a quick check built for your complaint: danger signs to tap, and two history questions that an AI model on this laptop chose for you. A few taps, and no waiting." |
+| 0:15–0:35 | Type "crushing chest pain and sweating", age 67, male. At check-in tap one danger sign, how bad the pain is and the answers for the doctor | "You are the patient. You say what is wrong and get a quick check built for your complaint: danger signs to tap, and three history questions that an AI model on this laptop chose for you. A few taps, and no waiting." |
 | 0:35–0:55 | Nurse station: choose Unstable, press Measure and assess. Tap level 4, show the flag, then tap level 2 | "The nurse measures the vital signs and gives her level first. Then our model, trained on 1,267 real emergency patients, gives its own. Here the nurse said 4 and the model says 2, so it flags: look again. She changes her level, and the patient goes straight to the resuscitation bay." |
 | 0:55–1:15 | Start again: "bad stomach pain and vomiting", feverish. Show the line, press 15 minutes pass, then Call next | "A less urgent patient joins the electronic line. The patient's phone shows a ticket and a place in line, never the level. The line is ordered by urgency, and waiting moves you up so nobody is stuck. When called, a second model suggests the department and the database picks the least busy doctor on duty." |
 | 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
@@ -70,7 +70,7 @@ model offers three suggestions, the right one is among them 88% of the time, and
 
 **Did you train the AI that writes the questions?**
 No. It is a general language model that we steer with written instructions, called a system prompt. It chooses
-two of six history topics for the complaint and words the questions; plain code decides which topics are allowed,
+three of six history topics for the complaint and words the questions; plain code decides which topics are allowed,
 supplies the answers to tap and checks the result. Only the urgency model and the department model are trained on
 real data. The questions are untested, so their answers are passed to the doctor and never change the level.
 
@@ -82,7 +82,7 @@ was not trained on. It asks for a re-check on about a third of patients.
 No names are asked for. The demonstration database is wiped every time the server starts.
 
 **Which parts are AI and which are plain rules?**
-AI: the urgency level, the department suggestion, the choice and wording of the two history questions. Plain
+AI: the urgency level, the department suggestion, the choice and wording of the three history questions. Plain
 rules: the order of the line, the choice of doctor, the danger-sign questions, the doctor's overview.
 
 ## Submission form
