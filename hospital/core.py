@@ -337,6 +337,8 @@ _SAYS_WHEN = re.compile(
     r"\b(since|ago|yesterday|today|tonight|this (morning|afternoon|evening)|last (night|week|month)|"
     r"for ((a|an|\w+|\d+) )?(minute|hour|day|week|month|year)s?)\b", re.I)
 _SAYS_COURSE = re.compile(r"\b(getting (\w+ )?(worse|better)|worsening|comes and goes|on and off)\b", re.I)
+# Words of a complaint that is an event (an injury or an accident) rather than an illness.
+_AN_EVENT = re.compile(r"\b(fell|falls?|fallen|cut|burn(ed|t)?|scald\w*|swallow\w*|bit(ten|e)|stung|sting|crash\w*|accident|injur\w*|twist\w*|sprain\w*|welding|stabbed|wound|hit by|knocked)\b", re.I)
 _written = {}       # complaints the model has already answered, so a repeated complaint is instant
 
 
@@ -414,6 +416,11 @@ def already_answered(complaint, injury=False):
         skip.add("course")
     if department_for(complaint, injury) == DEFAULT_DEPARTMENT:
         skip.add("background")          # general medicine's danger questions ask about long-term illness
+    if injury or _AN_EVENT.search(complaint):
+        # A fall, a cut, a burn or something swallowed happened once: "Have you had this cut finger before?" and
+        # "Have you taken anything for the coin?" make no sense. Gemma 3 1B ignored this rule in the prompt
+        # (tried on 20 complaints), so plain code keeps the two topics away from it.
+        skip |= {"before", "medicine"}
     return skip
 
 
@@ -463,13 +470,19 @@ def questionnaire(complaint, injury=False, use_model=True):
 # department or the place in line. The same rules as for the questions hold, checked again in plain code.
 
 SUMMARY_SYSTEM_PROMPT = """You help a triage nurse in a hospital emergency department. You get what one patient reported at check-in.
-Write a summary for the nurse: at most two short sentences, at most 40 words, in the third person ("The patient ...").
+Write a summary for the nurse: exactly two short sentences, at most 40 words, in the third person ("The patient ...").
 
 Rules:
-- Only restate what the patient reported. Add nothing and leave out nothing important.
-- Never name a disease or a diagnosis, never guess the cause, never give advice, never say how serious it is.
+- Use only the facts given. Add nothing. If the patient wrote something in their own words, use it.
+- Never guess the cause: no "likely", "probably", "possibly", "due to", "suggests". Never name a disease or a diagnosis.
+- Never give advice and never say how serious it is.
+- Keep "or" as "or": a yes to "Does the pain spread to your arm, jaw or back?" means "to the arm, jaw or back", not all three.
 - Plain English, no lists, no headings."""
 SUMMARY_MAX_WORDS = 50
+# A sentence that guesses a cause is dropped: the summary repeats what the patient said, it does not explain it.
+# Tried on 20 made-up patients with Gemma 3 1B: the first prompt guessed causes ("likely due to a recent injury")
+# and wrote three sentences, which threw the whole summary away; this prompt and these checks kept all 20.
+_GUESSES = re.compile(r"\b(likely|probably|possibly|perhaps|due to|suggest\w*|indicat\w*|may be|might be|could be)\b", re.I)
 _summaries = {}        # one summary per visit and set of answers, so the nurse's screen can ask again for free
 
 
@@ -477,7 +490,10 @@ def checked_summary(text, complaint=""):
     """The summary as it may be shown, or ValueError. Too long, advice, a diagnosis or a condition the patient
     did not name themselves: thrown away, and the nurse sees the patient's own answers only."""
     text = " ".join(str(text or "").split())
-    if not text or len(text.split()) > SUMMARY_MAX_WORDS or len(re.findall(r"[.!?](\s|$)", text)) > 2:
+    # Keep the first two sentences that do not guess. A third sentence is cut off rather than costing the whole summary.
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s and not _GUESSES.search(s)][:2]
+    text = " ".join(sentences)
+    if not text or len(text.split()) > SUMMARY_MAX_WORDS:
         raise ValueError("not a short summary")
     if _BANNED.search(text):
         raise ValueError("advice or personal data")

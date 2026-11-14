@@ -1025,9 +1025,12 @@ def test_the_nurses_summary_is_checked_and_is_none_without_the_model(monkeypatch
     complaint = "chest pain since this morning"
     ok = "The patient has had chest pain since this morning. It feels like pressure."
     assert core.checked_summary(ok, complaint) == ok
+    assert core.checked_summary("One. Two. Three sentences.", complaint) == "One. Two."             # cut to two
+    assert core.checked_summary("The patient fell. It is likely due to ice. The knee is swollen.", "knee pain") ==         "The patient fell. The knee is swollen."                     # a sentence that guesses the cause is dropped
     for bad in ["The patient may be having a heart attack.",                 # a condition the patient did not name
                 "You should call an ambulance.",                             # advice
-                "One. Two. Three sentences.",                                # too long
+                "word " * 60 + ".",                                          # too long
+                "It is probably nothing.",                                   # only a guess is left: nothing
                 ""]:
         with pytest.raises(ValueError):
             core.checked_summary(bad, complaint)
@@ -1068,3 +1071,11 @@ def test_the_patients_own_words_reach_the_nurse_and_the_summary():
     assert card["answers"][0]["answer"] == words and card["answers"][0]["label"] == "In their own words"
     report = core._report_for_summary(card["complaint"], card["age"], card["sex"], card["answers"])
     assert f'in their own words: "{words}"' in report
+
+
+def test_an_injury_is_not_asked_before_or_medicine():
+    for complaint in ["cut finger", "knee pain after a fall", "my child swallowed a coin", "burn on my arm"]:
+        assert {"before", "medicine"} <= core.already_answered(complaint), complaint
+        topics = [q["topic"] for q in core.follow_up(complaint, use_model=False)["questions"]]
+        assert not {"before", "medicine"} & set(topics), (complaint, topics)
+    assert "before" not in core.already_answered("headache")          # an illness keeps every topic
