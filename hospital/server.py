@@ -33,6 +33,7 @@ class Answer(BaseModel):
     question: str
     answer: str | None = None
     kind: str
+    topic: str | None = None        # the history topic of an AI-written question, for the doctor's overview
 
 
 class Assessment(BaseModel):
@@ -90,6 +91,18 @@ def register(body: Arrival):
     """The patient arrives: give the visit a registration number and build its questionnaire."""
     reg_no = db.register(body.complaint.strip(), body.age, body.sex)
     return {"reg_no": reg_no, **core.questionnaire(body.complaint, use_model=body.use_model)}
+
+
+@app.get("/api/follow-up/{reg_no}")
+def follow_up(reg_no: str):
+    """The optional questions for the doctor, written by the language model for this visit's complaint.
+
+    Each has a history topic and short answers to tap. The page asks for them after registering, so the
+    patient never waits for the model. The list is empty when the model is switched off."""
+    visit = db.visit_for(reg_no)
+    if visit is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return core.follow_up(visit["complaint"], bool(visit["injury"]))
 
 
 @app.post("/api/triage")
