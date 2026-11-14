@@ -13,6 +13,8 @@
 
 **Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
 
+**Website:** the public website is called **Meddy** ("Your triage buddy"). Its plan and design prompt are in [design/](design/README.md).
+
 ## The problem
 
 In an emergency department a triage nurse gives every arriving patient an urgency level from 1 (most urgent)
