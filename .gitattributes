@@ -1,0 +1,7 @@
+# The data is kept byte for byte as committed. On Windows git would otherwise turn its line endings into
+# CRLF, the file's fingerprint would no longer match models/model_info.json, and the saved models would
+# be trained again at every start (see trained_models.why_not_usable).
+*.csv -text
+*.joblib binary
+# The container runs this script on Linux, which needs LF line endings.
+*.sh text eol=lf
