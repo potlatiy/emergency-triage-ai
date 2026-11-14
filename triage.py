@@ -170,9 +170,9 @@ def flag_strength(probabilities, nurse):
     return np.where(gap >= STRONG_FLAG, "strong", np.where(careful, "mild", ""))
 
 
-def vital_sign_rule(df):
-    """The simple rule to beat: count the warning signs any nurse would recognise."""
-    signs = pd.DataFrame({
+def warning_signs(df):
+    """One column per warning sign any nurse would recognise, true where a patient shows it."""
+    return pd.DataFrame({
         "fast or slow pulse": (df["HR"] > 110) | (df["HR"] < 50),
         "fast breathing": df["RR"] > 24,
         "low blood pressure": df["SBP"] < 90,
@@ -182,7 +182,37 @@ def vital_sign_rule(df):
         "severe pain": df["NRS_pain"] >= 8,
         "unmeasurable vital signs": df["unmeasurable"] == 1,
     })
-    return signs.sum(axis=1).values
+
+
+def vital_sign_rule(df):
+    """The simple rule to beat: count the warning signs."""
+    return warning_signs(df).sum(axis=1).values
+
+
+QUICK_SURE = 0.80       # how sure the model must be before a quick review of its report is reasonable
+
+
+def quick_review(probabilities, signs):
+    """Which patients have a report a nurse could reasonably accept after a quick look: the model is at least
+    80% sure, suggests level 3 to 5, and the patient shows no warning sign. Everyone else is checked in person.
+    A suggested level 1 or 2 is not in here because it needs no weighing: that patient goes in at once."""
+    probabilities, signs = np.asarray(probabilities), np.asarray(signs)
+    return (probabilities.max(axis=1) >= QUICK_SURE) & (most_likely(probabilities) >= 3) & (signs == 0)
+
+
+def quick_review_report(df, probabilities):
+    """Is the model's level good enough on the patients where a quick review would be offered?"""
+    truth, nurse = df["KTAS_expert"].values, df["KTAS_RN"].values
+    ai, quick = most_likely(probabilities), quick_review(probabilities, vital_sign_rule(df))
+    print("\n8. WHEN IS A QUICK REVIEW OF THE AI'S REPORT REASONABLE?")
+    print(f"   Rule: the model is at least {QUICK_SURE:.0%} sure, suggests level 3 to 5, and there is no warning sign.")
+    for name, pick in (("Quick review offered", quick), ("Personal check advised", ~quick)):
+        print(f"   {name:24} {pick.sum():4d} patients ({pick.mean():.0%}):  AI right {np.mean(ai[pick] == truth[pick]):.0%}, "
+              f"too low {np.mean(ai[pick] > truth[pick]):.0%}   |   nurses right {np.mean(nurse[pick] == truth[pick]):.0%}, "
+              f"too low {np.mean(nurse[pick] > truth[pick]):.0%}")
+    urgent = truth <= 2
+    print(f"   Of the {urgent.sum()} patients experts rated level 1 or 2, {int((quick & urgent).sum())} would be offered a quick review.")
+    return quick
 
 
 def make_flag_model():
@@ -282,6 +312,7 @@ def main():
         print(line(f"Same-data check, hospital {group} patients", summary(truth[m], plain[m]), m.sum()))
 
     second_check_report(df, probabilities)
+    quick_review_report(df, probabilities)
 
 
 def second_check_report(df, probabilities):

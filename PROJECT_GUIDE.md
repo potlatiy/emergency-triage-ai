@@ -70,9 +70,12 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
    Insurance is only an identity check: it never reaches either model and never changes the level or the line.
 2. **Check-in.** A quick check built for the complaint: three danger signs to tap, what the pain feels
    like, and three optional history questions for the doctor, each answered with one tap.
-3. **Nurse station.** The nurse measures vital signs and gives her level. Then she sees the model's level;
-   if the model rates the patient more urgent, a "look again" flag appears. The nurse's level is final, and
-   she can send a critical patient straight to a doctor with a written reason.
+3. **Nurse station.** The nurse measures vital signs. Meddy writes a report: the patient at a glance, a
+   suggested level, and the likely department and doctor, with advice on whether a quick review is
+   reasonable. The nurse presses **"Everything is correct"** or **"I want to check the patient myself"**.
+   In a personal check she gives her own level, sees a "look again" flag if Meddy rates the patient more
+   urgent, and can change the department or send a critical patient straight to a doctor with a reason.
+   Every verdict is counted: that count is the **test regime**, a running test of the app in use.
 4. **Waiting room.** The electronic line orders everyone by urgency, then by waiting time.
 5. **Doctor.** When called, the patient is matched to the right department and to the least busy doctor on
    duty there. The doctor receives the complaint, level, vital signs and questionnaire answers.

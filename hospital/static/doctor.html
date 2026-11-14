@@ -358,6 +358,7 @@ function meddyLine(p) {
     It leaned more urgent than the final level, but not strongly enough to flag.</p>`;
   if (p.ai_level > p.level) return `<p class="meddy">Meddy suggested a less urgent level, ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
     The nurse rated the patient more urgent.</p>`;
+  if (p.review === "approved") return "";                      // the level shown is Meddy's own
   return `<p class="meddy">Meddy suggested the same level.</p>`;
 }
 
@@ -426,7 +427,8 @@ function drawCard() {
       Her reason: ${esc(p.referral_reason || "not given")}</div>` : ""}
     <div class="verdict" style="border-color:${LEVEL_COLOUR[p.level]};background:${LEVEL_TINT[p.level]}">
       <span class="big" style="background:${LEVEL_COLOUR[p.level]}" aria-hidden="true">${p.level}</span>
-      <div><div class="t">${levelText(p.level)}</div><span class="by">Final level, set at the nurse station</span></div>
+      <div><div class="t">${levelText(p.level)}</div><span class="by">${p.review === "approved" ? "Meddy's level, accepted by the nurse after reviewing its report"
+        : p.review === "checked" ? "Set by the nurse after a personal check" : "Final level, set at the nurse station"}</span></div>
     </div>
     ${meddyLine(p)}
     <h3>Measured at the nurse station</h3>

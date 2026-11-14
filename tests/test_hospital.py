@@ -650,3 +650,78 @@ def test_address_points_phones_to_this_computer(monkeypatch):
     monkeypatch.setattr(server, "LAN", True)
     monkeypatch.setattr(server, "lan_ip", lambda: "192.168.1.20")
     assert TestClient(server.app).get("/api/address").json() == {"url": "http://192.168.1.20:8000/"}
+
+
+# ---------------------------------------------------------------- Meddy's report and the nurse's verdict
+
+def report_for(complaint, age=30, sex="Female", yes=False, **more):
+    """Register, answer the danger questions, and return (registration number, Meddy's report)."""
+    arrival = client.post("/api/register", json={"complaint": complaint, "age": age, "sex": sex, "use_model": False}).json()
+    answers = [{**q, "answer": "Yes" if yes and i == 0 else "No"} for i, q in enumerate(arrival["questions"])]
+    report = client.post("/api/triage", json={"reg_no": arrival["reg_no"], "complaint": complaint, "age": age, "sex": sex,
+                                              "answers": answers, **more}).json()
+    return arrival["reg_no"], report
+
+
+def test_a_quick_review_is_advised_only_for_a_sure_calm_report():
+    _, calm = report_for("ankle pain", pain=4)
+    assert max(calm["probabilities"].values()) >= core.QUICK_SURE and calm["level"] >= 3
+    assert calm["advice"] == {"quick": True, "emergency": False, "reasons": []}
+    _, danger = report_for("ankle pain", pain=4, yes=True)                      # the same patient, one danger sign
+    assert danger["advice"]["quick"] is False and "danger sign" in " ".join(danger["advice"]["reasons"])
+    _, feverish = report_for("ankle pain", pain=4, vitals="feverish")           # the same patient, with a fever
+    assert feverish["advice"]["quick"] is False and "high fever" in " ".join(feverish["advice"]["reasons"])
+    _, unsure = report_for("sore throat", pain=4)
+    assert unsure["advice"]["quick"] is False and "sure of the level" in " ".join(unsure["advice"]["reasons"])
+    _, unread = report_for("zzzz qqqq", pain=4)
+    assert unread["advice"]["quick"] is False and "no symptom" in " ".join(unread["advice"]["reasons"])
+    _, emergency = report_for("crushing chest pain and sweating", 67, "Male", vitals="unstable")
+    assert emergency["level"] <= 2 and emergency["advice"]["emergency"] is True
+
+
+def test_the_warning_signs_in_the_hospital_are_the_ones_from_the_tested_rule():
+    import triage
+    assert core.vital_warnings(core.VITAL_PRESETS["normal"]) == []
+    assert core.vital_warnings(core.VITAL_PRESETS["feverish"]) == ["high fever"]
+    assert set(core.vital_warnings(core.VITAL_PRESETS["unstable"])) == {"fast or slow pulse", "fast breathing",
+                                                                         "low blood pressure", "low oxygen"}
+    assert "not fully alert" in core.vital_warnings(core.VITAL_PRESETS["normal"], alert="Responds to voice")
+    data = core._data
+    quick = triage.quick_review(triage.fair_probabilities(data), triage.vital_sign_rule(data))
+    assert 0.20 < quick.mean() < 0.32                                           # about 1 patient in 4, as reported
+
+
+def test_the_report_names_the_likely_doctor_without_sending_the_patient():
+    before = {d["reg_no"]: d["waiting"] for d in db.staff()["doctors"]}
+    reg_no, report = report_for("ankle pain", pain=4)
+    likely = report["likely_doctor"]
+    assert likely["department"] == report["department"] and likely["doctor"].startswith("Dr.")
+    assert all(option["doctor"]["doctor"] for option in report["department_options"])
+    assert {d["reg_no"]: d["waiting"] for d in db.staff()["doctors"]} == before        # nobody was assigned yet
+    assert db.visit_for(reg_no)["status"] == "registered"
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": report["level"], "department": report["department"],
+                                        "review": "approved"})
+    while (called := client.post("/api/line/next").json()["called"])["reg_no"] != reg_no:
+        pass
+    assert called["department"] == likely["department"]
+
+
+def test_the_test_regime_counts_what_the_nurse_did_with_each_report():
+    assert db.staff()["reviews"]["reviewed"] == 0                               # the made-up patients do not count
+    a, report = report_for("ankle pain", pain=4)                                # accepted as it was
+    client.post("/api/line/join", json={"reg_no": a, "level": report["level"], "department": report["department"],
+                                        "review": "approved"})
+    b, report = report_for("sore throat", pain=4)                               # accepted although Meddy advised a check
+    client.post("/api/line/join", json={"reg_no": b, "level": report["level"], "department": report["department"],
+                                        "review": "approved"})
+    c, report = report_for("ankle pain", pain=4)                                # checked: level and department changed
+    client.post("/api/line/join", json={"reg_no": c, "level": report["level"] - 1, "department": "General medicine",
+                                        "review": "checked"})
+    d, report = report_for("headache", pain=4)                                  # sent straight in: always a personal check
+    refer(d, level=report["level"], department=report["department"])
+    assert db.staff()["reviews"] == {"reviewed": 4, "accepted": 2, "checked": 2, "accepted_against_advice": 1,
+                                     "level_changed": 1, "department_changed": 1}
+    card = client.get(f"/api/doctor/{db.visit_for(d)['doctor_reg']}/patients").json()["patients"]
+    assert next(p for p in card if p["reg_no"] == d)["review"] == "checked"
+    assert client.post("/api/line/join", json={"reg_no": a, "level": 3, "review": "liked it"}).status_code == 422
+
