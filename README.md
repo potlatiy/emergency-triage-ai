@@ -36,24 +36,32 @@ promised time. The line is ordered by plain rules; the AI only supplies each pat
 ![The electronic line: six waiting patients ordered by urgency, with the chest pain patient first](images/queue.jpg)
 
 **The digital hospital.** For the presentation, the whole flow runs as a small hospital you walk through as
-the patient. You say what is wrong at the entrance, answer three questions at check-in, get your vital signs
-taken at the nurse station, sit in the waiting room and are then called to a doctor. A marker moves across the
-floor plan as you go.
+the patient. You say what is wrong at the entrance and your visit gets a registration number. At check-in you
+answer a questionnaire built for your complaint. The nurse station takes your vital signs and suggests a level.
+You sit in the waiting room, and are then called to a doctor who is on duty. A marker moves across the floor plan
+as you go, and a panel shows the hospital's database changing underneath.
 
-![The digital hospital: a floor plan with the patient marker in the resuscitation bay, and the handover note beside it](images/hospital.jpg)
+![The digital hospital: the floor plan, the staff database and the handover note for the doctor](images/hospital.jpg)
 
 What each stop uses:
 
 | Stop | What happens | How |
 |---|---|---|
-| Check-in | Three follow-up questions about your complaint | Written on the spot by a small language model running on the same computer (a hand-written list if it is switched off) |
+| Entrance | The visit is registered under its own number | Database |
+| Check-in | A questionnaire for this complaint: three danger-sign questions and two follow-up questions | Danger questions come from a hand-written list chosen by the kind of complaint. The two follow-ups are written on the spot by a small language model running on the same computer |
 | Nurse station | Suggested urgency level | The model tested in this project |
-| Waiting room | Your place in line | Plain rules: urgency first, then waiting time |
-| Doctor | Department and doctor | Plain rules: key words in the complaint, then the least busy doctor |
+| Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
+| Doctor | Department and doctor | Plain rules: key words in the complaint pick the department, then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers |
 
-Only the urgency level has been tested. The questions, the line and the doctor match are demonstrations. Answers
-to the AI-written questions are passed to the nurse and doctor but never change the level, because nobody has
-checked those questions. The doctors are made up, and no patient data is stored.
+**The internal database** is one SQLite file with three tables: doctors (registration number, department, room,
+on duty or not, patients waiting), visits (registration number, ticket, complaint, level, status, assigned doctor)
+and the questionnaire answers. In the demo you can switch a doctor off duty and watch the next patient be matched
+around them.
+
+Only the urgency level has been tested. The questionnaire, the line and the doctor match are demonstrations.
+Answers to the AI-written questions are passed to the doctor but never change the level, because nobody has
+checked those questions. The doctors and their registration numbers are made up. No patient names are asked for,
+and the database is wiped each time the server starts.
 
 ## What we added
 

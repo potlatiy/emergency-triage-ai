@@ -8,8 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap">
 <style>
-  :root { --ground:#e9efe8; --paper:#f6f9f4; --mist:#d3dfd5; --ink:#12322e; --soft:#3f5c57; --accent:#e5484d;
-          --good:#0ca30c; --warn:#ec835a; --radius:14px; }
+  :root { --ground:#e9efe8; --paper:#f6f9f4; --mist:#d3dfd5; --ink:#12322e; --soft:#3f5c57; --accent:#e5484d; --radius:14px; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--ground); color:var(--ink); font-family:"Outfit",ui-sans-serif,system-ui,sans-serif; }
   h1,h2,h3 { margin:0; font-weight:600; letter-spacing:-0.02em; line-height:1.1; }
@@ -19,19 +18,18 @@
   header.top p { margin:0; color:var(--soft); }
   main { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(340px,1fr); gap:22px; align-items:start;
          padding:14px clamp(16px,4vw,40px) 40px; }
+  .left { display:grid; gap:22px; }
   .card { background:var(--paper); border:1px solid var(--mist); border-radius:var(--radius); padding:20px; }
   .mono { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.8rem; color:var(--soft); line-height:1.5; }
 
   /* the floor plan */
-  .plan { position:sticky; top:14px; }
   .plan svg { width:100%; height:auto; display:block; }
   .room { fill:var(--paper); stroke:var(--ink); stroke-width:2; transition:fill .3s ease; }
   .room.on { fill:#fbd9da; stroke:var(--accent); stroke-width:3; }
   .room-label { font:600 13px "Outfit",sans-serif; fill:var(--ink); }
   .room-sub { font:400 10.5px "IBM Plex Mono",monospace; fill:var(--soft); }
   .path { fill:none; stroke:var(--mist); stroke-width:8; stroke-linecap:round; stroke-linejoin:round; }
-  .seat { fill:var(--mist); }
-  .seat.taken { fill:var(--soft); }
+  .seat { fill:var(--mist); } .seat.taken { fill:var(--soft); }
   #you { transition:transform .9s cubic-bezier(.5,.1,.2,1); }
   #you circle { fill:var(--accent); stroke:var(--paper); stroke-width:3; }
   #you text { font:700 10px "Outfit",sans-serif; fill:var(--paper); text-anchor:middle; }
@@ -40,9 +38,25 @@
   .steps span.on { background:var(--ink); border-color:var(--ink); color:var(--paper); }
   .steps span.done { border-color:var(--ink); color:var(--ink); }
 
+  /* the database card */
+  .db h2 { font-size:1.15rem; }
+  .db-counts { display:flex; gap:22px; flex-wrap:wrap; margin:12px 0 6px; }
+  .db-counts div b { display:block; font-size:1.6rem; font-weight:700; line-height:1.1; }
+  table.staff { width:100%; border-collapse:collapse; margin-top:10px; font-size:.9rem; }
+  table.staff th { text-align:left; font:500 .74rem "IBM Plex Mono",monospace; color:var(--soft); padding:6px 8px 6px 0; }
+  table.staff td { padding:7px 8px 7px 0; border-top:1px solid var(--mist); vertical-align:middle; }
+  table.staff tr.off td { color:#8a9b96; }
+  table.staff td.num { font-variant-numeric:tabular-nums; }
+  .duty { padding:4px 10px; border-radius:20px; border:1.5px solid var(--ink); background:#fff; font:inherit; font-size:.82rem;
+          color:var(--ink); cursor:pointer; white-space:nowrap; }
+  .duty.on { background:var(--ink); color:var(--paper); }
+  .duty:disabled { cursor:default; opacity:.7; }
+
   /* the step panel */
   .panel h2 { font-size:1.45rem; }
   .panel .lede { margin:8px 0 18px; color:var(--soft); line-height:1.55; }
+  .regno { display:inline-block; margin-bottom:10px; padding:3px 10px; border-radius:20px; background:var(--mist);
+           font:500 .8rem "IBM Plex Mono",monospace; }
   label { display:block; font-weight:500; margin:14px 0 6px; }
   input[type=text], input[type=number], select { width:100%; padding:11px 12px; border:1.5px solid var(--ink);
      border-radius:10px; background:#fff; font:inherit; color:var(--ink); }
@@ -55,12 +69,13 @@
         background:var(--ink); color:var(--paper); font:600 1.02rem "Outfit",sans-serif; cursor:pointer; }
   .go.light { background:var(--paper); color:var(--ink); }
   .go:disabled { opacity:.55; cursor:wait; }
-  .go:active, .choice button:active { transform:translateY(1px); }
+  .go:active, .choice button:active, .duty:active { transform:translateY(1px); }
   button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  .group { margin-top:18px; font-weight:600; }
   .q { padding:12px 0; border-top:1px solid var(--mist); display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .q.open { display:block; } .q.open input { margin-top:8px; }
   .q p { margin:0; line-height:1.4; }
   .error { color:#b3261e; margin-top:10px; min-height:1.2em; }
-
   .verdict { display:flex; align-items:center; gap:14px; border-left:6px solid var(--ink); padding-left:14px; }
   .verdict .big { margin-left:auto; font-size:2.6rem; font-weight:700; }
   .verdict .t { font-size:1.25rem; font-weight:600; }
@@ -71,17 +86,15 @@
   .bar span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
   .note { margin-top:14px; padding:12px 14px; border-radius:10px; border:1.5px solid var(--mist); line-height:1.5; }
   .note.red { border-color:var(--accent); }
-
-  .line-row { display:grid; grid-template-columns:34px 1fr auto; gap:10px; align-items:center; padding:9px 12px; margin-top:8px;
+  .line-row { display:grid; grid-template-columns:34px 1fr; gap:10px; align-items:center; padding:9px 12px; margin-top:8px;
      border:1px solid var(--mist); border-left:6px solid var(--mist); border-radius:0 10px 10px 0; background:#fff; }
   .line-row.you { outline:2.5px solid var(--accent); }
   .line-row .pos { font-size:1.3rem; font-weight:700; text-align:center; }
   .tag { display:inline-block; margin-left:6px; padding:0 7px; border:1px solid var(--mist); border-radius:10px; font-size:.75rem; }
   .tag.red { border-color:var(--accent); }
-  dl.hand { display:grid; grid-template-columns:auto 1fr; gap:6px 14px; margin:12px 0 0; }
+  dl.hand { display:grid; grid-template-columns:minmax(110px, 46%) 1fr; gap:6px 14px; margin:12px 0 0; }
   dl.hand dt { color:var(--soft); } dl.hand dd { margin:0; }
-  .truth { margin-top:22px; }
-  @media (max-width: 900px) { main { grid-template-columns:1fr; } .plan { position:static; } }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
   @media (prefers-reduced-motion: reduce) { #you, .room { transition:none; } }
 </style>
 </head>
@@ -92,36 +105,45 @@
 </header>
 
 <main>
-  <section class="card plan">
-    <svg viewBox="0 0 640 400" role="img" aria-labelledby="plan-title">
-      <title id="plan-title">Floor plan: entrance, check-in, nurse station, waiting room, doctor rooms and resuscitation bay</title>
-      <rect x="4" y="4" width="632" height="392" rx="16" fill="#eef3ed" stroke="#12322e" stroke-width="2"/>
-      <path class="path" d="M40 210 H120 V120 H330 V290 H470 M330 120 H470 V80 M470 290 V250"/>
-      <g><rect id="room-1" class="room" x="18" y="160" width="92" height="100" rx="10"/>
-         <text class="room-label" x="64" y="186" text-anchor="middle">Entrance</text>
-         <text class="room-sub" x="64" y="202" text-anchor="middle">you arrive</text></g>
-      <g><rect id="room-2" class="room" x="130" y="40" width="130" height="92" rx="10"/>
-         <text class="room-label" x="195" y="66" text-anchor="middle">Check-in</text>
-         <text class="room-sub" x="195" y="82" text-anchor="middle">AI asks questions</text></g>
-      <g><rect id="room-3" class="room" x="280" y="40" width="130" height="92" rx="10"/>
-         <text class="room-label" x="345" y="66" text-anchor="middle">Nurse station</text>
-         <text class="room-sub" x="345" y="82" text-anchor="middle">AI suggests a level</text></g>
-      <g><rect id="room-4" class="room" x="150" y="230" width="260" height="140" rx="10"/>
-         <text class="room-label" x="280" y="256" text-anchor="middle">Waiting room</text>
-         <text class="room-sub" x="280" y="272" text-anchor="middle">electronic line, by urgency</text>
-         <g id="seats"></g></g>
-      <g><rect id="room-6" class="room" x="440" y="30" width="180" height="92" rx="10"/>
-         <text class="room-label" x="530" y="56" text-anchor="middle">Resuscitation bay</text>
-         <text class="room-sub" x="530" y="72" text-anchor="middle">levels 1 and 2</text></g>
-      <g><rect id="room-5" class="room" x="440" y="150" width="180" height="220" rx="10"/>
-         <text class="room-label" x="530" y="176" text-anchor="middle">Doctor rooms</text>
-         <text class="room-sub" x="530" y="192" text-anchor="middle">matched by complaint</text>
-         <text class="room-sub" id="doctor-line" x="530" y="336" text-anchor="middle"></text></g>
-      <g id="you" transform="translate(64 228)"><circle r="15"/><text y="3.5">YOU</text></g>
-    </svg>
-    <div class="steps" id="steps"></div>
-    <p class="mono" style="margin:14px 0 0">Only two stops use AI. Check-in writes the questions, the nurse station suggests the level. The line and the doctor match are plain rules.</p>
-  </section>
+  <div class="left">
+    <section class="card plan">
+      <svg viewBox="0 0 640 400" role="img" aria-labelledby="plan-title">
+        <title id="plan-title">Floor plan: entrance, check-in, nurse station, waiting room, doctor rooms and resuscitation bay</title>
+        <rect x="4" y="4" width="632" height="392" rx="16" fill="#eef3ed" stroke="#12322e" stroke-width="2"/>
+        <path class="path" d="M40 210 H120 V120 H330 V290 H470 M330 120 H470 V80 M470 290 V250"/>
+        <g><rect id="room-1" class="room" x="18" y="160" width="92" height="100" rx="10"/>
+           <text class="room-label" x="64" y="186" text-anchor="middle">Entrance</text>
+           <text class="room-sub" x="64" y="202" text-anchor="middle">registration</text></g>
+        <g><rect id="room-2" class="room" x="130" y="40" width="130" height="92" rx="10"/>
+           <text class="room-label" x="195" y="66" text-anchor="middle">Check-in</text>
+           <text class="room-sub" x="195" y="82" text-anchor="middle">questionnaire</text></g>
+        <g><rect id="room-3" class="room" x="280" y="40" width="130" height="92" rx="10"/>
+           <text class="room-label" x="345" y="66" text-anchor="middle">Nurse station</text>
+           <text class="room-sub" x="345" y="82" text-anchor="middle">AI suggests a level</text></g>
+        <g><rect id="room-4" class="room" x="150" y="230" width="260" height="140" rx="10"/>
+           <text class="room-label" x="280" y="256" text-anchor="middle">Waiting room</text>
+           <text class="room-sub" x="280" y="272" text-anchor="middle">electronic line, by urgency</text>
+           <g id="seats"></g></g>
+        <g><rect id="room-6" class="room" x="440" y="30" width="180" height="92" rx="10"/>
+           <text class="room-label" x="530" y="56" text-anchor="middle">Resuscitation bay</text>
+           <text class="room-sub" x="530" y="72" text-anchor="middle">levels 1 and 2</text></g>
+        <g><rect id="room-5" class="room" x="440" y="150" width="180" height="220" rx="10"/>
+           <text class="room-label" x="530" y="176" text-anchor="middle">Doctor rooms</text>
+           <text class="room-sub" x="530" y="192" text-anchor="middle">matched from the database</text>
+           <text class="room-sub" id="doctor-line" x="530" y="336" text-anchor="middle"></text></g>
+        <g id="you" transform="translate(64 228)"><circle r="15"/><text y="3.5">YOU</text></g>
+      </svg>
+      <div class="steps" id="steps"></div>
+    </section>
+
+    <section class="card db" aria-live="polite">
+      <h2>Hospital database</h2>
+      <div class="db-counts" id="db-counts"></div>
+      <p class="mono" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
+      <table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
+        <tbody id="staff"></tbody></table>
+    </section>
+  </div>
 
   <section class="card panel" id="panel" aria-live="polite"></section>
 </main>
@@ -132,8 +154,9 @@ const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6
 const LEVEL_COLOUR = { 1:"#d03b3b", 2:"#d03b3b", 3:"#ec835a", 4:"#0ca30c", 5:"#0ca30c" };
 const LEVEL_ICON = { 1:"⚠", 2:"⚠", 3:"▲", 4:"✓", 5:"✓" };
 const panel = document.getElementById("panel");
-const me = { complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:0, injury:false, alert:"Alert",
-             vitals:"normal", questions:[], source:"list", answers:[], result:null, ticket:null };
+const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:0, injury:false, alert:"Alert",
+                       vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null });
+let me = fresh();
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 async function api(path, body) {
@@ -143,6 +166,7 @@ async function api(path, body) {
   return response.json();
 }
 
+// ---------------------------------------------------------------- floor plan and database card
 function walkTo(stop, room) {
   const [x, y] = SPOT[room || stop];
   document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
@@ -158,6 +182,28 @@ function drawSeats(count) {
   }
   document.getElementById("seats").innerHTML = html;
 }
+async function refreshDatabase() {
+  const data = await api("/api/staff");
+  drawSeats(data.visits.waiting);
+  document.getElementById("db-counts").innerHTML = `
+    <div><b>${data.on_duty} of ${data.total}</b><span class="mono">doctors on duty</span></div>
+    <div><b>${data.visits.registered}</b><span class="mono">visits registered</span></div>
+    <div><b>${data.visits.waiting}</b><span class="mono">waiting now</span></div>
+    <div><b>${data.visits["with doctor"]}</b><span class="mono">with a doctor</span></div>`;
+  document.getElementById("staff").innerHTML = data.doctors.map((d) => `
+    <tr class="${d.on_duty ? "" : "off"}">
+      <td class="mono">${d.reg_no}</td><td>${esc(d.name)}</td><td>${esc(d.department)}</td><td>${esc(d.room)}</td>
+      <td class="num">${d.waiting}</td>
+      <td><button class="duty ${d.on_duty ? "on" : ""}" data-reg="${d.reg_no}" data-on="${d.on_duty}"
+            ${d.reg_no === "DR-1000" ? "disabled" : ""} aria-pressed="${d.on_duty}">${d.on_duty ? "On duty" : "Off duty"}</button></td>
+    </tr>`).join("");
+}
+document.getElementById("staff").addEventListener("click", async (event) => {
+  const button = event.target.closest(".duty"); if (!button || button.disabled) return;
+  await api("/api/staff/duty", { reg_no: button.dataset.reg, on_duty: button.dataset.on !== "true" });
+  refreshDatabase();
+});
+
 function choice(id, options, value) {
   return `<div class="choice" id="${id}">` + options.map((o) =>
     `<button type="button" data-v="${esc(o)}" class="${o === value ? "on" : ""}" aria-pressed="${o === value}">${esc(o)}</button>`).join("") + "</div>";
@@ -169,15 +215,17 @@ function bindChoice(id, onPick) {
     onPick(button.dataset.v);
   });
 }
+const regTag = () => `<span class="regno">Registration no. ${me.reg}${me.ticket ? " · ticket " + me.ticket : ""}</span>`;
 
 // ---------------------------------------------------------------- 1. entrance
 function entrance() {
   walkTo(1);
   panel.innerHTML = `
     <h2>1. You arrive</h2>
-    <p class="lede">Tell the hospital what is wrong, in your own words. Play any patient you like; nothing you type is stored.</p>
+    <p class="lede">Tell the hospital what is wrong, in your own words. Play any patient you like. No name is asked for;
+    your visit gets a registration number in the hospital database.</p>
     <label for="complaint">What is wrong?</label>
-    <input type="text" id="complaint" placeholder="for example: chest pain since this morning" value="${esc(me.complaint)}">
+    <input type="text" id="complaint" maxlength="200" placeholder="for example: chest pain since this morning" value="${esc(me.complaint)}">
     <div class="row">
       <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" value="${me.age}"></div>
       <div><label>Sex</label>${choice("sex", ["Female", "Male"], me.sex)}</div>
@@ -185,7 +233,7 @@ function entrance() {
     <label for="arrival">How did you get here?</label>
     <select id="arrival">${["Walked in", "Private car", "Public ambulance", "Private ambulance"].map((o) =>
       `<option ${o === me.arrival ? "selected" : ""}>${o}</option>`).join("")}</select>
-    <button class="go" id="go">Walk to check-in</button>
+    <button class="go" id="go">Register and walk to check-in</button>
     <p class="error" id="error" role="alert"></p>`;
   bindChoice("sex", (v) => me.sex = v);
   document.getElementById("go").addEventListener("click", async () => {
@@ -196,44 +244,55 @@ function entrance() {
     if (!me.complaint) { error.textContent = "Please say what is wrong first."; return; }
     if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Please enter an age between 15 and 110."; return; }
     const go = document.getElementById("go");
-    go.disabled = true; go.textContent = "The AI is writing your questions…";
+    go.disabled = true; go.textContent = "Building your questionnaire…";
     walkTo(2);
     try {
-      const data = await api("/api/questions", { complaint: me.complaint });
-      me.questions = data.questions; me.source = data.source; me.answers = data.questions.map(() => null);
+      const data = await api("/api/register", { complaint: me.complaint, age: me.age, sex: me.sex });
+      me.reg = data.reg_no; me.topic = data.topic; me.source = data.source;
+      me.questions = data.questions.map((q) => ({ ...q, answer: null }));
+      refreshDatabase();
       checkin();
-    } catch (e) { error.textContent = e.message; go.disabled = false; go.textContent = "Walk to check-in"; walkTo(1); }
+    } catch (e) { error.textContent = e.message; go.disabled = false; go.textContent = "Register and walk to check-in"; walkTo(1); }
   });
 }
 
 // ---------------------------------------------------------------- 2. check-in
 function checkin() {
   walkTo(2);
-  const from = me.source === "ai"
-    ? "These three questions were written just now by an AI model running on this computer, from what you typed."
-    : "The AI model is switched off, so these come from a fixed list written by hand.";
+  const danger = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "danger");
+  const extra = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "extra");
   panel.innerHTML = `
-    <h2>2. Check-in questions</h2>
-    <p class="lede">${from}</p>
-    ${me.questions.map((q, i) => `<div class="q"><p>${esc(q)}</p>${choice("q" + i, ["Yes", "No"], me.answers[i])}</div>`).join("")}
+    ${regTag()}
+    <h2>2. Your questionnaire</h2>
+    <p class="lede">Built for your complaint, which the system read as a <b>${esc(me.topic.toLowerCase())}</b> problem.</p>
+    <div class="group">Danger signs</div>
+    <p class="mono" style="margin:4px 0 0">Chosen from a list written by hand. A yes moves you up the line.</p>
+    ${danger.map(([q, i]) => `<div class="q"><p>${esc(q.question)}</p>${choice("q" + i, ["Yes", "No"], q.answer)}</div>`).join("")}
+    ${extra.length ? `<div class="group">For your doctor</div>
+      <p class="mono" style="margin:4px 0 0">Written just now by an AI model on this computer. Your answers are passed on, and do not change your level.</p>
+      ${extra.map(([q, i]) => `<div class="q open"><label for="x${i}" style="margin:0;font-weight:400">${esc(q.question)}</label>
+        <input type="text" id="x${i}" maxlength="80" value="${esc(q.answer || "")}"></div>`).join("")}`
+      : `<p class="mono" style="margin-top:14px">The AI model is switched off, so there are no extra questions this time.</p>`}
+    <div class="group">About the pain</div>
     <div class="q"><p>Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No")}</div>
     <label for="pain">How bad is the pain? <b id="pain-value">${me.pain}</b> of 10</label>
     <input type="range" id="pain" min="0" max="10" value="${me.pain}" style="width:100%">
-    <button class="go" id="go">Go to the nurse</button>
-    <p class="mono" style="margin-top:12px">Your answers go to the nurse and the doctor. ${me.source === "ai"
-      ? "They do not change your level automatically, because nobody has tested these AI questions."
-      : "A yes to any of the first three marks you for an earlier look within your level."}</p>`;
-  me.questions.forEach((_, i) => bindChoice("q" + i, (v) => me.answers[i] = v));
+    <button class="go" id="go">Go to the nurse</button>`;
+  danger.forEach(([, i]) => bindChoice("q" + i, (v) => me.questions[i].answer = v));
   bindChoice("injury", (v) => me.injury = v === "Yes");
   document.getElementById("pain").addEventListener("input", (e) => {
     me.pain = Number(e.target.value); document.getElementById("pain-value").textContent = me.pain; });
-  document.getElementById("go").addEventListener("click", nurse);
+  document.getElementById("go").addEventListener("click", () => {
+    extra.forEach(([, i]) => me.questions[i].answer = document.getElementById("x" + i).value.trim() || null);
+    nurse();
+  });
 }
 
 // ---------------------------------------------------------------- 3. nurse station
 function nurse() {
   walkTo(3);
   panel.innerHTML = `
+    ${regTag()}
     <h2>3. Nurse station</h2>
     <p class="lede">The nurse measures your blood pressure, pulse, breathing, temperature and oxygen. You cannot measure
     these yourself, so choose how your patient is doing.</p>
@@ -247,10 +306,10 @@ function nurse() {
   bindChoice("vitals", (v) => me.vitals = v.toLowerCase());
   document.getElementById("go").addEventListener("click", async () => {
     me.alert = document.getElementById("alert").value;
-    const danger = me.source === "list" && me.answers.includes("Yes");
     try {
-      me.result = await api("/api/triage", { complaint: me.complaint, age: me.age, sex: me.sex, arrival: me.arrival,
-        injury: me.injury, alert: me.alert, pain: me.pain, vitals: me.vitals, danger });
+      me.result = await api("/api/triage", { reg_no: me.reg, complaint: me.complaint, age: me.age, sex: me.sex,
+        arrival: me.arrival, injury: me.injury, alert: me.alert, pain: me.pain, vitals: me.vitals,
+        answers: me.questions.map(({ question, answer, kind }) => ({ question, answer, kind })) });
       showLevel();
     } catch (e) { document.getElementById("error").textContent = e.message; }
   });
@@ -271,33 +330,34 @@ function showLevel() {
       <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
       <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
     ${r.unsure ? `<div class="note">The AI is not sure: no level reaches 60%. The nurse decides.</div>` : ""}
-    ${r.danger ? `<div class="note red">You answered yes to a danger-sign question, so you are marked for an earlier look.</div>` : ""}
+    ${r.danger ? `<div class="note red">You answered yes to a danger-sign question. Within the waiting room this counts as half a level more urgent.</div>` : ""}
     <button class="go" id="seat">${urgent ? "Go straight to the resuscitation bay" : "Take a seat in the waiting room"}</button>`;
   document.getElementById("seat").addEventListener("click", async () => {
-    const data = await api("/api/line/join", { complaint: me.complaint, level: r.level, danger: r.danger, injury: me.injury });
+    const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger });
     me.ticket = data.ticket;
-    if (urgent) { const called = await api("/api/line/next", {}); doctor(called.called); } else waiting(data, "");
+    if (urgent) { const result = await api("/api/line/next", {}); refreshDatabase(); doctor(result.called); }
+    else { refreshDatabase(); waiting(data, ""); }
   });
 }
 
 // ---------------------------------------------------------------- 4. waiting room
 function waiting(data, message) {
   walkTo(4);
-  drawSeats(data.patients.length);
-  const mine = data.patients.find((p) => p.ticket === me.ticket);
+  const mine = data.patients.find((p) => p.reg_no === me.reg);
   const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
   panel.innerHTML = `
+    ${regTag()}
     <h2>4. Waiting room</h2>
-    <p class="lede">Your ticket is <b>${me.ticket}</b>. You are number <b>${mine.position}</b> of ${data.patients.length} in line.
+    <p class="lede">You are number <b>${mine.position}</b> of ${data.patients.length} in line.
     The line is ordered by urgency, then by how long each person has waited.</p>
     ${message ? `<div class="note">${message}</div>` : ""}
     <div class="mono" style="margin-top:12px">Demo clock ${hours}h ${minutes}m</div>
-    ${data.patients.map((p) => `<div class="line-row ${p.ticket === me.ticket ? "you" : ""}" style="border-left-color:${LEVEL_COLOUR[p.level]}">
+    ${data.patients.map((p) => `<div class="line-row ${p.reg_no === me.reg ? "you" : ""}" style="border-left-color:${LEVEL_COLOUR[p.level]}">
       <div class="pos">${p.position}</div>
-      <div><b>${p.ticket}</b> · ${esc(p.who)}${p.ticket === me.ticket ? " (you)" : ""}
-        <div class="mono">${LEVEL_ICON[p.level]} Level ${p.level} · ${p.name} · waited ${p.waited} min
+      <div><b>${p.ticket}</b> · ${esc(p.who)}${p.reg_no === me.reg ? " (you)" : ""}
+        <div class="mono">${p.reg_no} · ${LEVEL_ICON[p.level]} Level ${p.level} · ${p.name} · waited ${p.waited} min
         ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
-      <div></div></div>`).join("")}
+      </div>`).join("")}
     <div class="row">
       <button class="go light" id="wait">15 minutes pass</button>
       <button class="go" id="next">Call next patient</button>
@@ -305,7 +365,8 @@ function waiting(data, message) {
   document.getElementById("wait").addEventListener("click", async () => waiting(await api("/api/line/wait", {}), "Fifteen minutes passed."));
   document.getElementById("next").addEventListener("click", async () => {
     const result = await api("/api/line/next", {});
-    if (result.called && result.called.ticket === me.ticket) doctor(result.called);
+    refreshDatabase();
+    if (result.called && result.called.reg_no === me.reg) doctor(result.called);
     else waiting(result, `${result.called.ticket} (${esc(result.called.who)}) was called to ${esc(result.called.doctor)}, ${esc(result.called.room)}.`);
   });
 }
@@ -316,16 +377,19 @@ function doctor(called) {
   walkTo(5, resus ? 6 : 5);
   document.getElementById("doctor-line").textContent = resus ? "" : `${called.doctor} · ${called.room}`;
   const r = me.result, v = r.vitals;
-  const answers = me.questions.map((q, i) => `<dt>${esc(q)}</dt><dd>${me.answers[i] || "not answered"}</dd>`).join("");
+  const answers = called.answers.map((a) => `<dt>${esc(a.question)}</dt><dd>${esc(a.answer || "not answered")}</dd>`).join("");
   panel.innerHTML = `
+    ${regTag()}
     <h2>5. ${resus ? "Resuscitation bay" : "Your doctor"}</h2>
     <p class="lede">${esc(called.reason)}</p>
     <div class="verdict" style="border-color:${LEVEL_COLOUR[called.level]}">
-      <div><div class="t">${esc(called.doctor)}</div><div class="mono">${esc(called.department)} · ${esc(called.room)}</div></div>
+      <div><div class="t">${esc(called.doctor)}</div>
+      <div class="mono">${called.doctor_reg} · ${esc(called.department)} · ${esc(called.room)}</div></div>
       <div class="big">${called.level}</div>
     </div>
     <h3 style="margin-top:22px">What the doctor already knows</h3>
     <dl class="hand">
+      <dt>Visit</dt><dd>${me.reg}, ticket ${called.ticket}, waited ${called.waited} min</dd>
       <dt>Complaint</dt><dd>${esc(me.complaint)}</dd>
       <dt>Patient</dt><dd>${me.age} years, ${me.sex.toLowerCase()}, ${me.arrival.toLowerCase()}</dd>
       <dt>Level</dt><dd>${r.level} · ${r.name}${r.unsure ? " (AI was not sure)" : ""}</dd>
@@ -333,16 +397,17 @@ function doctor(called) {
       <dt>Pain</dt><dd>${me.pain} of 10${me.injury ? ", caused by an injury" : ""}</dd>
       ${answers}
     </dl>
-    <div class="note truth"><b>What was real here.</b> The level comes from a model tested on 1,267 real patients; it matched
-    experts 68% of the time against 85% for nurses, so a nurse confirms it. The questions, the line and the doctor match are
-    demonstrations and have not been tested. Not medical advice.</div>
+    <div class="note" style="margin-top:22px"><b>What was real here.</b> The level comes from a model tested on 1,267 real patients;
+    it matched experts 68% of the time against 85% for nurses, so a nurse confirms it. The questionnaire, the line and the
+    doctor match are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
     <button class="go" id="again">Start again as a new patient</button>
-    <button class="go light" id="reset" style="margin-top:10px">Start again and empty the waiting room</button>`;
-  document.getElementById("again").addEventListener("click", () => { me.complaint = ""; me.pain = 0; me.injury = false; me.vitals = "normal"; me.alert = "Alert"; entrance(); });
-  document.getElementById("reset").addEventListener("click", async () => { await api("/api/reset", {}); me.complaint = ""; me.pain = 0; me.injury = false; me.vitals = "normal"; me.alert = "Alert"; drawSeats(5); entrance(); });
+    <button class="go light" id="reset" style="margin-top:10px">Start a new day (reset the database)</button>`;
+  document.getElementById("again").addEventListener("click", () => { me = fresh(); entrance(); });
+  document.getElementById("reset").addEventListener("click", async () => {
+    await api("/api/reset", {}); me = fresh(); document.getElementById("doctor-line").textContent = ""; refreshDatabase(); entrance(); });
 }
 
-drawSeats(5);
+refreshDatabase();
 entrance();
 </script>
 </body>
