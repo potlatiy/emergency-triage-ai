@@ -1,7 +1,7 @@
 # Can AI be a second check on emergency triage?
 
 **Track:** Health
-**Team:** [your names here]
+**Team:** Yegor (backend), Denys (project decisions), Ostap (front end)
 
 *This project is a prototype and is not medical advice.*
 
@@ -34,6 +34,26 @@ back. Flagged patients are marked for the nurse, and each patient's phone shows 
 promised time. The line is ordered by plain rules; the AI only supplies each patient's level.
 
 ![The electronic line: six waiting patients ordered by urgency, with the chest pain patient first](images/queue.jpg)
+
+**The digital hospital.** For the presentation, the whole flow runs as a small hospital you walk through as
+the patient. You say what is wrong at the entrance, answer three questions at check-in, get your vital signs
+taken at the nurse station, sit in the waiting room and are then called to a doctor. A marker moves across the
+floor plan as you go.
+
+![The digital hospital: a floor plan with the patient marker in the resuscitation bay, and the handover note beside it](images/hospital.jpg)
+
+What each stop uses:
+
+| Stop | What happens | How |
+|---|---|---|
+| Check-in | Three follow-up questions about your complaint | Written on the spot by a small language model running on the same computer (a hand-written list if it is switched off) |
+| Nurse station | Suggested urgency level | The model tested in this project |
+| Waiting room | Your place in line | Plain rules: urgency first, then waiting time |
+| Doctor | Department and doctor | Plain rules: key words in the complaint, then the least busy doctor |
+
+Only the urgency level has been tested. The questions, the line and the doctor match are demonstrations. Answers
+to the AI-written questions are passed to the nurse and doctor but never change the level, because nobody has
+checked those questions. The doctors are made up, and no patient data is stored.
 
 ## What we added
 
@@ -116,6 +136,8 @@ in a real department.
 
 - **Notebook:** open `triage.ipynb`. All outputs are saved in it.
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
+- **Digital hospital:** `python hospital/server.py` and open http://localhost:8000. For AI-written questions,
+  install Ollama and run `ollama pull gemma3:4b` first; without it the hand-written questions are used.
 
 ## Sources
 
@@ -124,5 +146,7 @@ in a real department.
   (supporting files S1 and S2, CC BY 4.0, unchanged apart from file names and CSV copies).
 - **Libraries:** pandas (https://pandas.pydata.org), scikit-learn (https://scikit-learn.org),
   Matplotlib (https://matplotlib.org), Gradio (https://gradio.app)
+- **Language model for the check-in questions:** Gemma 3 (4B) by Google, run locally through Ollama (https://ollama.com/library/gemma3)
+- **Web server:** FastAPI (https://fastapi.tiangolo.com)
 - **AI tools:** Claude (Claude Code, https://claude.com/claude-code) was used to help write and explain the
   code and to draft this write-up.
