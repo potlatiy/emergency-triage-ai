@@ -9,13 +9,15 @@ It holds three things:
 No names are stored for patients. The doctors are made up for the demonstration.
 """
 
+import os
 import sqlite3
 import threading
 from pathlib import Path
 
 import core
 
-DB_PATH = Path(__file__).parent / "hospital.db"
+# The tests point this at a throwaway file so they never touch the demonstration database.
+DB_PATH = Path(os.environ.get("HOSPITAL_DB", Path(__file__).parent / "hospital.db"))
 _lock = threading.Lock()
 _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 _conn.row_factory = sqlite3.Row
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS doctors (
 CREATE TABLE IF NOT EXISTS visits (
     reg_no TEXT PRIMARY KEY, ticket TEXT, complaint TEXT NOT NULL, age REAL, sex TEXT, injury INTEGER DEFAULT 0,
     level INTEGER, danger INTEGER DEFAULT 0, you INTEGER DEFAULT 0, arrived INTEGER,
+    department TEXT, department_how TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT NOT NULL REFERENCES visits(reg_no),
@@ -48,6 +51,8 @@ SEED_DOCTORS = [
     ("DR-1009", "Dr. Sorensen", "Eye, ear, nose and throat", "Room 9", 1),
     ("DR-1010", "Dr. Achebe", "General medicine", "Room 10", 2),
     ("DR-1011", "Dr. Ferrand", "General medicine", "Room 11", 1),
+    ("DR-1012", "Dr. Varga", "Urology and kidney", "Room 12", 1),
+    ("DR-1013", "Dr. Imani", "Obstetrics and gynaecology", "Room 13", 0),
 ]
 # Patients already in the waiting room when the demonstration starts: (complaint, level, minutes ago)
 SEED_WAITING = [("sore throat", 5, 40), ("ankle pain", 4, 31), ("abd pain", 3, 22), ("headache", 4, 14), ("dizziness", 3, 6)]
@@ -108,11 +113,12 @@ def answers_for(reg_no):
             "SELECT question, answer, kind FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
 
 
-def join_line(reg_no, level, danger):
+def join_line(reg_no, level, danger, department=None, department_how=None):
     with _lock, _conn:
         ticket = f"A{_next_number('ticket'):03d}"
-        _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, status = 'waiting' WHERE reg_no = ?",
-                      (ticket, level, int(danger), _meta("clock"), reg_no))
+        _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = ?, "
+                      "department_how = ?, status = 'waiting' WHERE reg_no = ?",
+                      (ticket, level, int(danger), _meta("clock"), department, department_how, reg_no))
     return ticket
 
 
@@ -147,7 +153,7 @@ def call_next():
         if not rows:
             return None
         patient = rows[0]
-        doctor, reason = _pick_doctor(patient["complaint"], patient["level"], bool(patient["injury"]))
+        doctor, reason = _pick_doctor(patient)
         _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
         _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
                       (doctor["reg_no"], patient["reg_no"]))
@@ -164,19 +170,21 @@ def _on_duty(department):
         "SELECT * FROM doctors WHERE department = ? AND on_duty = 1 ORDER BY waiting, reg_no", (department,))]
 
 
-def _pick_doctor(complaint, level, injury):
-    """Levels 1-2: resuscitation team. Otherwise the least busy doctor ON DUTY in the right department.
+def _pick_doctor(patient):
+    """Levels 1-2: resuscitation team. Otherwise the least busy doctor ON DUTY in the patient's department.
     If nobody is on duty there, general medicine covers; if nobody is there either, any doctor on duty."""
-    if level <= 2:
+    if patient["level"] <= 2:
         return _on_duty("Resuscitation team")[0], "Level 1 or 2: straight to the resuscitation team."
-    department = core.department_for(complaint, injury)
+    # The department was decided at the nurse station. Sample patients have none, so the rule decides.
+    department = patient["department"] or core.department_for(patient["complaint"], bool(patient["injury"]))
+    how = patient["department_how"] or "key-word rule"
     doctors = _on_duty(department)
     if doctors:
-        return doctors[0], (f"The complaint points to {department.lower()}. {doctors[0]['name']} is on duty there "
+        return doctors[0], (f"Matched to {department.lower()} by the {how}. {doctors[0]['name']} is on duty there "
                             f"with the shortest list ({doctors[0]['waiting']} waiting).")
     cover = _on_duty(core.DEFAULT_DEPARTMENT)
     if cover:
-        return cover[0], (f"The complaint points to {department.lower()}, but nobody is on duty there right now, "
+        return cover[0], (f"Matched to {department.lower()} by the {how}, but nobody is on duty there right now, "
                           f"so general medicine covers. {cover[0]['name']} has the shortest list.")
     anyone = [dict(r) for r in _conn.execute(
         "SELECT * FROM doctors WHERE on_duty = 1 AND department != 'Resuscitation team' ORDER BY waiting, reg_no")]
@@ -204,8 +212,9 @@ def set_duty(reg_no, on_duty):
         _conn.execute("UPDATE doctors SET on_duty = ? WHERE reg_no = ?", (int(on_duty), reg_no))
 
 
-# Create the tables on first use.
+# Create the tables on first use, and rebuild them if the file is from an older version of the code.
 with _conn:
     _conn.executescript(SCHEMA)
-if _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] == 0:
+_columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")}
+if "department" not in _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()

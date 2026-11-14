@@ -51,6 +51,8 @@ class Joining(BaseModel):
     reg_no: str
     level: int = Field(ge=1, le=5)
     danger: bool = False
+    department: str | None = None
+    department_how: str | None = None
 
 
 class Duty(BaseModel):
@@ -60,7 +62,8 @@ class Duty(BaseModel):
 
 @app.get("/")
 def page():
-    return FileResponse(STATIC / "index.html")
+    # no-cache: the browser always asks for the latest page, so an update is seen without a hard refresh
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/register")
@@ -84,7 +87,7 @@ def triage(body: Assessment):
 
 @app.post("/api/line/join")
 def join(body: Joining):
-    ticket = db.join_line(body.reg_no, body.level, body.danger)
+    ticket = db.join_line(body.reg_no, body.level, body.danger, body.department, body.department_how)
     return {"ticket": ticket, **db.line()}
 
 

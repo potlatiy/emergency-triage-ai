@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from assignment import labels as department_labels, make_assignment_model  # noqa: E402
 from triage import LEVELS, NUMBERS, TEXT, load, make_model, safety_first  # noqa: E402
 
 LEVEL_NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
@@ -32,6 +33,12 @@ OLLAMA_MODEL = "gemma3:4b"
 _data = load()
 _model = make_model().fit(_data, _data["KTAS_expert"])     # demo model, trained on all 1,267 patients
 _BUSY = float(_data["Patients number per hour"].median())
+# The assignment model: learned from each real patient's final diagnosis (see assignment.py).
+_assignment = make_assignment_model().fit(_data, department_labels(_data))
+# The model was trained on complaints as nurses write them ("ant. chest pain"). Patients typing their own
+# words are less familiar to it, and at middling confidence it made odd choices in our trials. So it
+# decides only when it is at least 70% sure; otherwise the key-word rule decides.
+ASSIGN_SURE_ENOUGH = 0.70
 
 VITAL_PRESETS = {
     "normal": {"SBP": 124, "DBP": 78, "HR": 78, "RR": 16, "BT": 36.6, "Saturation": 98},
@@ -58,7 +65,23 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
     }]).astype({c: float for c in NUMBERS})
     probabilities = _model.predict_proba(row)[0]
     level = int(safety_first(probabilities[None, :])[0])
+    # Which department? The trained model answers when it is sure enough, the key-word rule otherwise.
+    department_odds = _assignment.predict_proba(row)[0]
+    best = int(department_odds.argmax())
+    if department_odds[best] >= ASSIGN_SURE_ENOUGH:
+        department = str(_assignment.classes_[best])
+        how = f"trained model, {department_odds[best]:.0%} sure"
+    else:
+        department = department_for(complaint, injury)
+        how = f"key-word rule (the model was only {department_odds[best]:.0%} sure)"
+    # Three departments for the nurse to choose from: the one picked above, then the model's next most likely.
+    names = [str(c) for c in _assignment.classes_]
+    order = [names.index(department)] + [i for i in np.argsort(-department_odds) if names[i] != department]
     return {
+        "department": department,
+        "department_how": how,
+        "department_options": [{"department": names[i], "chance": round(float(department_odds[i]), 3)}
+                               for i in order[:3]],
         "level": level,
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
@@ -70,13 +93,15 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
 
 # Each department: the words in a complaint that send a patient there. First match wins.
 DEPARTMENTS = [
+    ("Obstetrics and gynaecology", r"vagin|pregnan|menstr|period pain|pelvic|labou?r pain|miscarr"),
+    ("Urology and kidney", r"urin|flank|kidney|dysuria|hematuria|testic|scrot|voiding|pee|bladder"),
     ("Cardiology", r"chest|palpitat|heart|흉통"),
     ("Respiratory medicine", r"dyspnea|breath|cough|asthma|sputum|hemoptysis|wheez"),
     ("Neurology", r"headache|dizz|vertigo|weakness|mental|seizure|syncope|numb|dysarthria|faint|stroke|confus"),
     ("Trauma and orthopaedics", r"wound|fractur|lacerat|burn|injur|sprain|trauma|bite|fall|fell|broke|twist|cut |bleed|"
                                 r"ankle|knee|wrist|shoulder|arm |leg |back pain|hip|finger|foot|hand "),
     ("Gastroenterology and surgery", r"abd|epigastr|stomach|belly|bowel|vomit|diarrh|nausea|melena|hemateme|stool|"
-                                     r"flank|constipat|ruq|rlq"),
+                                     r"constipat|ruq|rlq"),
     ("Eye, ear, nose and throat", r"eye|ocular|visual|vision|ear |throat|nose|epistaxis|foreign body"),
 ]
 DEFAULT_DEPARTMENT = "General medicine"
@@ -106,36 +131,63 @@ DANGER_QUESTIONS = {
                                      "Have you been unable to keep fluids down all day?"],
     "Eye, ear, nose and throat": ["Did you suddenly lose vision?", "Did a chemical get into your eye?",
                                   "Are you having trouble swallowing or breathing?"],
+    "Urology and kidney": ["Are you unable to pass urine at all?", "Is there blood in your urine with a fever or shaking chills?",
+                           "Is there sudden severe pain in a testicle?"],
+    "Obstetrics and gynaecology": ["Are you pregnant, or could you be?", "Is the bleeding soaking a pad every hour?",
+                                   "Do you have severe one-sided pain low in your belly?"],
     "General medicine": ["Do you have a high fever with a stiff neck or a rash?", "Have you fainted or felt close to fainting?",
                          "Do you have a long-term illness such as diabetes or heart disease?"],
 }
 
-_EXTRA_PROMPT = """A patient arrives at an emergency department and says: "{complaint}"
+# The question writer is a general language model. We do not retrain it. We steer it with this
+# system prompt: fixed instructions sent before every request (its role, the rules, and examples).
+QUESTION_SYSTEM_PROMPT = """You are helping at the check-in desk of a hospital emergency department.
+A patient has typed what is wrong. A nurse has already asked the danger-sign questions.
+Your only job is to write 2 extra questions whose answers will save the doctor time.
 
-The nurse has already asked these questions:
-{asked}
+Rules for every question:
+- It must be about THIS patient's complaint, using the patient's own words where possible.
+- Plain everyday words. No medical terms. Under 14 words. One thing per question.
+- It must be answerable in a few words by a worried person with no medical training.
+- Ask about facts the patient knows: when it started, how it changed, what was taken for it, whether it happened before.
+- Never repeat or rephrase a question the nurse already asked.
+- Never suggest a diagnosis, never give advice, never tell the patient what to do, never say how serious it is.
+- Never ask for a name, address, phone number or any identity detail.
 
-Write exactly 2 more short questions that the doctor will want answered about THIS complaint
-(for example when it started, what makes it worse, medicines taken, whether it happened before).
-Rules: plain everyday words, each under 14 words, each answerable in a few words, do not repeat the questions above."""
+Examples of good questions:
+Complaint: "chest pain since this morning" -> "What were you doing when the pain started?" / "Have you had this pain before?"
+Complaint: "i twisted my ankle playing football" -> "Can you put any weight on that foot?" / "How long ago did it happen?"
+Complaint: "fever and cough for three days" -> "What is the highest temperature you measured?" / "Have you taken any medicine for it?"
+
+Reply with exactly 2 questions."""
+
+_EXTRA_PROMPT = """Complaint: "{complaint}"
+
+The nurse has already asked:
+{asked}"""
 
 _EXTRA_SCHEMA = {"type": "object", "properties": {"questions": {"type": "array", "items": {"type": "string"},
                                                                "minItems": 2, "maxItems": 2}},
                  "required": ["questions"]}
+_BANNED = re.compile(r"\b(you (should|must|need to)|diagnos|name|address|phone|call an ambulance)\b", re.I)
 
 
 def questions_from_model(complaint, asked, timeout=25):
     """Two extra questions written for this exact complaint by the local language model."""
-    prompt = _EXTRA_PROMPT.format(complaint=complaint, asked="\n".join("- " + q for q in asked))
     body = {"model": OLLAMA_MODEL, "stream": False, "format": _EXTRA_SCHEMA,
-            "messages": [{"role": "user", "content": prompt}], "options": {"temperature": 0.2, "num_ctx": 1024}}
+            "messages": [{"role": "system", "content": QUESTION_SYSTEM_PROMPT},
+                         {"role": "user", "content": _EXTRA_PROMPT.format(
+                             complaint=complaint, asked="\n".join("- " + q for q in asked))}],
+            "options": {"temperature": 0.2, "num_ctx": 2048}}
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         answer = json.loads(json.loads(response.read())["message"]["content"])
     questions = [q.strip() for q in answer.get("questions", []) if isinstance(q, str) and q.strip().endswith("?")]
+    # A second safety net in plain code: drop anything that breaks the rules the prompt sets.
+    questions = [q for q in questions if len(q.split()) <= 16 and not _BANNED.search(q)]
     if len(questions) != 2:
-        raise ValueError("the model did not return two questions")
+        raise ValueError("the model did not return two usable questions")
     return questions
 
 
