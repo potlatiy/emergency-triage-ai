@@ -1,0 +1,28 @@
+# Every push to main puts the new version online: the Hugging Face Space gets the files from
+# deploy/huggingface and is rebuilt from scratch, which downloads the latest main from GitHub.
+# Needs the repository secret HF_TOKEN (a Hugging Face token with write access to the Space).
+name: Deploy to Hugging Face
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # the "Run workflow" button on the Actions tab
+
+# Two quick merges in a row: only the newest one is deployed.
+concurrency:
+  group: deploy-huggingface
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install huggingface_hub
+      - name: Update the Space and rebuild it
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python deploy/huggingface/redeploy.py
