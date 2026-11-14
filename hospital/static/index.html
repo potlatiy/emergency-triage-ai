@@ -94,7 +94,15 @@
   .tag.red { border-color:var(--accent); }
   dl.hand { display:grid; grid-template-columns:minmax(110px, 46%) 1fr; gap:6px 14px; margin:12px 0 0; }
   dl.hand dt { color:var(--soft); } dl.hand dd { margin:0; }
-  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  .left, .left > *, .panel { min-width:0; }
+  .table-wrap { overflow-x:auto; }
+  /* On a phone: floor plan first, then the step you are on, then the database. */
+  @media (max-width: 900px) {
+    main { grid-template-columns:minmax(0, 1fr); }
+    .left { display:contents; }
+    .plan { order:1; } .panel { order:2; } .db { order:3; }
+    table.staff { min-width:520px; }
+  }
   @media (prefers-reduced-motion: reduce) { #you, .room { transition:none; } }
 </style>
 </head>
@@ -140,8 +148,8 @@
       <h2>Hospital database</h2>
       <div class="db-counts" id="db-counts"></div>
       <p class="mono" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
-      <table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
-        <tbody id="staff"></tbody></table>
+      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
+        <tbody id="staff"></tbody></table></div>
     </section>
   </div>
 

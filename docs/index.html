@@ -126,7 +126,7 @@
 
 <section class="map" id="map">
   <h2>Follow any branch</h2>
-  <p class="sub">Seven parts of the project, one line each. Click a branch to see what it means.</p>
+  <p class="sub">Eight parts of the project, one line each. Click a branch to see what it means.</p>
   <div class="mm">
     <div class="canvas" id="canvas">
       <svg class="lines" id="lines" viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true"></svg>
@@ -161,6 +161,7 @@
     queue: '<circle cx="5" cy="7" r="2"/><circle cx="12" cy="7" r="2"/><circle cx="19" cy="7" r="2"/><path d="M3 21v-7a2 2 0 0 1 4 0v7M10 21v-7a2 2 0 0 1 4 0v7M17 21v-7a2 2 0 0 1 4 0v7"/>',
     chart: '<path d="M3 21h18"/><rect x="5" y="14" width="3" height="7"/><rect x="10.5" y="10" width="3" height="11"/><rect x="16" y="5" width="3" height="16"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2.5"/>',
+    signpost: '<path d="M12 3v18"/><path d="M12 5h7l2 2.5-2 2.5h-7z"/><path d="M12 12H5l-2 2.5L5 17h7z"/>',
     branch: '<path d="M12 22v-8"/><path d="M12 14c0-5-6-4-7-9M12 14c0-5 6-4 7-9"/><path d="M3 7l2-2 2 2M17 7l2-2 2 2"/>',
   };
   const icon = (name, colour) =>
@@ -183,7 +184,13 @@
       notes: ["Inputs: the complaint in a few words, age, alertness, pain and vital signs.",
               "It never sees the diagnosis, the outcome or the nurse's level.",
               "It leans towards the more urgent level on purpose, because rating too low is the dangerous mistake."] },
-    { id: "check", label: "Second check", icon: "flag", x: 850, y: 372,
+    { id: "department", label: "Right department", icon: "signpost", x: 880, y: 262,
+      lead: "A level says how soon. A second model suggests who should see the patient.",
+      notes: ["It learned from the real final diagnosis of each of the 1,267 patients.",
+              "It picks the right department 70% of the time. A key-word rule gets 67%.",
+              "The right department is among its top three 88% of the time, so the nurse gets three suggestions.",
+              "The same complaint can lead to different departments, which is why no version passed 71%."] },
+    { id: "check", label: "Second check", icon: "flag", x: 850, y: 410,
       lead: "The model does not replace the nurse. It asks her to look again.",
       notes: ["A patient is flagged when the model rates them more urgent than the nurse did.",
               "It flags 107 of the 131 patients nurses rated too low.",
@@ -193,7 +200,8 @@
       notes: ["Levels 1 and 2 always go first.",
               "A less urgent patient moves up one level for every 45 minutes waited.",
               "Each patient sees their place in line, never a promised time.",
-              "The order comes from plain rules. The model only supplies each level."] },
+              "When called, the patient goes to the least busy doctor on duty in their department.",
+              "The order comes from plain rules. The models only supply the level and the department."] },
     { id: "results", label: "Results", icon: "chart", x: 250, y: 492,
       lead: "Worse than nurses at the level, useful as a safety net.",
       notes: ["Exact level: always guessing level 3 gets 38%, the model 68%, nurses 85%.",
@@ -204,6 +212,7 @@
       notes: ["One country, 1,267 patients, and only 26 at the most urgent level.",
               "Waiting times are simulated, since the data has no arrival times.",
               "Accuracy dropped when the model moved to the other hospital.",
+              "The check-in questions are written by a general AI model and have not been tested.",
               "A student prototype. Not medical advice."] },
   ];
 
