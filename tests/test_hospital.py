@@ -1079,3 +1079,16 @@ def test_an_injury_is_not_asked_before_or_medicine():
         topics = [q["topic"] for q in core.follow_up(complaint, use_model=False)["questions"]]
         assert not {"before", "medicine"} & set(topics), (complaint, topics)
     assert "before" not in core.already_answered("headache")          # an illness keeps every topic
+
+
+def test_a_summary_sentence_about_something_the_patient_never_said_is_dropped():
+    report = core._report_for_summary("knee pain after a fall", 30, "Male", [])
+    text = "The patient reports knee pain after a fall. The pain spreads to the arm, jaw and back."
+    assert core.checked_summary(text, "knee pain after a fall", report) == "The patient reports knee pain after a fall."
+    dizzy = core._report_for_summary("dizzy and weak", 80, "Female", [])
+    assert core.checked_summary("The patient reports dizziness and weakness.", "dizzy and weak", dizzy)   # same word, other form
+
+
+def test_a_guessed_cause_is_cut_off_and_the_rest_is_kept():
+    text = "The patient reports knee pain after a fall, likely due to a recent injury. The pain is sharp."
+    assert core.checked_summary(text, "knee pain after a fall") == "The patient reports knee pain after a fall. The pain is sharp."
