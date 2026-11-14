@@ -63,6 +63,7 @@ replacement; we built a second check and a way to sort the line.
 **If it is worse, why use it at all?**
 Because it makes different mistakes. It flags 82% of the patients nurses under-rated. And in our simulation,
 sorting the line by even a rough level cuts the wait of the most urgent patients from 88 minutes to 24.
+Everyone else waits longer for it (about 107 minutes instead of 88): sorting moves waiting time, it does not remove it.
 
 **How do you know the test is fair?**
 Every patient was scored by a model that never saw them. The nurse's level, the diagnosis and the outcome were
