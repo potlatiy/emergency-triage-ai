@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Triage second check: project map</title>
+<meta name="description" content="A clickable map of a student hackathon project: an AI second check that helps a triage nurse catch urgent patients rated too low.">
+<meta name="theme-color" content="#E9EFE8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ground: #e9efe8; --paper: #f6f9f4; --mist: #d3dfd5;
+    --ink: #12322e; --ink-soft: #3f5c57; --accent: #e5484d; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--ground); color: var(--ink);
+         font-family: "Outfit", ui-sans-serif, system-ui, sans-serif; }
+  h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; line-height: 1.02; margin: 0; }
+
+  .hero { min-height: min(100dvh, 780px); display: flex; flex-direction: column; justify-content: space-between;
+          padding: 28px clamp(20px, 5vw, 72px) clamp(36px, 6vw, 72px);
+          background: var(--ground) url("hero.jpg") center / cover no-repeat; }
+  .nav { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 1.05rem; }
+  .nav svg { width: 34px; height: 34px; }
+  .hero-copy { max-width: 640px; }
+  .hero-copy h1 { font-size: clamp(2.5rem, 5.6vw, 4.5rem); max-width: 13ch; }
+  .hero-copy p { margin: 20px 0 28px; font-size: 1.08rem; line-height: 1.6; max-width: 46ch; }
+  .openmap { display: inline-flex; align-items: stretch; border: 2px solid var(--ink); border-radius: var(--radius);
+             overflow: hidden; background: var(--paper); color: var(--ink); font-weight: 600; text-decoration: none; }
+  .openmap span:first-child { padding: 13px 20px; }
+  .openmap-tile { display: grid; place-items: center; width: 50px; background: var(--accent); }
+  .openmap-tile svg { width: 18px; height: 18px; transition: transform .25s ease; }
+  .openmap:hover .openmap-tile svg { transform: translateY(3px); }
+  .openmap:focus-visible, .node:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+
+  .map { padding: clamp(56px, 8vw, 112px) clamp(20px, 5vw, 72px);
+         background-color: var(--ground);
+         background-image: radial-gradient(rgba(18, 50, 46, .16) 1px, transparent 1.4px); background-size: 22px 22px; }
+  .map h2, .numbers h2 { font-size: clamp(2rem, 4vw, 3.25rem); }
+  .sub { margin: 14px 0 36px; max-width: 52ch; font-size: 1.05rem; line-height: 1.6; color: var(--ink-soft); }
+  .mm { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
+  .canvas { position: relative; aspect-ratio: 1000 / 600; }
+  .lines { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .line { fill: none; stroke: var(--ink); stroke-width: 5; stroke-linecap: round; vector-effect: non-scaling-stroke;
+          opacity: .85; transition: stroke .25s ease, stroke-width .25s ease; }
+  .line.on { stroke: var(--accent); stroke-width: 7; opacity: 1; }
+  .center, .node { position: absolute; transform: translate(-50%, -50%); display: inline-flex; align-items: center;
+                   gap: 9px; white-space: nowrap; border-radius: var(--radius); font: inherit; font-weight: 600; }
+  .center { left: 50%; top: 50%; padding: 16px 22px; background: var(--ink); color: var(--paper); font-size: 1.12rem; }
+  .node { padding: 10px 16px; background: var(--paper); color: var(--ink); border: 2px solid var(--ink);
+          font-size: 1rem; cursor: pointer; transition: background-color .2s ease; }
+  .node:hover { background: var(--mist); }
+  .node.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent); }
+  .node svg, .center svg { width: 22px; height: 22px; flex: none; }
+  .detail { background: var(--paper); border: 1px solid var(--mist); border-radius: var(--radius); padding: 26px; }
+  .detail-head { display: flex; align-items: center; gap: 12px; }
+  .detail-icon { display: grid; place-items: center; width: 46px; height: 46px; border-radius: var(--radius); background: var(--mist); }
+  .detail-icon svg { width: 26px; height: 26px; }
+  .detail h3 { font-size: 1.6rem; }
+  .lead { margin: 16px 0 6px; font-size: 1.08rem; line-height: 1.5; font-weight: 500; }
+  .detail ul { list-style: none; margin: 0; padding: 0; }
+  .detail li { padding: 12px 0; border-top: 1px solid var(--mist); line-height: 1.55; color: var(--ink-soft); }
+  .hint, .metrics dd, .foot { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .82rem;
+                              line-height: 1.55; color: var(--ink-soft); }
+  .hint { margin: 14px 0 0; }
+
+  .numbers-inner { position: relative; overflow: hidden;
+                   padding: clamp(56px, 8vw, 104px) clamp(20px, 5vw, 72px) clamp(40px, 6vw, 72px); }
+  .metrics { position: relative; z-index: 1; display: grid; grid-template-columns: auto auto minmax(0, 1fr);
+             margin: 36px 0 30px; max-width: 1040px; }
+  .metrics > div { padding: 0 32px; border-left: 2px solid var(--ink); }
+  .metrics > div:first-child { padding-left: 0; border-left: 0; }
+  .metrics dt { font-size: clamp(2.4rem, 5vw, 4.25rem); font-weight: 700; letter-spacing: -0.04em; line-height: 1; white-space: nowrap; }
+  .metrics dd { margin: 12px 0 0; max-width: 24ch; }
+  .source { position: relative; z-index: 1; max-width: 60ch; line-height: 1.6; color: var(--ink-soft); }
+  .two { position: absolute; right: -0.08em; top: -0.14em; font-size: clamp(16rem, 34vw, 30rem); font-weight: 700;
+         line-height: 1; color: var(--accent); pointer-events: none; }
+  .stripe { height: 26px; background: var(--ink); border-bottom: 8px solid var(--accent); }
+  .foot { margin: 0; padding: 22px clamp(20px, 5vw, 72px) 30px; }
+  .foot a { color: var(--ink); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .detail-inner { animation: rise .32s ease both; }
+    @keyframes rise { from { transform: translateY(10px); } to { transform: translateY(0); } }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  @media (max-width: 1080px) { .mm { grid-template-columns: 1fr; } .two { font-size: 15rem; } }
+  @media (max-width: 760px) {
+    .canvas { aspect-ratio: auto; display: flex; flex-wrap: wrap; gap: 10px; }
+    .lines { display: none; }
+    .center, .node { position: static; transform: none; }
+    .center { width: 100%; justify-content: center; }
+    .metrics { grid-template-columns: 1fr; gap: 24px; }
+    .metrics > div { padding: 0; border-left: 0; }
+    .two { font-size: 11rem; opacity: .35; }
+  }
+</style>
+</head>
+<body>
+
+<section class="hero">
+  <header class="nav">
+    <svg viewBox="0 0 34 34" aria-hidden="true">
+      <g stroke="#12322e" stroke-width="3.2" stroke-linecap="round">
+        <line x1="17" y1="17" x2="6" y2="6"/><line x1="17" y1="17" x2="29" y2="13"/><line x1="17" y1="17" x2="9" y2="29"/>
+      </g>
+      <circle cx="6" cy="6" r="3" fill="#12322e"/><circle cx="29" cy="13" r="3" fill="#12322e"/><circle cx="9" cy="29" r="3" fill="#12322e"/>
+      <circle cx="17" cy="17" r="6.5" fill="#e5484d"/>
+    </svg>
+    <span>Triage second check</span>
+  </header>
+  <div class="hero-copy">
+    <h1>One patient, traced through the door.</h1>
+    <p>A clickable map of our hackathon project: how an AI second check helps a triage nurse catch the urgent patients she rated too low.</p>
+    <a class="openmap" href="#map">
+      <span>Open the map</span>
+      <span class="openmap-tile" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#12322e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+      </span>
+    </a>
+  </div>
+</section>
+
+<section class="map" id="map">
+  <h2>Follow any branch</h2>
+  <p class="sub">Seven parts of the project, one line each. Click a branch to see what it means.</p>
+  <div class="mm">
+    <div class="canvas" id="canvas">
+      <svg class="lines" id="lines" viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="center"><span id="center-icon"></span><span>Triage second check</span></div>
+    </div>
+    <aside class="detail" aria-live="polite"><div class="detail-inner" id="detail"></div></aside>
+  </div>
+</section>
+
+<section class="numbers">
+  <div class="numbers-inner">
+    <h2>What the numbers say</h2>
+    <dl class="metrics">
+      <div><dt>1,267</dt><dd>real emergency patients from two hospitals</dd></div>
+      <div><dt>107 of 131</dt><dd>under-rated patients the second check flags</dd></div>
+      <div><dt>67%</dt><dd>reached by re-checking one patient in five. Simple rules reach 34 to 38%.</dd></div>
+    </dl>
+    <p class="source">From our own tests on open data (Moon and colleagues, PLOS ONE, 2019). The model matched the expert panel 68% of the time and nurses 85%, so it works beside a nurse, not instead of one.</p>
+    <span class="two" aria-hidden="true">2</span>
+  </div>
+  <div class="stripe" aria-hidden="true"></div>
+  <p class="foot">Student prototype built for a hackathon. Not medical advice. <a href="https://github.com/potlatiy/emergency-triage-ai">Code, notebook and data</a></p>
+</section>
+
+<script>
+  // Icons are simple line drawings, one per branch.
+  const ICONS = {
+    door: '<path d="M5 21V4l9-2v20z"/><path d="M14 5h5v16h-5"/><circle cx="10.5" cy="12.5" r=".6"/>',
+    clipboard: '<rect x="5" y="5" width="14" height="17" rx="2"/><path d="M9 5V3h6v2"/><path d="M9 11h6M9 15h6"/>',
+    pulse: '<path d="M2 12h5l2.5-7 4 14 2.5-7H22"/>',
+    flag: '<path d="M5 22V3"/><path d="M5 4c4-2 7 2 12 0v9c-5 2-8-2-12 0"/>',
+    queue: '<circle cx="5" cy="7" r="2"/><circle cx="12" cy="7" r="2"/><circle cx="19" cy="7" r="2"/><path d="M3 21v-7a2 2 0 0 1 4 0v7M10 21v-7a2 2 0 0 1 4 0v7M17 21v-7a2 2 0 0 1 4 0v7"/>',
+    chart: '<path d="M3 21h18"/><rect x="5" y="14" width="3" height="7"/><rect x="10.5" y="10" width="3" height="11"/><rect x="16" y="5" width="3" height="16"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2.5"/>',
+    branch: '<path d="M12 22v-8"/><path d="M12 14c0-5-6-4-7-9M12 14c0-5 6-4 7-9"/><path d="M3 7l2-2 2 2M17 7l2-2 2 2"/>',
+  };
+  const icon = (name, colour) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="${colour || 'currentColor'}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
+  const CENTER = { x: 500, y: 300 };
+  const BRANCHES = [
+    { id: "problem", label: "Problem", icon: "door", x: 190, y: 120,
+      lead: "Urgent patients can end up waiting behind minor cases.",
+      notes: ["A triage nurse gives every arriving patient an urgency level from 1 (most urgent) to 5.",
+              "In real data, about 1 patient in 10 was rated less urgent than they really were.",
+              "Those patients join the slow part of the queue."] },
+    { id: "data", label: "Data", icon: "clipboard", x: 500, y: 62,
+      lead: "Real emergency visits with two answers for each patient.",
+      notes: ["1,267 adult patients from two emergency departments in South Korea.",
+              "Each has the level the nurse gave and the correct level decided later by an expert panel.",
+              "Open data published with a 2019 study in PLOS ONE."] },
+    { id: "model", label: "Model", icon: "pulse", x: 810, y: 120,
+      lead: "It reads what the nurse records at the door.",
+      notes: ["Inputs: the complaint in a few words, age, alertness, pain and vital signs.",
+              "It never sees the diagnosis, the outcome or the nurse's level.",
+              "It leans towards the more urgent level on purpose, because rating too low is the dangerous mistake."] },
+    { id: "check", label: "Second check", icon: "flag", x: 850, y: 372,
+      lead: "The model does not replace the nurse. It asks her to look again.",
+      notes: ["A patient is flagged when the model rates them more urgent than the nurse did.",
+              "It flags 107 of the 131 patients nurses rated too low.",
+              "The price: a re-check on 36% of all patients, most of them rated correctly."] },
+    { id: "line", label: "Electronic line", icon: "queue", x: 580, y: 536,
+      lead: "Everyone waiting, ordered by urgency.",
+      notes: ["Levels 1 and 2 always go first.",
+              "A less urgent patient moves up one level for every 45 minutes waited.",
+              "Each patient sees their place in line, never a promised time.",
+              "The order comes from plain rules. The model only supplies each level."] },
+    { id: "results", label: "Results", icon: "chart", x: 250, y: 492,
+      lead: "Worse than nurses at the level, useful as a safety net.",
+      notes: ["Exact level: always guessing level 3 gets 38%, the model 68%, nurses 85%.",
+              "With time to re-check one patient in five, the model reaches 67% of the under-rated patients.",
+              "Simple rules reach 34 to 38% for the same effort."] },
+    { id: "limits", label: "Limits", icon: "clock", x: 130, y: 306,
+      lead: "What this project cannot claim.",
+      notes: ["One country, 1,267 patients, and only 26 at the most urgent level.",
+              "Waiting times are simulated, since the data has no arrival times.",
+              "Accuracy dropped when the model moved to the other hospital.",
+              "A student prototype. Not medical advice."] },
+  ];
+
+  const canvas = document.getElementById("canvas");
+  const lines = document.getElementById("lines");
+  const detail = document.getElementById("detail");
+  document.getElementById("center-icon").innerHTML = icon("branch", "#f6f9f4");
+  document.getElementById("center-icon").style.display = "inline-flex";
+  document.getElementById("center-icon").style.width = "24px";
+
+  const SVG = "http://www.w3.org/2000/svg";
+  const paths = {}, buttons = {};
+  for (const b of BRANCHES) {
+    const path = document.createElementNS(SVG, "path");
+    const cx = CENTER.x + (b.x - CENTER.x) * 0.18;
+    path.setAttribute("d", `M${CENTER.x} ${CENTER.y} Q${cx} ${b.y} ${b.x} ${b.y}`);
+    path.setAttribute("class", "line");
+    lines.appendChild(path);
+    paths[b.id] = path;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "node";
+    button.style.left = b.x / 10 + "%";
+    button.style.top = b.y / 6 + "%";
+    button.innerHTML = icon(b.icon) + b.label;
+    button.addEventListener("click", () => select(b.id));
+    canvas.appendChild(button);
+    buttons[b.id] = button;
+  }
+
+  function select(id) {
+    const active = BRANCHES.find((b) => b.id === id);
+    for (const b of BRANCHES) {
+      const on = b.id === id;
+      paths[b.id].classList.toggle("on", on);
+      buttons[b.id].classList.toggle("on", on);
+      buttons[b.id].setAttribute("aria-pressed", on);
+    }
+    lines.appendChild(paths[id]);            // draw the chosen line on top of the others
+    const fresh = detail.cloneNode(false);   // a new element restarts the small entry animation
+    fresh.innerHTML = `
+      <div class="detail-head"><span class="detail-icon">${icon(active.icon)}</span><h3>${active.label}</h3></div>
+      <p class="lead">${active.lead}</p>
+      <ul>${active.notes.map((n) => `<li>${n}</li>`).join("")}</ul>
+      <p class="hint">Pick another branch to follow a different line.</p>`;
+    document.getElementById("detail").replaceWith(fresh);
+  }
+  select("check");
+</script>
+</body>
+</html>
