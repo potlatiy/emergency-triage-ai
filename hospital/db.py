@@ -160,6 +160,27 @@ def line():
         for i, p in enumerate(rows, 1)]}
 
 
+def where_is(reg_no):
+    """What the patient's own phone may show: the ticket, the place in line and, once called, the doctor.
+
+    On purpose there is no level, no danger mark and no waiting time in here. Patients must never see
+    their urgency level (it could frighten them), so the server does not even send it. The answer is
+    built from a short list of allowed keys, never by copying the visit row."""
+    with _lock:
+        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        _, rows = _waiting()            # the same order as the line the nurse sees
+        doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
+    me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None}
+    if visit["status"] == "waiting":
+        position = [p["reg_no"] for p in rows].index(reg_no) + 1
+        me.update(status="waiting", position=position, ahead=position - 1)
+    elif visit["status"] == "with doctor":
+        me.update(status="called", doctor=doctor["name"], room=doctor["room"])
+    return me
+
+
 def wait(minutes=15):
     with _lock, _conn:
         _meta("clock", _meta("clock") + minutes)

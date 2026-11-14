@@ -98,6 +98,15 @@ def line():
     return db.line()
 
 
+@app.get("/api/me/{reg_no}")
+def me(reg_no: str):
+    """The patient's phone: ticket, place in line and doctor. Never the urgency level (see db.where_is)."""
+    status = db.where_is(reg_no)
+    if status is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return status
+
+
 @app.post("/api/line/wait")
 def wait():
     db.wait(15)

@@ -186,3 +186,39 @@ def test_triage_saves_the_ai_level_and_the_vitals():
     assert visit["ai_level"] == result["level"] and visit["level"] is None     # level is still the nurse's to set
     saved = json.loads(visit["vitals"])
     assert saved["SBP"] == 88 and saved["Saturation"] == 89 and saved["pain"] == 7 and saved["alert"] == "Alert"
+
+
+# ---------------------------------------------------------------- the patient's phone
+
+HIDDEN_FROM_PATIENT = {"level", "ai_level", "danger", "name", "waited"}
+
+
+def all_keys(data):
+    """Every key in a JSON answer, however deeply it is nested."""
+    if isinstance(data, dict):
+        return set(data).union(*(all_keys(value) for value in data.values()))
+    if isinstance(data, list):
+        return set().union(*(all_keys(item) for item in data))
+    return set()
+
+
+def test_the_patient_phone_never_shows_the_level():
+    reg = new_visit("headache", 30, "Female")
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4})
+    me = client.get(f"/api/me/{reg}").json()
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room"}
+    assert not all_keys(me) & HIDDEN_FROM_PATIENT
+    in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
+    assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
+    assert me["doctor"] is None and me["room"] is None
+    while client.post("/api/line/next").json()["called"]["reg_no"] != reg:
+        pass
+    me = client.get(f"/api/me/{reg}").json()
+    assert me["status"] == "called" and me["doctor"].startswith("Dr.") and me["room"].startswith("Room")
+    assert not all_keys(me) & HIDDEN_FROM_PATIENT
+
+
+def test_the_patient_phone_before_the_line_and_for_an_unknown_number():
+    me = client.get(f"/api/me/{new_visit()}").json()
+    assert me["status"] == "registered" and me["ticket"] is None and me["position"] is None
+    assert client.get("/api/me/P-2026-9999").status_code == 404
