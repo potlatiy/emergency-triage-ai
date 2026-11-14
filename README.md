@@ -1,4 +1,4 @@
-# Triage Queue Assistant: the nurse decides, the app shortens the wait after triage
+# Triage Queue Assistant: the nurse decides, the app double-checks her and puts the most urgent patients first
 
 **Track:** Health
 **Team:** Yegor (backend), Denys (project decisions), Ostap (front end)
@@ -6,10 +6,16 @@
 *This project is a prototype and is not medical advice.*
 
 > **In one sentence:** our model is worse than nurses at rating emergency patients (68% right against 85%), so the
-> nurse always decides. But the nurse's level decides who waits for hours after triage, and about 1 patient in 10 is
-> rated too low. As a second check our model flags 107 of the 131 patients that nurses rated too low. Around it the
-> app handles the long wait: a line ordered by urgency (88 down to 13 minutes for the most urgent patients in our
-> simulation), the right doctor, and a note so the patient tells their story once.
+> nurse always decides and the app never gives a diagnosis. But about 1 patient in 10 is rated too low by the nurse,
+> and as a second check our model flags 107 of those 131 patients. Around that check the app runs the visit:
+> questions answered on the phone, a report the nurse accepts or checks in person, a line ordered by urgency, and
+> the right doctor.
+>
+> **What we do not claim:** that the department gets faster. Ordering the line by urgency moves waiting time
+> rather than removing it. In our simulation the most urgent patients wait 13 minutes instead of 88, everyone else
+> waits about 109 instead of 88, and the average stays about the same (88 and 90). Whether the whole chain saves time
+> depends on timings nobody has measured; with the ones we assumed it does, and with pessimistic ones it makes
+> things worse ([section 5](#5-does-the-whole-chain-save-time-a-simulation-with-assumed-timings)).
 
 ![Simulated waiting time for the most urgent patients under four queue orders](images/waiting.png)
 
@@ -125,15 +131,19 @@ weights can be shown to the nurse.
 
 ### 1. Sorting the line (simulated)
 
-The data has no arrival times, so we simulated a busy department with three doctors. The most urgent patients
-waited this long to be seen:
+The data has no arrival times, so we simulated a busy department with three doctors. Average minutes until a
+patient is first seen:
 
-| Queue order | Wait for the most urgent patients |
-|---|---|
-| First come, first served | 88 minutes |
-| By the AI's levels | 24 minutes |
-| By the nurses' levels | 13 minutes |
-| By the experts' levels | 7 minutes |
+| Queue order | The most urgent patients (levels 1–2) | Everyone else | All patients |
+|---|---|---|---|
+| First come, first served | 88 | 88 | 88 |
+| By the AI's levels | 24 | 107 | 90 |
+| By the nurses' levels | 13 | 109 | 90 |
+| By the experts' levels | 7 | 107 | 87 |
+
+**Sorting the line does not make the department faster.** It moves waiting time from the most urgent patients to
+everyone else: the urgent gain about 75 minutes, the others lose about 20, and the average barely changes. That
+trade is the point of triage, and real departments already make it with the nurses' levels.
 
 Ordering by urgency matters more than who does it. In our design the nurse sets the level, so the row to read is
 "By the nurses' levels" (88 down to 13 minutes). The AI row shows what a line sorted by the AI's own levels would do,
@@ -212,8 +222,8 @@ least 70% sure (about half of patients).
 ### 5. Does the whole chain save time? (a simulation with assumed timings)
 
 The line simulation above only changes the order of the line. It moves waiting time from the most urgent patients
-to everyone else and does not shorten the average wait: in that simulation the average is 85 minutes in arrival
-order and about 92 when the line is sorted by urgency. So we simulated the whole chain, before and after, with a
+to everyone else and does not shorten the average wait: in that simulation the average is 88 minutes in arrival
+order and 90 when the line is sorted by urgency. So we simulated the whole chain, before and after, with a
 nurse station in front of the doctors (`python chain_time.py`).
 
 **Every timing in it is our assumption**, because the data has no times at all: 5 minutes for a full assessment
