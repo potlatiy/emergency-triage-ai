@@ -475,6 +475,34 @@ const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Wa
 let me = fresh();
 let watching = null;                    // the timer of the patient's phone in the waiting room
 
+// A reload must not lose the visit: a patient who refreshes their phone would lose their place and leave a
+// ghost in the line. The visit is kept in this tab's session storage and looked up again on the server.
+function remember(step, called) {
+  try { sessionStorage.setItem("meddy-visit", JSON.stringify({ me, step, called: called || null })); } catch (e) {}
+}
+function forget() { try { sessionStorage.removeItem("meddy-visit"); } catch (e) {} }
+async function start() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem("meddy-visit")); } catch (e) {}
+  if (saved && saved.me && saved.me.reg) {
+    try {
+      const now = await api("/api/me/" + encodeURIComponent(saved.me.reg));      // unknown after a new day: falls through
+      me = { ...fresh(), ...saved.me };
+      if (now.status === "waiting") return waiting("Welcome back. Your place in line was kept.");
+      if (now.status === "called" && me.result) return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
+      if (now.status === "registered") {
+        if (saved.step === "nurse") return nurse();
+        const writing = me.followUp === "writing";
+        checkin();
+        if (writing) askFollowUp();
+        return;
+      }
+    } catch (e) {}
+    me = fresh(); forget();
+  }
+  entrance();
+}
+
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {} :
@@ -658,6 +686,7 @@ function drawFollowUp() {
 }
 function checkin() {
   walkTo(2);
+  remember("checkin");
   const danger = me.questions.map((q, i) => [q, i]).filter(([q]) => q.kind === "danger");
   panel.innerHTML = `
     ${head("patient")}
@@ -729,6 +758,7 @@ function checkin() {
 function nurse() {
   walkTo(3);
   me.nurseLevel = null;
+  remember("nurse");
   panel.innerHTML = `
     ${head("staff", "Nurse's screen")}
     ${stepNo(3)}
@@ -800,6 +830,8 @@ function afterLevel() {
       <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
       <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
     ${r.unsure ? `<div class="note">Meddy isn't sure about this patient: no level reaches 60%.</div>` : ""}
+    ${r.unread ? `<div class="note amber"><b>▲ Meddy could not read this complaint.</b> Its words are not ones the model has
+      learned (another language, or a typing slip). Meddy's level rests on the vital signs only, and the department is a guess.</div>` : ""}
     <div class="note"><b>Department: <span id="dept-name">${esc(r.department)}</span>.</b>
       <span class="hint" id="dept-how">${r.department_how.startsWith("nurse") ? "Chosen by the nurse from the suggested departments." : `Decided by the ${esc(r.department_how)}.`}</span>
       <div class="hint" style="margin-top:8px">The nurse can change it. Percentages are the trained model's estimate:</div>
@@ -825,10 +857,9 @@ function afterLevel() {
     try {
       const data = await api("/api/line/join", { reg_no: me.reg, level: mine, danger: r.danger,
         department: r.department, department_how: r.department_how });
-      me.ticket = data.ticket;
-      if (!urgent) { refreshDatabase(); waiting(""); return; }
-      const result = await api("/api/line/next", {}); refreshDatabase();
-      if (result.called && result.called.reg_no === me.reg) doctor(result.called); else waiting("");
+      me.ticket = data.ticket; refreshDatabase();
+      // Levels 1 and 2 never wait in the line: the server has already sent the patient in, and says where.
+      if (data.called) doctor(data.called); else waiting("");
     } catch (e) { idle(button); failed(); }
   });
   if (urgent) return;
@@ -872,6 +903,7 @@ async function waiting(message) {
   catch (e) { panel.innerHTML = `${head("patient")}${stepNo(4)}<h2>Waiting room</h2>
     <p class="error">Meddy can't reach the hospital server. Check that it is running, then reload the page.</p>`; return; }
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
+  remember("waiting");
   const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
   panel.innerHTML = `
@@ -937,6 +969,7 @@ function glance() {
 function doctor(called) {
   const resus = called.department === "Resuscitation team" || called.room === "Resus bay";
   walkTo(5, resus ? 6 : 5);
+  remember("doctor", called);
   document.getElementById("doctor-line").textContent = resus ? "" : `${called.doctor}, ${called.room}`;
   const r = me.result, v = r.vitals, level = me.nurseLevel || r.level;
   const answers = me.questions.map((a) => `<dt>${a.label ? `<span class="tag topic">${esc(a.label)}</span>` : ""}${esc(a.question)}</dt>
@@ -973,13 +1006,13 @@ function doctor(called) {
     the line are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
     <button class="go" id="again">Start again as a new patient</button>
     <button class="textlink" id="reset">Start a new day (clears the waiting room)</button>`;
-  document.getElementById("again").addEventListener("click", () => { me = fresh(); entrance(); });
+  document.getElementById("again").addEventListener("click", () => { me = fresh(); forget(); entrance(); });
   document.getElementById("reset").addEventListener("click", async () => {
-    await api("/api/reset", {}); me = fresh(); document.getElementById("doctor-line").textContent = ""; refreshDatabase(); entrance(); });
+    await api("/api/reset", {}); me = fresh(); forget(); document.getElementById("doctor-line").textContent = ""; refreshDatabase(); entrance(); });
 }
 
 refreshDatabase();
-entrance();
+start();
 </script>
 </body>
 </html>

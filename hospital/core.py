@@ -48,6 +48,18 @@ VITAL_PRESETS = {
 }
 
 
+def familiar(complaint):
+    """A rough check of whether the model can read a complaint: the share of its letter patterns that the
+    model met in training. Another alphabet scores 0, typed nonsense scores low, plain English scores high.
+    It is only a warning for the nurse. It does not catch every unreadable complaint."""
+    reader = _model.named_steps["prepare"].named_transformers_["complaint"]
+    patterns = reader.build_analyzer()((complaint or "").lower())
+    return round(sum(p in reader.vocabulary_ for p in patterns) / len(patterns), 2) if patterns else 0.0
+
+
+READS_ENOUGH = 0.50         # below this share the nurse is told that the level rests on the vital signs
+
+
 def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, alert="Alert", pain=0, vitals=None):
     """Suggested urgency level for one patient, with the probability of each level."""
     vitals = {**VITAL_PRESETS["normal"], **(vitals or {})}
@@ -87,6 +99,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
         "unsure": bool(probabilities.max() < SURE_ENOUGH),
+        "unread": familiar(complaint) < READS_ENOUGH,
     }
 
 
@@ -106,6 +119,7 @@ DEPARTMENTS = [
     ("Eye, ear, nose and throat", r"eye|ocular|visual|vision|ear |throat|nose|epistaxis|foreign body"),
 ]
 DEFAULT_DEPARTMENT = "General medicine"
+DEPARTMENT_NAMES = [name for name, _ in DEPARTMENTS] + [DEFAULT_DEPARTMENT]
 
 def department_for(complaint, injury=False):
     text = f" {(complaint or '').lower()} "

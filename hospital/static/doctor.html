@@ -130,6 +130,13 @@
   .answers .a.none { background:transparent; color:var(--soft); font-weight:500; padding-right:0; }
   .answers.extra li { grid-template-columns:minmax(0,1fr); }
   .answers.extra .a { justify-self:start; border-radius:14px; }
+  .finish { margin-top:32px; padding-top:24px; border-top:1px solid var(--line); }
+  .finish .hint { margin:10px 4px 0; }
+  .done { width:100%; min-height:60px; padding:14px 24px; border:2px solid var(--blue); border-radius:999px; background:var(--card);
+          color:var(--blue-dark); font-size:1.15rem; font-weight:800; cursor:pointer; transition:background-color .15s ease, color .15s ease; }
+  .done:hover { background:var(--blue-tint); }
+  .done.armed { background:var(--blue); color:#fff; }
+  .done:disabled { cursor:wait; opacity:.7; }
   .empty { padding:48px 28px; text-align:center; }
   .empty h2 { font-size:1.6rem; }
   .empty p { margin:12px auto 0; max-width:46ch; color:var(--soft); }
@@ -204,7 +211,8 @@
 // The doctor's screen asks the server every 5 seconds for the patients now with this doctor:
 //   GET /api/doctor/{reg_no}/patients   (the full card: level, Meddy's level, vital signs, answers, referral)
 //   GET /api/staff                      (the list of doctors for the picker, and who is on duty)
-// It only reads. Nothing on this page changes the database.
+// The only thing it changes is closing a visit:
+//   POST /api/doctor/finish             ("Visit finished": the patient leaves this doctor's list)
 const EVERY = 5000;
 const LEVEL_NAME = { 1:"Resuscitation", 2:"Emergency", 3:"Urgent", 4:"Less urgent", 5:"Non-urgent" };
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
@@ -416,7 +424,32 @@ function drawCard() {
     ${meddyLine(p)}
     <h3>Measured at the nurse station</h3>
     ${vitalsBlock(p.vitals)}
-    ${answersBlock(p)}`;
+    ${answersBlock(p)}
+    <div class="finish">
+      <button type="button" class="done" id="finish">Visit finished</button>
+      <p class="hint" id="finish-hint" role="status">Closes the visit and takes the patient off your list.</p>
+    </div>`;
+  // Two taps, so a visit is not closed by accident: the first arms the button for a few seconds.
+  const finish = $("finish");
+  let armed = null;
+  finish.addEventListener("click", async () => {
+    if (!armed) {
+      finish.textContent = "Tap again to close this visit"; finish.classList.add("armed");
+      armed = setTimeout(() => { armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed"); }, 4000);
+      return;
+    }
+    clearTimeout(armed); finish.disabled = true;
+    try {
+      const response = await fetch("/api/doctor/finish", { method:"POST", headers:{ "Content-Type":"application/json" },
+                                                           body:JSON.stringify({ reg_no:p.reg_no }) });
+      if (!response.ok && response.status !== 409) throw new Error();        // 409: someone already closed it
+      $("say").textContent = `Visit ${p.ticket} closed.`;
+      selected = null; check();
+    } catch (error) {
+      finish.disabled = false; armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed");
+      $("finish-hint").textContent = "Could not close the visit: the hospital server did not answer. Try again.";
+    }
+  });
 }
 
 check();

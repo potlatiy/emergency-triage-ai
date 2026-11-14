@@ -376,8 +376,8 @@ def test_the_doctor_sees_only_their_patients_referred_first():
     answers = [{**q, "answer": "Yes" if i == 0 else "No"} for i, q in enumerate(questions)]
     client.post("/api/triage", json={"reg_no": called, "complaint": "chest pain", "age": 67, "sex": "Male",
                                      "vitals": "unstable", "answers": answers})
-    client.post("/api/line/join", json={"reg_no": called, "level": 2})
-    assert client.post("/api/line/next").json()["called"]["reg_no"] == called
+    joined = client.post("/api/line/join", json={"reg_no": called, "level": 2}).json()
+    assert joined["called"]["reg_no"] == called              # level 2 goes in at once, without "call next"
     # B: sent straight in by the nurse at level 1. C: sent to cardiology, so not on this doctor's screen.
     referred = new_visit("collapsed", 70, "Female")
     refer(referred, level=1, reason="Collapsed, pulse not felt")
@@ -409,3 +409,101 @@ def test_an_old_style_visit_still_works_everywhere():
                 if p["reg_no"] == reg)
     assert card["ai_level"] is None and card["vitals"] is None and card["referred"] is False
     assert card["referral_reason"] is None and card["level"] == 3
+
+
+# ---------------------------------------------------------------- weak links in the chain
+
+def assessed_visit(complaint="chest pain", age=60, sex="Male", **more):
+    """A visit that has been through the nurse station, ready to join the line."""
+    reg_no = new_visit(complaint, age, sex)
+    client.post("/api/triage", json={"reg_no": reg_no, "complaint": complaint, "age": age, "sex": sex, **more})
+    return reg_no
+
+
+def test_an_unknown_registration_number_is_refused_at_every_step():
+    tickets_before = db._meta("ticket")
+    assert client.post("/api/triage", json={"reg_no": "P-0000-0000", "complaint": "x", "age": 50}).status_code == 404
+    assert client.post("/api/line/join", json={"reg_no": "P-0000-0000", "level": 3}).status_code == 404
+    assert client.post("/api/doctor/finish", json={"reg_no": "P-0000-0000"}).status_code == 404
+    assert client.post("/api/staff/duty", json={"reg_no": "DR-9999", "on_duty": False}).status_code == 404
+    assert db._meta("ticket") == tickets_before              # no ticket was handed to nobody
+
+
+def test_joining_the_line_twice_keeps_the_ticket_and_the_time_waited():
+    reg_no = assessed_visit()
+    first = client.post("/api/line/join", json={"reg_no": reg_no, "level": 4}).json()["ticket"]
+    client.post("/api/line/wait")
+    again = client.post("/api/line/join", json={"reg_no": reg_no, "level": 3}).json()      # the nurse changed the level
+    assert again["ticket"] == first
+    me = next(p for p in again["patients"] if p["reg_no"] == reg_no)
+    assert me["level"] == 3 and me["waited"] == 15
+
+
+def test_a_patient_with_a_doctor_cannot_be_put_back_in_the_line():
+    reg_no = assessed_visit()
+    doctor = refer(reg_no).json()["doctor_reg"]
+    list_before = next(d for d in db.staff()["doctors"] if d["reg_no"] == doctor)["waiting"]
+    assert client.post("/api/line/join", json={"reg_no": reg_no, "level": 4}).status_code == 409
+    assert client.post("/api/triage", json={"reg_no": reg_no, "complaint": "chest pain", "age": 60}).status_code == 409
+    assert db.visit_for(reg_no)["status"] == "with doctor"
+    assert next(d for d in db.staff()["doctors"] if d["reg_no"] == doctor)["waiting"] == list_before
+
+
+def test_two_emergencies_at_once_both_go_straight_in():
+    """Levels 1 and 2 never sit in the line, so one emergency cannot be called in place of another."""
+    first, second = assessed_visit("cant breathe"), assessed_visit("chest pain")
+    for reg_no, level in ((first, 1), (second, 2)):
+        joined = client.post("/api/line/join", json={"reg_no": reg_no, "level": level}).json()
+        assert joined["called"]["reg_no"] == reg_no and joined["called"]["doctor_reg"] == "DR-1000"
+        assert all(p["reg_no"] != reg_no for p in joined["patients"])
+    assert all(p["level"] >= 3 for p in db.line()["patients"])
+    calm = client.post("/api/line/join", json={"reg_no": assessed_visit("sore throat"), "level": 5}).json()
+    assert calm["called"] is None                            # levels 3 to 5 wait for their turn
+
+
+def test_values_the_hospital_does_not_know_are_refused_not_guessed():
+    reg_no = new_visit()
+    base = {"reg_no": reg_no, "complaint": "chest pain", "age": 60}
+    assert client.post("/api/triage", json={**base, "vitals": "dying"}).status_code == 422
+    assert client.post("/api/triage", json={**base, "alert": "Asleep"}).status_code == 422
+    assert client.post("/api/triage", json={**base, "arrival": "Helicopter"}).status_code == 422
+    assert client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "department": "Wizardry"}).status_code == 422
+    assert client.post("/api/refer", json={"reg_no": reg_no, "level": 3, "department": "Wizardry",
+                                           "reason": "testing"}).status_code == 422
+    assert client.post("/api/register", json={"complaint": "    ", "age": 40}).status_code == 422
+    assert db.visit_for(reg_no)["status"] == "registered"    # none of it moved the patient
+
+
+def test_the_doctor_closes_a_visit_and_the_list_gets_shorter():
+    reg_no = assessed_visit()
+    doctor = refer(reg_no, department="Cardiology").json()["doctor_reg"]
+    list_before = next(d for d in db.staff()["doctors"] if d["reg_no"] == doctor)["waiting"]
+    assert client.post("/api/doctor/finish", json={"reg_no": reg_no}).json()["status"] == "done"
+    assert next(d for d in db.staff()["doctors"] if d["reg_no"] == doctor)["waiting"] == list_before - 1
+    assert all(p["reg_no"] != reg_no for p in client.get(f"/api/doctor/{doctor}/patients").json()["patients"])
+    assert client.get(f"/api/me/{reg_no}").json()["status"] == "finished"
+    assert client.post("/api/doctor/finish", json={"reg_no": reg_no}).status_code == 409       # not twice
+    waiting = client.post("/api/line/join", json={"reg_no": assessed_visit("sore throat"), "level": 5}).json()
+    assert client.post("/api/doctor/finish", json={"reg_no": waiting["patients"][-1]["reg_no"]}).status_code == 409
+
+
+def test_every_doctors_list_is_made_of_real_visits():
+    """The number in the staff table and the doctor's own screen must always agree, from the first minute."""
+    staff = db.staff()
+    assert staff["visits"]["with doctor"] == len(db.SEED_WITH_DOCTOR) == sum(d["waiting"] for d in staff["doctors"])
+    for doctor in staff["doctors"]:
+        screen = client.get(f"/api/doctor/{doctor['reg_no']}/patients").json()
+        assert len(screen["patients"]) == doctor["waiting"]
+        assert all(p["vitals"] and 1 <= p["ai_level"] <= 5 and p["level"] >= 3 for p in screen["patients"])
+    reg_no = assessed_visit()
+    doctor = refer(reg_no, department="Neurology").json()["doctor_reg"]
+    client.post("/api/doctor/finish", json={"reg_no": reg_no})
+    after = db.staff()
+    assert after["visits"]["with doctor"] == sum(d["waiting"] for d in after["doctors"])
+
+
+def test_the_nurse_is_told_when_the_model_cannot_read_the_complaint():
+    assert core.assess("болит живот и тошнит", 50)["unread"] is True       # another alphabet
+    assert core.assess("zzzz qqqq kkkk", 50)["unread"] is True             # typed nonsense
+    for readable in ("ant. chest pain", "my chest hurts", "it burns when i pee", "dizzy and weak"):
+        assert core.assess(readable, 50)["unread"] is False

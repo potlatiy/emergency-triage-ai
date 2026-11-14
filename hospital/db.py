@@ -2,7 +2,7 @@
 
 It holds three things:
 - doctors : every doctor's registration number, department, room, whether they are on duty,
-            and how many patients they already have
+            and how many patients they have now (always equal to their open visits)
 - visits  : every patient visit, under its own registration number, from arrival to the doctor
 - answers : what each patient answered at check-in
 
@@ -39,23 +39,45 @@ CREATE TABLE IF NOT EXISTS answers (
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 """
 
-# (registration number, name, department, room, patients already waiting)
+# (registration number, name, department, room)
 SEED_DOCTORS = [
-    ("DR-1000", "Resuscitation team", "Resuscitation team", "Resus bay", 0),
-    ("DR-1001", "Dr. Marlow", "Cardiology", "Room 1", 2),
-    ("DR-1002", "Dr. Okafor", "Cardiology", "Room 2", 0),
-    ("DR-1003", "Dr. Lindqvist", "Respiratory medicine", "Room 3", 1),
-    ("DR-1004", "Dr. Haddad", "Neurology", "Room 4", 1),
-    ("DR-1005", "Dr. Petrov", "Neurology", "Room 5", 3),
-    ("DR-1006", "Dr. Castell", "Trauma and orthopaedics", "Room 6", 2),
-    ("DR-1007", "Dr. Nwosu", "Trauma and orthopaedics", "Room 7", 1),
-    ("DR-1008", "Dr. Baptiste", "Gastroenterology and surgery", "Room 8", 0),
-    ("DR-1009", "Dr. Sorensen", "Eye, ear, nose and throat", "Room 9", 1),
-    ("DR-1010", "Dr. Achebe", "General medicine", "Room 10", 2),
-    ("DR-1011", "Dr. Ferrand", "General medicine", "Room 11", 1),
-    ("DR-1012", "Dr. Varga", "Urology and kidney", "Room 12", 1),
-    ("DR-1013", "Dr. Imani", "Obstetrics and gynaecology", "Room 13", 0),
+    ("DR-1000", "Resuscitation team", "Resuscitation team", "Resus bay"),
+    ("DR-1001", "Dr. Marlow", "Cardiology", "Room 1"),
+    ("DR-1002", "Dr. Okafor", "Cardiology", "Room 2"),
+    ("DR-1003", "Dr. Lindqvist", "Respiratory medicine", "Room 3"),
+    ("DR-1004", "Dr. Haddad", "Neurology", "Room 4"),
+    ("DR-1005", "Dr. Petrov", "Neurology", "Room 5"),
+    ("DR-1006", "Dr. Castell", "Trauma and orthopaedics", "Room 6"),
+    ("DR-1007", "Dr. Nwosu", "Trauma and orthopaedics", "Room 7"),
+    ("DR-1008", "Dr. Baptiste", "Gastroenterology and surgery", "Room 8"),
+    ("DR-1009", "Dr. Sorensen", "Eye, ear, nose and throat", "Room 9"),
+    ("DR-1010", "Dr. Achebe", "General medicine", "Room 10"),
+    ("DR-1011", "Dr. Ferrand", "General medicine", "Room 11"),
+    ("DR-1012", "Dr. Varga", "Urology and kidney", "Room 12"),
+    ("DR-1013", "Dr. Imani", "Obstetrics and gynaecology", "Room 13"),
 ]
+# Made-up patients who are already with a doctor when the day starts, so every doctor's list is made of
+# real visits that the doctor's screen can open. The nurse's level is made up; Meddy's level is really
+# computed for each of them (see _seed_cards).
+# (doctor, complaint, age, sex, nurse's level, vital signs, pain score, alertness, minutes since triage)
+SEED_WITH_DOCTOR = [
+    ("DR-1001", "chest tightness on exertion", 62, "Male", 3, "normal", 3, "Alert", 55),
+    ("DR-1001", "palpitations", 48, "Female", 3, "feverish", 0, "Alert", 30),
+    ("DR-1003", "cough and dyspnea", 71, "Male", 3, "feverish", 3, "Alert", 40),
+    ("DR-1004", "headache", 35, "Female", 3, "normal", 5, "Alert", 25),
+    ("DR-1005", "dizziness", 66, "Female", 3, "normal", 0, "Alert", 70),
+    ("DR-1005", "left arm weakness", 74, "Male", 3, "unstable", 0, "Responds to voice", 15),
+    ("DR-1005", "numbness in both hands", 52, "Male", 3, "normal", 0, "Alert", 50),
+    ("DR-1006", "wrist pain after a fall", 29, "Female", 4, "normal", 5, "Alert", 60),
+    ("DR-1006", "laceration, right hand", 41, "Male", 4, "normal", 3, "Alert", 35),
+    ("DR-1007", "knee pain", 57, "Male", 4, "normal", 3, "Alert", 80),
+    ("DR-1009", "ear pain", 23, "Female", 4, "normal", 5, "Alert", 45),
+    ("DR-1010", "fever", 38, "Male", 3, "feverish", 3, "Alert", 65),
+    ("DR-1010", "general weakness", 81, "Female", 3, "normal", 0, "Alert", 20),
+    ("DR-1011", "rash on both arms", 19, "Female", 5, "normal", 0, "Alert", 90),
+    ("DR-1012", "flank pain", 44, "Male", 3, "normal", 7, "Alert", 28),
+]
+_seed_levels = {}       # Meddy's level for each made-up patient, worked out once and kept
 # Patients already in the waiting room when the demonstration starts: (complaint, level, minutes ago)
 SEED_WAITING = [("sore throat", 5, 40), ("ankle pain", 4, 31), ("abd pain", 3, 22), ("headache", 4, 14), ("dizziness", 3, 6)]
 START_CLOCK = 40
@@ -75,15 +97,27 @@ def _next_number(key):
 
 
 def reset():
-    """Start the day again: staff back on duty, and five sample patients in the waiting room."""
+    """Start the day again: staff back on duty, made-up patients already with the doctors,
+    and five sample patients in the waiting room."""
     with _lock, _conn:
         _conn.executescript("DROP TABLE IF EXISTS answers; DROP TABLE IF EXISTS visits; DROP TABLE IF EXISTS doctors;"
                             "DROP TABLE IF EXISTS meta;" + SCHEMA)
-        _conn.executemany("INSERT INTO doctors (reg_no, name, department, room, waiting) VALUES (?, ?, ?, ?, ?)",
-                          SEED_DOCTORS)
+        _conn.executemany("INSERT INTO doctors (reg_no, name, department, room) VALUES (?, ?, ?, ?)", SEED_DOCTORS)
         _meta("clock", START_CLOCK)
         _meta("visit", 0)
         _meta("ticket", 0)
+        departments = {reg_no: department for reg_no, _, department, _ in SEED_DOCTORS}
+        for doctor, complaint, age, sex, level, preset, pain, alert, minutes_ago in SEED_WITH_DOCTOR:
+            vitals = core.VITAL_PRESETS[preset]
+            if complaint not in _seed_levels:
+                _seed_levels[complaint] = core.assess(complaint, age, sex, alert=alert, pain=pain, vitals=vitals)["level"]
+            _conn.execute(
+                "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, vitals, arrived, department, "
+                "department_how, status, doctor_reg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'made-up patient', 'with doctor', ?)",
+                (f"P-2026-{_next_number('visit'):04d}", f"A{_next_number('ticket'):03d}", complaint, age, sex, level,
+                 _seed_levels[complaint], json.dumps({**vitals, "alert": alert, "pain": pain}),
+                 START_CLOCK - minutes_ago, departments[doctor], doctor))
+            _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor,))
         for complaint, level, minutes_ago in SEED_WAITING:
             reg_no = f"P-2026-{_next_number('visit'):04d}"
             _conn.execute("INSERT INTO visits (reg_no, ticket, complaint, level, arrived, status) VALUES (?, ?, ?, ?, ?, 'waiting')",
@@ -136,11 +170,17 @@ def visit_for(reg_no):
 
 
 def join_line(reg_no, level, danger, department=None, department_how=None):
+    """The nurse's decision puts the patient in the line.
+
+    Joining a second time (the nurse changed the level) keeps the same ticket and the same arrival time,
+    so nobody gets two tickets or loses the minutes they have already waited."""
     with _lock, _conn:
-        ticket = f"A{_next_number('ticket'):03d}"
+        visit = _conn.execute("SELECT ticket, arrived FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
+        arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
         _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = ?, "
                       "department_how = ?, status = 'waiting' WHERE reg_no = ?",
-                      (ticket, level, int(danger), _meta("clock"), department, department_how, reg_no))
+                      (ticket, level, int(danger), arrived, department, department_how, reg_no))
     return ticket
 
 
@@ -181,6 +221,8 @@ def where_is(reg_no):
         me.update(status="waiting", position=position, ahead=position - 1)
     elif visit["status"] == "with doctor":
         me.update(status="called", doctor=doctor["name"], room=doctor["room"])
+    elif visit["status"] == "done":
+        me.update(status="finished")
     return me
 
 
@@ -189,10 +231,15 @@ def wait(minutes=15):
         _meta("clock", _meta("clock") + minutes)
 
 
-def call_next():
-    """Call the first patient in line, match them with a doctor, and record it all."""
+def call_next(reg_no=None):
+    """Call the first patient in line, match them with a doctor, and record it all.
+
+    With a registration number, that waiting patient is called instead, whoever is first. The server uses
+    this for levels 1 and 2, so an emergency never sits in the line waiting for somebody to press a button."""
     with _lock, _conn:
         clock, rows = _waiting()
+        if reg_no is not None:
+            rows = [p for p in rows if p["reg_no"] == reg_no]
         if not rows:
             return None
         patient = rows[0]
@@ -301,6 +348,18 @@ def doctor_patients(doctor_reg):
         for p in rows]}
 
 
+def finish_visit(reg_no):
+    """The doctor has seen the patient: the visit is closed and the doctor's list gets one shorter.
+    Returns None when the visit is unknown or the patient is not with a doctor."""
+    with _lock, _conn:
+        visit = _conn.execute("SELECT status, doctor_reg FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None or visit["status"] != "with doctor":
+            return None
+        _conn.execute("UPDATE visits SET status = 'done' WHERE reg_no = ?", (reg_no,))
+        _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
+    return {"reg_no": reg_no, "doctor_reg": visit["doctor_reg"], "status": "done"}
+
+
 def staff():
     with _lock:
         doctors = [dict(r) for r in _conn.execute("SELECT * FROM doctors ORDER BY reg_no")]
@@ -309,14 +368,15 @@ def staff():
     return {"doctors": [{**d, "on_duty": bool(d["on_duty"])} for d in doctors],
             "on_duty": sum(d["on_duty"] for d in regular), "total": len(regular),
             "visits": {"registered": sum(counts.values()), "waiting": counts.get("waiting", 0),
-                       "with doctor": counts.get("with doctor", 0)}}
+                       "with doctor": counts.get("with doctor", 0), "done": counts.get("done", 0)}}
 
 
 def set_duty(reg_no, on_duty):
+    """Returns False when there is no doctor with this registration number."""
     if reg_no == "DR-1000":
-        return          # the resuscitation team is always on duty
+        return True     # the resuscitation team is always on duty
     with _lock, _conn:
-        _conn.execute("UPDATE doctors SET on_duty = ? WHERE reg_no = ?", (int(on_duty), reg_no))
+        return _conn.execute("UPDATE doctors SET on_duty = ? WHERE reg_no = ?", (int(on_duty), reg_no)).rowcount == 1
 
 
 # Create the tables on first use, and rebuild them if the file is from an older version of the code.

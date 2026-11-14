@@ -185,6 +185,10 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 
 - [x] Assignment model trained on real diagnoses and compared with the key-word rule (`assignment.py`)
 - [x] Both trained models saved in the repository (`models/`, made by `trained_models.py`)
+- [x] The doctor's screen (`/doctor`), with a "Visit finished" button that closes the visit
+- [x] The chain checked end to end for weak links: a step cannot be done twice or out of order, unknown values
+      are refused, emergencies never sit in the line, a reload keeps the patient's place, and every doctor's
+      list is made of real visits
 - [x] Question writer steered by a system prompt (`hospital/core.py`)
 - [x] Diagnosis-to-department table read row by row; 14 corrections made (`data/diagnosis_departments.csv`)
 - [x] Department model added to the notebook (section 13)
