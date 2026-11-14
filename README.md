@@ -11,6 +11,8 @@
 
 ![Of the 131 patients nurses rated too low, the AI flags 107](images/second_check.png)
 
+**Project guide:** the problem of emergency waiting times, our plan and each person's tasks are in [PROJECT_GUIDE.md](PROJECT_GUIDE.md).
+
 **Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
 
 ## The problem
