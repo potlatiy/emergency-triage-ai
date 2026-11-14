@@ -21,7 +21,16 @@ start, as it does on a laptop. This is a prototype and not medical advice; it ho
 
 ## Putting the latest `main` online
 
-Space page → Settings → **Factory rebuild**. Building takes about 5–10 minutes.
+It happens by itself: every push to `main` runs `.github/workflows/deploy-huggingface.yml`, which copies
+this folder's files to the Space and rebuilds it (`redeploy.py`). The site is back in a few minutes. Watch
+it on GitHub's Actions tab; "Run workflow" there deploys again without a new commit.
+
+By hand, if needed: Space page → Settings → **Factory rebuild**.
+
+The workflow needs the repository secret `HF_TOKEN`: a Hugging Face token with write access to the Space.
+
+A new Python library must also be added to the `pip install` line of the `Dockerfile`, which does not read
+`requirements.txt`; otherwise the Space stops at start.
 
 ## Settings (Space → Settings → Variables)
 
