@@ -10,25 +10,30 @@ of the patients nurses rate too low, and a line sorted by urgency gets the most 
 
 ## Two-minute video script
 
-Record the screen with your voice over it. No editing needed.
+Record the screen with your voice over it. No editing needed. Three browser windows side by side: the patient's
+phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the nurse's screen in the middle
+(`/nurse`) and the doctor's screen on the right (`/doctor`, choose Dr. Baptiste, Gastroenterology and surgery).
 
 | Time | What is on screen | What to say |
 |---|---|---|
-| 0:00–0:15 | The digital hospital, entrance step | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
-| 0:15–0:35 | Type "crushing chest pain and sweating", age 67, male, tap "No insurance", register. At check-in tap the first danger sign, "Pressure or tightness", and an answer to each of the three questions for the doctor | "You are the patient. You say what is wrong and get a quick check built for your complaint: danger signs to tap, and three history questions that an AI model on this laptop chose for you. A few taps, and no waiting." |
-| 0:35–0:55 | Nurse station: choose Unstable, press "Measure and get Meddy's report". Show the report, then press "Everything is correct: send straight to the resuscitation bay" | "The nurse measures the vital signs, and Meddy writes its report: the patient at a glance, a level, and the likely doctor. Our model, trained on 1,267 real emergency patients, says level 2, an emergency. The nurse reads it and presses one button, and the patient goes straight to the resuscitation bay." |
-| 0:55–1:15 | Press "Start again as a new patient". Type "bad stomach pain and vomiting", age 40, "No insurance"; at check-in tap "No, none of these" and "Cramping"; at the nurse choose Feverish. Meddy advises a personal check: press "I want to check the patient myself", tap level 3, send to the waiting room (you are 3rd). Press "15 minutes pass" once, then "Call next patient" twice | "For the next patient Meddy is less sure, so it advises the nurse to check in person. She gives her own level and the patient joins the electronic line. The patient's phone shows a ticket and a place in line, never the level. The line is ordered by urgency, and waiting moves you up so nobody is stuck. When called, a second model has suggested the department and the database picks the least busy doctor on duty." |
+| 0:00–0:15 | The three windows, the phone at the entrance | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
+| 0:15–0:35 | Phone: type "crushing chest pain and sweating", age 67, male, "No insurance", register. Tap the first danger sign and "Pressure or tightness", type "I was carrying shopping upstairs when my chest went tight" in "In your own words", press "Go to the nurse". The phone shows a code | "This is the patient's phone. You say what is wrong and get a quick check built for your complaint: danger signs to tap, questions an AI model chose for you, and room to say it in your own words. Then the phone shows a code for the nurse." |
+| 0:35–0:55 | Nurse: tap the code in her list. Show what the patient said and the AI summary. Choose Unstable, press "Measure and get Meddy's report", then "Everything is correct: send straight to the resuscitation bay". The phone switches by itself | "The nurse opens the patient by that code and reads what they said, summed up by the AI in two sentences. She measures the vital signs, and Meddy, trained on 1,267 real emergency patients, suggests level 2, an emergency. One button, and the patient's phone says: go to the resuscitation bay. It never shows the level." |
+| 0:55–1:15 | Phone: "Start again as a new patient", "bad stomach pain and vomiting", age 40, "No insurance", "No, none of these", "Cramping". Nurse: Feverish, "I want to check the patient myself", level 3, to the waiting room. Phone: place in line. Doctor: "Call my next patient" until the phone shows the room | "Here Meddy is less sure, so it advises a personal check. The nurse gives her own level and the patient joins a line ordered by urgency; the phone shows only a ticket and a place. The doctor calls the next patient of their department, and the phone tells the patient which room to go to. The doctor already has the whole story." |
 | 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
 | 1:45–2:00 | The limits section of the README | "The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
 
 ## Demo checklist before recording
 
-1. Start the hospital: `python hospital/server.py`, then open http://localhost:8000
-2. Run both patients of the script through once first. The AI model needs a few seconds to load the first time,
+1. Open the three windows: https://darkshdws-meddy.hf.space, `/nurse` and `/doctor`. (Or locally:
+   `python hospital/server.py` and http://localhost:8000.) A free Space that has been quiet for two days takes
+   about a minute to wake up.
+2. Add the Space variable `MEDDY_AUTO_UPDATE` = `0` (Space → Settings → Variables), so a teammate's merge cannot
+   restart the site during the recording. Delete it afterwards.
+3. Run both patients of the script through once first. The AI model needs a few seconds to load the first time,
    and a complaint it has already seen is answered at once, so the recording will not wait.
-3. Open "Behind the scenes" at the bottom of the page and press "Start a new day", so the recording begins with a
-   clean waiting room.
-4. Keep the browser window around 1,200 pixels wide so the floor plan and the panel sit side by side.
+4. On the nurse's screen open "Behind the scenes" and press "Start a new day", so the recording begins with a
+   clean waiting room. Then reload the patient's window.
 
 ## Numbers to know by heart
 
