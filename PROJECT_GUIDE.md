@@ -240,6 +240,7 @@ pip install -r requirements.txt
 |---|---|---|
 | Urgency results | `python triage.py` | (prints to the screen) |
 | Assignment results | `python assignment.py` | (prints to the screen) |
+| Whole-chain time simulation | `python chain_time.py` | (prints two tables, saves `images/chain_time.png`) |
 | Save the trained models again | `python trained_models.py` | (writes the files in `models/`) |
 | Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (every check should pass) |
 | Notebook | open `triage.ipynb` | |

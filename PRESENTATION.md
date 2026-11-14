@@ -69,6 +69,14 @@ Every patient was scored by a model that never saw them. The nurse's level, the 
 never given to the model. We compare against always guessing the most common answer, against two simple rules,
 and against real nurses.
 
+**Does it really save time?**
+Sorting the line does not: it moves waiting from the most urgent patients to everyone else, and the average stays
+about the same. A second simulation of the whole chain shows a saving (104 down to 55 minutes) with our assumed
+timings, but most of it rests on one assumption, that the doctor saves a minute per patient by already having the
+answers. If the doctor saves nothing, the saving is 7 minutes; if the report only costs the nurse time, the
+department gets slower. So our honest claim is that the right patients are seen sooner and the nurse is
+double-checked. Whether the department gets faster has to be measured.
+
 **Are the waiting times real?**
 No. The data has no arrival times, so we simulated a busy department with three doctors. We say so wherever the
 figures appear.

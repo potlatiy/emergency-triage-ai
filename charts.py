@@ -68,3 +68,67 @@ if __name__ == "__main__":
     second_check_chart(int((flagged & under).sum()), int((~flagged & under).sum())).savefig(
         out / "second_check.png", facecolor=SURFACE)
     print("saved charts to", out)
+
+
+ORANGE, AQUA = "#eb6834", "#1baf7a"       # with BLUE: three colours checked for colour-blind readers
+
+
+def chain_time_chart(average, rows):
+    """The whole-chain simulation (chain_time.py) in one picture.
+
+    Top: where the minutes go from the door to the doctor, before and after, with our assumed timings.
+    Bottom: the same total for everyone under each changed assumption, so the reader sees how much the
+    answer depends on what we assumed."""
+    fig, (top, bottom) = plt.subplots(2, 1, figsize=(8.8, 8.2), facecolor=SURFACE, dpi=150,
+                                      gridspec_kw={"height_ratios": [1, 1.9], "hspace": 0.5})
+
+    # ---- top: three parts of the wait, stacked
+    bars = [("Everyone\nbefore", average["Before"]["everyone"]), ("Everyone\nafter", average["After"]["everyone"]),
+            ("Most urgent\nbefore", average["Before"]["urgent"]), ("Most urgent\nafter", average["After"]["urgent"])]
+    parts = [("Waiting for the nurse", BLUE), ("With the nurse", ORANGE), ("Waiting for a doctor", AQUA)]
+    longest = max(values[3] for _, values in bars)
+    for row, (name, values) in enumerate(bars):
+        left = 0.0
+        for (label, colour), minutes in zip(parts, values[:3]):
+            top.barh(row, minutes, left=left, color=colour, height=0.56, edgecolor=SURFACE, linewidth=2,
+                     label=label if row == 0 else None)
+            if minutes > longest * 0.07:                     # a number only where there is room for it
+                top.text(left + minutes / 2, row, f"{minutes:.0f}", ha="center", va="center", fontsize=9.5,
+                         color="white", fontweight="bold")
+            left += minutes
+        top.text(left + longest * 0.012, row, f"{values[3]:.0f} min", va="center", fontsize=10.5, color=INK, fontweight="bold")
+    top.set_yticks(range(len(bars)), [name for name, _ in bars], fontsize=9.5, color=INK)
+    top.invert_yaxis()
+    top.set_xlim(0, longest * 1.13)
+    top.set_xlabel("Average minutes from the door to the doctor", color=SOFT, fontsize=9.5)
+    top.set_title("A simulation with assumed timings: where the minutes go, before and after the chain",
+                  loc="left", fontsize=11.5, color=INK, pad=30)
+    top.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, frameon=False, fontsize=9.5, labelcolor=INK,
+               handlelength=1.1, columnspacing=1.6, borderaxespad=0.2)
+    top.grid(axis="x", color="#e4e3df", linewidth=0.8)
+    tidy(top)
+
+    # ---- bottom: one row per changed assumption, before -> after for everyone
+    names = [name for name, _, _ in rows]
+    before = [a["Before"]["everyone"][3] for _, a, _ in rows]
+    after = [a["After"]["everyone"][3] for _, a, _ in rows]
+    widest = max(before + after)
+    for row, (b, a) in enumerate(zip(before, after)):
+        bottom.plot([b, a], [row, row], color=GREY, linewidth=2, zorder=1)
+        bottom.scatter([b], [row], s=64, color=SURFACE, edgecolor="#8a897f", linewidth=2, zorder=2,
+                       label="Before" if row == 0 else None)
+        bottom.scatter([a], [row], s=64, color=BLUE, edgecolor=SURFACE, linewidth=2, zorder=3,
+                       label="After" if row == 0 else None)
+        change = a - b
+        bottom.text(max(a, b) + widest * 0.02, row, f"{a:.0f} min  ({change:+.0f})", va="center", fontsize=9.5, color=INK)
+    wrapped = [name.replace(" (", "\n(").replace(": ", ":\n") for name in names]
+    bottom.set_yticks(range(len(names)), wrapped, fontsize=9, color=INK)
+    bottom.invert_yaxis()
+    bottom.set_xlim(0, widest * 1.24)
+    bottom.set_xlabel("Average minutes from the door to the doctor, everyone", color=SOFT, fontsize=9.5)
+    bottom.set_title("How much the answer depends on each assumption", loc="left", fontsize=11.5, color=INK, pad=30)
+    bottom.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, frameon=False, fontsize=9.5, labelcolor=INK,
+                  handletextpad=0.3, columnspacing=1.6, borderaxespad=0.2)
+    bottom.grid(axis="x", color="#e4e3df", linewidth=0.8)
+    tidy(bottom)
+    return fig
