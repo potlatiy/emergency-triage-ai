@@ -11,6 +11,8 @@ short_description: A digital emergency department with AI triage (prototype)
 
 # Meddy online
 
+**Live:** https://darkshdws-meddy.hf.space (the doctor's screen: https://darkshdws-meddy.hf.space/doctor)
+
 This folder is the whole Hugging Face Space (https://huggingface.co/spaces/darkshdws/meddy): `Dockerfile`,
 `start.sh`, `watch.py` and this README (the block at the top tells Hugging Face to build the Dockerfile).
 The Space downloads the code from the `main` branch of https://github.com/potlatiy/emergency-triage-ai while
