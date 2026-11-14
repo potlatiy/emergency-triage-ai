@@ -182,6 +182,14 @@ def test_the_doctor_page_is_served_once_it_exists(tmp_path, monkeypatch):
     assert client.get("/api/doctor/DR-1001/patients").status_code == 200
 
 
+def test_the_doctor_screen_reads_the_doctor_api_and_carries_the_disclaimer():
+    page = client.get("/doctor")
+    assert page.status_code == 200
+    assert "/api/doctor/" in page.text and "/patients" in page.text
+    assert "This project is a prototype and is not medical advice." in page.text
+    assert "Meddy suggests, the nurse decides." in page.text
+
+
 # ---------------------------------------------------------------- saving the assessment
 
 def new_visit(complaint="chest pain since this morning", age=67, sex="Male"):

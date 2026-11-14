@@ -2,8 +2,8 @@
 
 Run:   python hospital/server.py      then open http://localhost:8000
 
-It serves the walk-through page (static/index.html), the doctor's screen at /doctor (static/doctor.html,
-once it is built) and a small API the pages talk to.
+It serves the walk-through page (static/index.html), the doctor's screen at /doctor (static/doctor.html)
+and a small API the pages talk to.
 Everything is kept in the internal database, hospital.db (see db.py).
 """
 
