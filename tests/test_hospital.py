@@ -227,6 +227,18 @@ def test_pain_is_asked_in_words_and_each_word_has_a_score():
     assert levels == sorted(levels, reverse=True)
 
 
+def test_the_doctor_gets_the_pain_as_a_word():
+    assert [core.pain_word(score) for score in (0, 1, 3, 4, 5, 6, 7, 9, 10)] == [
+        "No pain", "Mild", "Mild", "Moderate", "Moderate", "Moderate", "Severe", "Severe", "Worst ever"]
+    assert all(core.pain_word(score) == word for word, score in core.PAIN_SCALE)      # every word maps back to itself
+    assert core.pain_word(None) is None
+    reg_no = new_visit()
+    client.post("/api/triage", json={"reg_no": reg_no, "complaint": "chest pain", "age": 67, "sex": "Male", "pain": 7})
+    sent = client.post("/api/refer", json={"reg_no": reg_no, "level": 3, "reason": "Looks unwell"}).json()
+    card = client.get(f"/api/doctor/{sent['doctor_reg']}/patients").json()["patients"][0]
+    assert card["vitals"]["pain"] == 7 and card["vitals"]["pain_word"] == "Severe"
+
+
 def test_the_topic_of_an_answer_reaches_the_doctor():
     reg_no = new_visit()
     answers = [{"question": "When did the chest pain start?", "answer": "Under an hour ago", "kind": "extra", "topic": "onset"},

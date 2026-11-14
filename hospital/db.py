@@ -269,6 +269,15 @@ def _pick_doctor(patient):
     return _on_duty("Resuscitation team")[0], "No doctor is on duty, so the resuscitation team takes the patient."
 
 
+def _measured(saved):
+    """The saved measurements of one visit, with the pain score also given as the word the patient tapped.
+    None for a visit that was never assessed (the sample patients)."""
+    if not saved:
+        return None
+    vitals = json.loads(saved)
+    return {**vitals, "pain_word": core.pain_word(vitals.get("pain"))}
+
+
 def doctor_patients(doctor_reg):
     """The doctor's screen: who the doctor is, and the full card of every patient now with them.
 
@@ -286,7 +295,7 @@ def doctor_patients(doctor_reg):
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
          "level": p["level"], "ai_level": p["ai_level"],
-         "vitals": json.loads(p["vitals"]) if p["vitals"] else None,      # None for visits from before this column
+         "vitals": _measured(p["vitals"]),
          "answers": answers_for(p["reg_no"]), "referred": bool(p["referred"]),
          "referral_reason": p["referral_reason"], "waited": clock - p["arrived"]}
         for p in rows]}

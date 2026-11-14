@@ -167,6 +167,19 @@ FOLLOW_UPS = 3      # all optional and answered with one tap, so check-in stays 
 # The urgency model was trained on the 0-10 score that nurses recorded, so each word is turned into the
 # typical score of its range in our data (the median of 1-3, 4-6 and 7-9 among the 1,267 patients).
 PAIN_SCALE = [("No pain", 0), ("Mild", 3), ("Moderate", 5), ("Severe", 7), ("Worst ever", 10)]
+
+
+def pain_word(score):
+    """The word for a 0-10 pain score, for the doctor's screen. The ranges are the usual ones:
+    0 no pain, 1-3 mild, 4-6 moderate, 7-9 severe, 10 the worst."""
+    if score is None:
+        return None
+    for (word, _), highest in zip(PAIN_SCALE, (0, 3, 6, 9, 10)):
+        if score <= highest:
+            return word
+    return PAIN_SCALE[-1][0]
+
+
 # Asked only when there is pain. Like the history questions, the answer is information for the doctor only.
 PAIN_FEEL = {"question": "What does the pain feel like?", "kind": "extra", "topic": "feel", "label": "Feels like",
              "choices": ["Sharp or stabbing", "Dull or aching", "Burning", "Pressure or tightness", "Cramping"]}
