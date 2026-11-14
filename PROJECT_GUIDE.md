@@ -219,7 +219,7 @@ pip install -r requirements.txt
 | Urgency results | `python triage.py` | (prints to the screen) |
 | Assignment results | `python assignment.py` | (prints to the screen) |
 | Save the trained models again | `python trained_models.py` | (writes the files in `models/`) |
-| Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (47 checks should pass) |
+| Tests | `pip install -r requirements-dev.txt`, then `python -m pytest tests` | (every check should pass) |
 | Notebook | open `triage.ipynb` | |
 | Second-check demo | `python app.py` | http://localhost:7861 |
 | Digital hospital | `python hospital/server.py` | http://localhost:8000 |
