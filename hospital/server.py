@@ -2,7 +2,8 @@
 
 Run:   python hospital/server.py      then open http://localhost:8000
 
-It serves one page (static/index.html) and a small API the page talks to.
+It serves the walk-through page (static/index.html), the doctor's screen at /doctor (static/doctor.html,
+once it is built) and a small API the pages talk to.
 Everything is kept in the internal database, hospital.db (see db.py).
 """
 
@@ -73,6 +74,15 @@ class Duty(BaseModel):
 def page():
     # no-cache: the browser always asks for the latest page, so an update is seen without a hard refresh
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/doctor")
+def doctor_page():
+    """The doctor's own screen (static/doctor.html). It reads GET /api/doctor/{doctor_reg}/patients."""
+    page = STATIC / "doctor.html"
+    if not page.exists():
+        raise HTTPException(404, "The doctor's page is not built yet. It belongs in hospital/static/doctor.html.")
+    return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/register")

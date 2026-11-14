@@ -170,6 +170,18 @@ def test_the_page_is_served():
     assert page.status_code == 200 and "Digital hospital" in page.text
 
 
+def test_the_doctor_page_is_served_once_it_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "STATIC", tmp_path)                 # an empty folder: the page is not built yet
+    missing = client.get("/doctor")
+    assert missing.status_code == 404 and "doctor.html" in missing.json()["detail"]
+    (tmp_path / "doctor.html").write_text("<h1>Doctor's screen</h1>")
+    page = client.get("/doctor")
+    assert page.status_code == 200 and "Doctor's screen" in page.text
+    assert page.headers["cache-control"] == "no-cache"
+    # the address of the page must not hide the doctor's data
+    assert client.get("/api/doctor/DR-1001/patients").status_code == 200
+
+
 # ---------------------------------------------------------------- saving the assessment
 
 def new_visit(complaint="chest pain since this morning", age=67, sex="Male"):
