@@ -100,9 +100,11 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
 - **How it reasons:** it turns the complaint into short letter patterns, gives every input a weight for each of
   the five levels, and adds the weights into five probabilities. The weights were learned from 1,267 real
   patients whose correct level was set by experts.
-- **How it decides:** rating a patient too low is the dangerous mistake, so it does not simply pick the most
-  likely level. It picks the level with the lowest expected cost, where one level too low costs three times as
-  much as one level too high.
+- **How it decides:** Meddy shows the most likely level as its suggestion (right 68% of the time). Rating a patient
+  too low is the dangerous mistake, so for the second check it also works out a safety-first level: the one with
+  the lowest expected cost, where one level too low costs three times as much as one level too high. A strong
+  flag is raised when Meddy thinks it more likely than not that the patient is more urgent than the nurse said;
+  a milder note when only the safety-first level is more urgent.
 - **What it outputs:** a level, the probability of each level, and "not sure" when no level reaches 60%.
 
 ### Part B: the assignment model (trained on real data)
@@ -190,7 +192,7 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 - [x] Assignment model trained on real diagnoses and compared with the key-word rule (`assignment.py`)
 - [x] Both trained models saved in the repository (`models/`, made by `trained_models.py`)
 - [x] The doctor's screen (`/doctor`), with a "Visit finished" button that closes the visit
-- [x] The chain checked end to end for weak links: a step cannot be done twice or out of order, unknown values
+- [x] The chain checked end to end for weak links: a patient who is with a doctor cannot be assessed or queued again, joining the line needs an assessment, unknown values
       are refused, emergencies never sit in the line, a reload keeps the patient's place, and every doctor's
       list is made of real visits
 - [x] Question writer steered by a system prompt (`hospital/core.py`)

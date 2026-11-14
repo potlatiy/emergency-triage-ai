@@ -142,7 +142,7 @@
     <dl class="metrics">
       <div><dt>1,267</dt><dd>real emergency patients from two hospitals</dd></div>
       <div><dt>107 of 131</dt><dd>under-rated patients the second check flags</dd></div>
-      <div><dt>67%</dt><dd>reached by re-checking one patient in five. Simple rules reach 34 to 38%.</dd></div>
+      <div><dt>67%</dt><dd>reached by re-checking one patient in five. Simple rules reach 34 to 36%.</dd></div>
     </dl>
     <p class="source">From our own tests on open data (Moon and colleagues, PLOS ONE, 2019). The model matched the expert panel 68% of the time and nurses 85%, so it works beside a nurse, not instead of one.</p>
     <span class="two" aria-hidden="true">2</span>
@@ -183,7 +183,7 @@
       lead: "It reads what the nurse records at the door.",
       notes: ["Inputs: the complaint in a few words, age, alertness, pain and vital signs.",
               "It never sees the diagnosis, the outcome or the nurse's level.",
-              "It leans towards the more urgent level on purpose, because rating too low is the dangerous mistake."] },
+              "For the second check it also leans towards the more urgent level on purpose, because rating too low is the dangerous mistake."] },
     { id: "department", label: "Right department", icon: "signpost", x: 880, y: 262,
       lead: "A level says how soon. A second model suggests who should see the patient.",
       notes: ["It learned from the real final diagnosis of each of the 1,267 patients.",
@@ -206,7 +206,7 @@
       lead: "Worse than nurses at the level, useful as a safety net.",
       notes: ["Exact level: always guessing level 3 gets 38%, the model 68%, nurses 85%.",
               "With time to re-check one patient in five, the model reaches 67% of the under-rated patients.",
-              "Simple rules reach 34 to 38% for the same effort."] },
+              "Simple rules reach 34 to 36% for the same effort."] },
     { id: "limits", label: "Limits", icon: "clock", x: 130, y: 306,
       lead: "What this project cannot claim.",
       notes: ["One country, 1,267 patients, and only 26 at the most urgent level.",
