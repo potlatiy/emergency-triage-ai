@@ -107,6 +107,12 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
 - **How well it does:** tested on patients it never saw, it picks the department of the real diagnosis 71% of
   the time. A key-word rule on the complaint gets 66%, and always guessing the most common department gets 22%.
   The model's lead over the rule is 4.3 points, with a 95% range of 2.1 to 6.6.
+- **Why it stops near 71%:** we tried eleven versions and none passed 71%. The same complaint leads to
+  different departments ("dyspnea" was respiratory for 31 patients, cardiac for 15 and general medical for 10),
+  so what a patient says at the door does not fully determine where they belong. Scores of 90% or more are
+  only possible by testing a model on the patients it trained on, which is memorising. We do not do that.
+- **What reaches about 90%:** the right department is among the model's top three 89% of the time. The hospital
+  therefore shows the nurse three suggestions and she chooses.
 - **Where it is weaker than the rule:** respiratory and gynaecology patients. It is stronger for neurology,
   cardiology and gastroenterology.
 - **How the hospital uses it:** the model was trained on complaints as nurses write them ("ant. chest pain").

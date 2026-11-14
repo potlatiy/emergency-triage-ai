@@ -74,9 +74,14 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
     else:
         department = department_for(complaint, injury)
         how = f"key-word rule (the model was only {department_odds[best]:.0%} sure)"
+    # Three departments for the nurse to choose from: the one picked above, then the model's next most likely.
+    names = [str(c) for c in _assignment.classes_]
+    order = [names.index(department)] + [i for i in np.argsort(-department_odds) if names[i] != department]
     return {
         "department": department,
         "department_how": how,
+        "department_options": [{"department": names[i], "chance": round(float(department_odds[i]), 3)}
+                               for i in order[:3]],
         "level": level,
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},

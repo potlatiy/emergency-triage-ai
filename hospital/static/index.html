@@ -329,10 +329,18 @@ function showLevel() {
     <div style="margin-top:14px">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
       <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
       <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
-    <div class="note"><b>Likely department: ${esc(r.department)}.</b> <span class="mono">Decided by the ${esc(r.department_how)}.</span></div>
+    <div class="note"><b>Department: <span id="dept-name">${esc(r.department)}</span>.</b>
+      <span class="mono" id="dept-how">Decided by the ${esc(r.department_how)}.</span>
+      <div class="mono" style="margin-top:8px">The nurse can change it. Percentages are the trained model's estimate:</div>
+      <div class="choice" id="dept" style="margin-top:6px">${r.department_options.map((o) =>
+        `<button type="button" data-v="${esc(o.department)}" class="${o.department === r.department ? "on" : ""}"
+           aria-pressed="${o.department === r.department}">${esc(o.department)} \u00B7 ${Math.round(o.chance * 100)}%</button>`).join("")}</div></div>
     ${r.unsure ? `<div class="note">The AI is not sure: no level reaches 60%. The nurse decides.</div>` : ""}
     ${r.danger ? `<div class="note red">You answered yes to a danger-sign question. Within the waiting room this counts as half a level more urgent.</div>` : ""}
     <button class="go" id="seat">${urgent ? "Go straight to the resuscitation bay" : "Take a seat in the waiting room"}</button>`;
+  bindChoice("dept", (v) => { r.department = v; r.department_how = "nurse, from the suggested departments";
+    document.getElementById("dept-name").textContent = v;
+    document.getElementById("dept-how").textContent = "Chosen by the nurse from the suggested departments."; });
   document.getElementById("seat").addEventListener("click", async () => {
     const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger,
       department: r.department, department_how: r.department_how });

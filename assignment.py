@@ -113,6 +113,7 @@ def fair_predictions(df, target):
     folds = StratifiedKFold(5, shuffle=True, random_state=SEED)
     probabilities = cross_val_predict(make_assignment_model(), df, target, cv=folds, method="predict_proba")
     classes = np.array(sorted(target.unique()))
+    fair_predictions.ranked = classes[np.argsort(-probabilities, axis=1)]     # every department, best guess first
     return classes[probabilities.argmax(axis=1)], probabilities.max(axis=1)
 
 
@@ -176,6 +177,27 @@ def main():
         mixed = np.where(confidence >= cut, predicted, rule)
         print(f"  model when {cut:.0%}+ sure: right {(mixed == truth.values).mean():.0%}, "
               f"model decides for {(confidence >= cut).mean():.0%} of patients")
+
+    ranked = fair_predictions.ranked
+    print("\nIf the model offers the nurse several departments to choose from:")
+    for k in [1, 2, 3]:
+        hit = np.mean([truth.values[i] in ranked[i, :k] for i in range(len(df))])
+        print(f"  the right department is among its top {k}: {hit:.0%}")
+
+    # Why 90% on the first guess is out of reach: the same words lead to different departments.
+    wording = df[TEXT]
+    shared = wording.map(wording.value_counts()) >= 2
+    usual = truth[shared].groupby(wording[shared]).transform(lambda group: group.mode()[0])
+    print("\nHow much the complaint can tell at all:")
+    print(f"  {shared.mean():.0%} of patients share their exact complaint wording with another patient.")
+    print(f"  Even knowing the most common department for that exact wording is right only {(truth[shared] == usual).mean():.0%} of the time.")
+    for example in ["dyspnea", "fever", "dizziness"]:
+        spread = truth[wording == example].value_counts()
+        print(f"    '{example}': " + ", ".join(f"{name.lower()} {n}" for name, n in spread.head(4).items()))
+    trained_on_all = make_assignment_model().fit(df, truth)
+    print(f"\nWarning figure, NOT a result: scored on the patients it trained on, the same model gets "
+          f"{(trained_on_all.predict(df) == truth.values).mean():.0%}. A model can memorise its training patients, "
+          f"which is why every figure above comes from patients it never saw.")
 
     print("\nWhen the model is confident:")
     for cut in [0.0, 0.5, 0.7]:

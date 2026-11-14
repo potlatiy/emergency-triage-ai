@@ -70,13 +70,15 @@ underneath.
 | Check-in | A questionnaire for this complaint: three danger-sign questions and two follow-up questions | Danger questions come from a hand-written list chosen by the kind of complaint. The two follow-ups are written on the spot by a small language model running on the same computer |
 | Nurse station | Suggested urgency level | The model tested in this project |
 | Waiting room | Your place in line | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
-| Doctor | Department and doctor | Plain rules: key words in the complaint pick the department, then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers |
+| Doctor | Department and doctor | A second model, trained on the real diagnoses, suggests the department when it is at least 70% sure; a key-word rule decides otherwise. The nurse can pick among three suggestions. The database then picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers |
 
 The internal database is one SQLite file with three tables: doctors, visits and the questionnaire answers. The
 doctors and their registration numbers are made up. No patient names are asked for, and the database is wiped each
 time the server starts.
 
-**Only the urgency level has been tested.** The questionnaire, the line and the doctor match are demonstrations.
+**The urgency level and the choice of department have been tested.** The questionnaire and the line are
+demonstrations. The AI-written questions come from a general language model steered by a written system prompt;
+it was not trained on medical data.
 
 ## What we added
 
@@ -152,6 +154,35 @@ under-rated patients they reach (95% range in brackets):
 We also built a second model specially for this job, which sees the nurse's level and predicts "rated too low".
 It did not do better (63% at a 20% budget), so we kept the simpler model.
 
+### 4. Choosing the department
+
+Each patient in the data has a final diagnosis. We matched all 584 distinct diagnoses to one of nine departments
+(`data/diagnosis_departments.csv`) and trained a second model to predict the department from the complaint and
+the triage measurements. On patients it never saw:
+
+| Method | Picks the department of the real diagnosis |
+|---|---|
+| Always the most common department | 22% |
+| Key-word rule on the complaint | 66% (64–69%) |
+| Trained model | 71% (68–73%) |
+| Trained model, right department among its top three | 89% |
+
+The model leads the rule by 4.3 points (95% range 2.1 to 6.6). It is weaker than the rule for respiratory and
+gynaecology patients.
+
+**Why not 90% on the first guess?** We tried eleven versions of the model (different settings, whole words as
+well as letter patterns, a support vector machine, a random forest, gradient boosting). All landed between 67%
+and 71%, and the simplest scored best. The limit is in the data: the same complaint leads to different
+departments. Of the patients who arrived with "dyspnea", 31 had a respiratory diagnosis, 15 a cardiac one and 10
+a general medical one. Even knowing the most common department for a patient's exact wording is right only 77%
+of the time. A model scores much higher on the patients it trained on (ours 82%, a random forest 99.8%), but
+that is memorising, so we do not report it as a result.
+
+**How the hospital uses it.** Because the model learned from nurses' short phrases and patients word things
+differently, it decides only when it is at least 70% sure and the key-word rule decides otherwise (68% together).
+The nurse sees three suggested departments and can change the choice. Run `python assignment.py` to reproduce
+these figures.
+
 ### Where it fails
 
 - **Seven urgent patients sent to the slow queue.** They include a chest pain complaint written in Korean with
@@ -167,6 +198,8 @@ It did not do better (63% at a 20% budget), so we kept the simpler model.
 - **The data is not from patients typing for themselves.** The complaints in our data were written by nurses in
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
+- **The department answer key is ours.** It rests on our own diagnosis-to-department table, which still needs
+  a clinician's review; 87 rarer diagnoses matched no rule and default to general medicine.
 - The waiting times are a simulation with invented arrivals.
 - The three-to-one safety weighting and the 45-minute rule are our choices.
 - We did not test whether real nurses would act on the flags or the suggested order.
@@ -181,6 +214,7 @@ It did not do better (63% at a 20% budget), so we kept the simpler model.
 ## Run it
 
 - **Notebook:** open `triage.ipynb`. All outputs are saved in it.
+- **Department results:** `python assignment.py`
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000. For AI-written questions,
   install Ollama and run `ollama pull gemma3:4b` first; without it the hand-written questions are used.
