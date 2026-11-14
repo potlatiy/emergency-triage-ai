@@ -94,6 +94,7 @@
   .panel:focus { outline:none; }
   .ids { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
   .regno { padding:6px 14px; border-radius:999px; background:var(--blue-tint); color:var(--blue-dark); font-size:.95rem; font-weight:700; }
+  .regno.plain { background:var(--page); color:var(--soft); }
   .panel h2 { font-size:1.9rem; font-weight:800; overflow-wrap:anywhere; }
   .panel h2::first-letter { text-transform:uppercase; }
   .panel .lede { margin:10px 0 0; color:var(--soft); font-size:1.1rem; }
@@ -130,6 +131,13 @@
   .answers .a.none { background:transparent; color:var(--soft); font-weight:500; padding-right:0; }
   .answers.extra li { grid-template-columns:minmax(0,1fr); }
   .answers.extra .a { justify-self:start; border-radius:14px; }
+  .finish { margin-top:32px; padding-top:24px; border-top:1px solid var(--line); }
+  .finish .hint { margin:10px 4px 0; }
+  .done { width:100%; min-height:60px; padding:14px 24px; border:2px solid var(--blue); border-radius:999px; background:var(--card);
+          color:var(--blue-dark); font-size:1.15rem; font-weight:800; cursor:pointer; transition:background-color .15s ease, color .15s ease; }
+  .done:hover { background:var(--blue-tint); }
+  .done.armed { background:var(--blue); color:#fff; }
+  .done:disabled { cursor:wait; opacity:.7; }
   .empty { padding:48px 28px; text-align:center; }
   .empty h2 { font-size:1.6rem; }
   .empty p { margin:12px auto 0; max-width:46ch; color:var(--soft); }
@@ -204,7 +212,8 @@
 // The doctor's screen asks the server every 5 seconds for the patients now with this doctor:
 //   GET /api/doctor/{reg_no}/patients   (the full card: level, Meddy's level, vital signs, answers, referral)
 //   GET /api/staff                      (the list of doctors for the picker, and who is on duty)
-// It only reads. Nothing on this page changes the database.
+// The only thing it changes is closing a visit:
+//   POST /api/doctor/finish             ("Visit finished": the patient leaves this doctor's list)
 const EVERY = 5000;
 const LEVEL_NAME = { 1:"Resuscitation", 2:"Emergency", 3:"Urgent", 4:"Less urgent", 5:"Non-urgent" };
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
@@ -303,7 +312,9 @@ function drawPatients(answer) {
 
 // ---------------------------------------------------------------- the list
 
-const lookAgain = (p) => p.ai_level !== null && p.ai_level < p.level;
+// The flag is worked out on the server when the nurse gives her level ("strong", "mild" or nothing).
+// A server that does not send it yet falls back to comparing the two levels.
+const lookAgain = (p) => p.second_check !== undefined ? p.second_check === "strong" : p.ai_level !== null && p.ai_level < p.level;
 const person = (p) => [p.age === null ? null : Math.round(p.age) + " years", p.sex ? p.sex.toLowerCase() : null].filter(Boolean).join(", ");
 
 function drawList() {
@@ -340,9 +351,11 @@ $("list").addEventListener("click", (event) => {
 
 function meddyLine(p) {
   if (p.ai_level === null) return `<p class="meddy">No suggestion from Meddy was saved for this visit.</p>`;
-  if (lookAgain(p)) return `<div class="note amber"><b>▲ Look again: Meddy rated this patient more urgent.</b>
-    Meddy suggested level ${p.ai_level} (${LEVEL_NAME[p.ai_level]}); the final level is ${p.level}.
-    <span class="hint">Meddy is wrong more often than a nurse. This is a prompt to re-check, not a verdict.</span></div>`;
+  if (lookAgain(p)) return `<div class="note amber"><b>▲ Look again: Meddy thinks this patient is more urgent.</b>
+    Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}); the final level is ${p.level}.
+    <span class="hint">About 1 flag in 3 was right in our tests. This is a prompt to re-check, not a verdict.</span></div>`;
+  if (p.second_check === "mild") return `<p class="meddy">Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
+    It leaned more urgent than the final level, but not strongly enough to flag.</p>`;
   if (p.ai_level > p.level) return `<p class="meddy">Meddy suggested a less urgent level, ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
     The nurse rated the patient more urgent.</p>`;
   return `<p class="meddy">Meddy suggested the same level.</p>`;
@@ -357,7 +370,7 @@ function vitalsBlock(v) {
     ${tile("Breathing", v.RR, "per min")}
     ${tile("Temperature", v.BT, "°C")}
     ${tile("Oxygen", v.Saturation, "%")}
-    ${v.pain === undefined ? "" : v.pain_word ? tile("Pain", v.pain_word, `score ${v.pain} of 10`) : tile("Pain", v.pain, "of 10")}
+    ${v.pain === undefined ? "" : v.pain_word ? tile("Pain", v.pain_word, "how bad was not asked") : tile("Pain", v.pain, "of 10")}
     ${v.alert === undefined ? "" : `<div class="wide"><dt>Alertness</dt><dd>${esc(v.alert)}</dd></div>`}
   </dl>`;
 }
@@ -384,7 +397,7 @@ function answersBlock(p) {
 function glance(p) {
   const yes = p.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
   const facts = [
-    p.vitals && p.vitals.pain_word ? "Pain: " + p.vitals.pain_word.toLowerCase() : null,
+    p.vitals && p.vitals.pain_word && !p.answers.some((a) => a.topic === "feel" && a.answer) ? p.vitals.pain_word : null,
     p.answers.some((a) => a.kind === "danger") ? (yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs") : null,
     ...p.answers.filter((a) => a.kind !== "danger" && a.label && a.answer).map((a) => `${a.label}: ${a.answer}`)];
   const shown = facts.filter(Boolean);
@@ -403,7 +416,9 @@ function drawCard() {
   }
   const waited = p.waited > 0 ? `triaged ${p.waited} min ago` : "triaged just now";
   card.innerHTML = `
-    <div class="ids"><span class="regno num">${esc(p.reg_no)}</span><span class="regno num">Ticket ${esc(p.ticket)}</span></div>
+    <div class="ids"><span class="regno num">${esc(p.reg_no)}</span><span class="regno num">Ticket ${esc(p.ticket)}</span>${
+      p.insurance === undefined ? "" : `<span class="regno plain">${p.insurance === "none" ? "No insurance"
+        : (p.insurance === "private" ? "Private" : "Public") + " insurance" + (p.card_end ? ", card ending " + esc(p.card_end) : "")}</span>`}</div>
     <h2>${esc(p.complaint)}</h2>
     <p class="lede">${person(p) ? esc(person(p)) + " · " : ""}${waited}</p>
     ${glance(p)}
@@ -416,7 +431,32 @@ function drawCard() {
     ${meddyLine(p)}
     <h3>Measured at the nurse station</h3>
     ${vitalsBlock(p.vitals)}
-    ${answersBlock(p)}`;
+    ${answersBlock(p)}
+    <div class="finish">
+      <button type="button" class="done" id="finish">Visit finished</button>
+      <p class="hint" id="finish-hint" role="status">Closes the visit and takes the patient off your list.</p>
+    </div>`;
+  // Two taps, so a visit is not closed by accident: the first arms the button for a few seconds.
+  const finish = $("finish");
+  let armed = null;
+  finish.addEventListener("click", async () => {
+    if (!armed) {
+      finish.textContent = "Tap again to close this visit"; finish.classList.add("armed");
+      armed = setTimeout(() => { armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed"); }, 4000);
+      return;
+    }
+    clearTimeout(armed); finish.disabled = true;
+    try {
+      const response = await fetch("/api/doctor/finish", { method:"POST", headers:{ "Content-Type":"application/json" },
+                                                           body:JSON.stringify({ reg_no:p.reg_no }) });
+      if (!response.ok && response.status !== 409) throw new Error();        // 409: someone already closed it
+      $("say").textContent = `Visit ${p.ticket} closed.`;
+      selected = null; check();
+    } catch (error) {
+      finish.disabled = false; armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed");
+      $("finish-hint").textContent = "Could not close the visit: the hospital server did not answer. Try again.";
+    }
+  });
 }
 
 check();

@@ -8,6 +8,7 @@ Everything is kept in the internal database, hospital.db (see db.py).
 """
 
 from pathlib import Path
+from typing import Literal
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -22,11 +23,20 @@ STATIC = Path(__file__).parent / "static"
 app = FastAPI(title="Digital hospital")
 
 
+Sex = Literal["Female", "Male"]
+
+
 class Arrival(BaseModel):
+    # Spaces are trimmed before the length check, so a complaint made only of spaces is refused.
+    model_config = ConfigDict(str_strip_whitespace=True)
     complaint: str = Field(min_length=1, max_length=200)
     age: float = Field(ge=15, le=110)
-    sex: str = "Female"
+    sex: Sex = "Female"
     use_model: bool = True
+    # Insurance only identifies the person, so that one person has one open visit. It is never given to
+    # either model and never changes the level, the department or the place in line.
+    insurance: Literal["public", "private", "none"] = "none"
+    card: str | None = Field(default=None, max_length=40)
 
 
 class Answer(BaseModel):
@@ -37,15 +47,17 @@ class Answer(BaseModel):
 
 
 class Assessment(BaseModel):
+    # Every choice is spelled out. An unknown value is refused rather than quietly read as "normal" or "alert":
+    # a silent default here would make a sick patient look well.
     reg_no: str
     complaint: str
     age: float
-    sex: str = "Female"
-    arrival: str = "Walked in"
+    sex: Sex = "Female"
+    arrival: Literal["Walked in", "Public ambulance", "Private car", "Private ambulance"] = "Walked in"
     injury: bool = False
-    alert: str = "Alert"
+    alert: Literal["Alert", "Responds to voice", "Responds to pain", "Unresponsive"] = "Alert"
     pain: int = Field(default=0, ge=0, le=10)
-    vitals: str = "normal"                  # one of core.VITAL_PRESETS
+    vitals: Literal["normal", "feverish", "unstable"] = "normal"       # one of core.VITAL_PRESETS
     answers: list[Answer] = []
 
 
@@ -71,6 +83,26 @@ class Duty(BaseModel):
     on_duty: bool
 
 
+class Finished(BaseModel):
+    reg_no: str
+
+
+def open_visit(reg_no):
+    """The visit for a step at the desk or the nurse station. Refused when the registration number is unknown
+    (404) or the patient has already gone to a doctor (409), so no step can be done twice or out of order."""
+    visit = db.visit_for(reg_no)
+    if visit is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    if visit["status"] in ("with doctor", "done"):
+        raise HTTPException(409, "This patient has already been sent to a doctor.")
+    return visit
+
+
+def known_department(name):
+    if name is not None and name not in core.DEPARTMENT_NAMES:
+        raise HTTPException(422, "No such department. Choose one of: " + ", ".join(core.DEPARTMENT_NAMES) + ".")
+
+
 @app.get("/")
 def page():
     # no-cache: the browser always asks for the latest page, so an update is seen without a hard refresh
@@ -89,7 +121,14 @@ def doctor_page():
 @app.post("/api/register")
 def register(body: Arrival):
     """The patient arrives: give the visit a registration number and build its questionnaire."""
-    reg_no = db.register(body.complaint.strip(), body.age, body.sex)
+    if body.insurance != "none" and db.person_key(body.card) is None:
+        raise HTTPException(422, "Enter the card number: 6 to 20 letters and digits. Without a card, choose no insurance.")
+    try:
+        reg_no = db.register(body.complaint, body.age, body.sex, body.insurance, body.card)
+    except db.AlreadyRegistered as already:
+        # One person, one open visit. The answer points to the visit that is already open.
+        raise HTTPException(409, {"message": "This card already has an open visit. One person, one visit at a time.",
+                                  **already.visit})
     return {"reg_no": reg_no, **core.questionnaire(body.complaint, use_model=body.use_model)}
 
 
@@ -107,7 +146,8 @@ def follow_up(reg_no: str):
 
 @app.post("/api/triage")
 def triage(body: Assessment):
-    vitals = core.VITAL_PRESETS.get(body.vitals, core.VITAL_PRESETS["normal"])
+    open_visit(body.reg_no)
+    vitals = core.VITAL_PRESETS[body.vitals]
     answers = [a.model_dump() for a in body.answers]
     db.save_answers(body.reg_no, answers, body.injury)
     result = core.assess(body.complaint, body.age, body.sex, body.arrival, body.injury, body.alert, body.pain, vitals)
@@ -115,14 +155,24 @@ def triage(body: Assessment):
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
     # Keep the AI's suggestion and the measurements: the doctor's screen needs them later.
-    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain)
+    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
+                       [result["probabilities"][str(l)] for l in core.LEVELS])
     return result
 
 
 @app.post("/api/line/join")
 def join(body: Joining):
+    """The nurse's level puts the patient in the line. Levels 1 and 2 do not wait there: the patient is sent
+    to the resuscitation team at once, and "called" in the answer says where they went."""
+    visit = open_visit(body.reg_no)
+    known_department(body.department)
+    if visit["ai_level"] is None:
+        raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
     ticket = db.join_line(body.reg_no, body.level, body.danger, body.department, body.department_how)
-    return {"ticket": ticket, **db.line()}
+    called = db.call_next(body.reg_no) if body.level <= 2 else None
+    if called:
+        called["answers"] = db.answers_for(called["reg_no"])
+    return {"ticket": ticket, "called": called, **db.line()}
 
 
 @app.get("/api/line")
@@ -141,8 +191,11 @@ def me(reg_no: str):
 
 @app.post("/api/line/wait")
 def wait():
-    db.wait(15)
-    return db.line()
+    """Fifteen minutes pass in the department: the first patient is called and a made-up patient walks in."""
+    happened = db.pass_time(15)
+    if happened["called"]:
+        happened["called"]["answers"] = db.answers_for(happened["called"]["reg_no"])
+    return {**happened, **db.line()}
 
 
 @app.post("/api/line/next")
@@ -157,11 +210,8 @@ def call_next():
 @app.post("/api/refer")
 def refer(body: Referral):
     """The nurse sends a critical patient straight to a doctor, past the line. Her reason is required."""
-    visit = db.visit_for(body.reg_no)
-    if visit is None:
-        raise HTTPException(404, "No visit with this registration number.")
-    if visit["status"] == "with doctor":
-        raise HTTPException(409, "This patient is already with a doctor.")
+    open_visit(body.reg_no)
+    known_department(body.department)
     return db.refer(body.reg_no, body.level, body.reason, body.department)
 
 
@@ -174,6 +224,17 @@ def doctor_patients(doctor_reg: str):
     return screen
 
 
+@app.post("/api/doctor/finish")
+def finish(body: Finished):
+    """The doctor closes a visit. The patient leaves the doctor's list, which gets one shorter."""
+    if db.visit_for(body.reg_no) is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    closed = db.finish_visit(body.reg_no)
+    if closed is None:
+        raise HTTPException(409, "This patient is not with a doctor.")
+    return closed
+
+
 @app.get("/api/staff")
 def staff():
     return db.staff()
@@ -183,7 +244,8 @@ def staff():
 def duty(body: Duty):
     if body.reg_no == "DR-1000":
         raise HTTPException(400, "The resuscitation team is always on duty.")
-    db.set_duty(body.reg_no, body.on_duty)
+    if not db.set_duty(body.reg_no, body.on_duty):
+        raise HTTPException(404, "No doctor with this registration number.")
     return db.staff()
 
 

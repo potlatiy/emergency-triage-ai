@@ -157,6 +157,19 @@ def urgency_gap_score(probabilities, nurse):
     return (probabilities * (levels[None, :] < np.asarray(nurse)[:, None])).sum(axis=1)
 
 
+STRONG_FLAG = 0.50      # "more likely than not": no number was tuned to get this
+
+
+def flag_strength(probabilities, nurse):
+    """The second check in two strengths, for each patient: "strong", "mild" or "".
+
+    strong: the model thinks it more likely than not that the right level is more urgent than the nurse's.
+    mild:   not that sure, but the safety-first level is still more urgent than the nurse's."""
+    gap = urgency_gap_score(probabilities, nurse)
+    careful = safety_first(probabilities) < np.asarray(nurse)
+    return np.where(gap >= STRONG_FLAG, "strong", np.where(careful, "mild", ""))
+
+
 def vital_sign_rule(df):
     """The simple rule to beat: count the warning signs any nurse would recognise."""
     signs = pd.DataFrame({
@@ -305,6 +318,16 @@ def second_check_report(df, probabilities):
     low, high = plausible_range(lambda pick: (flag[pick] & under[pick]).sum() / max(1, under[pick].sum()), n)
     print(f"   Safety-first flag from before: flags {flag.sum()} patients ({flag.mean():.0%}), "
           f"reaches {(flag & under).sum()} of {under.sum()} ({(flag & under).sum() / under.sum():.0%}, range {low:.0%}-{high:.0%}).")
+    strength = flag_strength(probabilities, nurse)
+    strong, any_flag = strength == "strong", strength != ""
+    low, high = plausible_range(lambda pick: (strong[pick] & under[pick]).sum() / max(1, under[pick].sum()), n)
+    print(f"   Strong flag (the model thinks it more likely than not that the patient is more urgent): flags "
+          f"{strong.sum()} patients ({strong.mean():.0%}), reaches {(strong & under).sum()} of {under.sum()} "
+          f"({(strong & under).sum() / under.sum():.0%}, range {low:.0%}-{high:.0%}). "
+          f"{(strong & under).sum() / strong.sum():.0%} of these flags are right, against "
+          f"{(flag & under).sum() / flag.sum():.0%} for the safety-first flag.")
+    print(f"   Strong or mild flag together: flags {any_flag.sum()} patients ({any_flag.mean():.0%}), "
+          f"reaches {(any_flag & under).sum()} of {under.sum()} ({(any_flag & under).sum() / under.sum():.0%}).")
     return scores, table
 
 
