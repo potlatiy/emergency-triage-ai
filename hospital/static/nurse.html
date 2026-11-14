@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meddy · Nurse's screen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="/static/meddy.css">
+<style>
+  /* The nurse's screen: the list of patients on the left, one patient's card on the right. */
+  @media (min-width: 961px) { main.wrap { grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); } }
+  .list { padding:22px; position:sticky; top:16px; }
+  .list h2 { font-size:1.35rem; font-weight:800; }
+  .list .hint { margin:6px 0 0; }
+  .find { display:flex; gap:10px; margin-top:16px; }
+  .find input { min-height:54px; font-size:1.1rem; }
+  .find .mini { flex:none; }
+  .pt { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; align-items:center; width:100%; margin-top:10px;
+         padding:14px 16px; border:2px solid var(--line); border-radius:18px; background:var(--card); color:var(--ink);
+         font:inherit; text-align:left; cursor:pointer; }
+  .pt:hover { border-color:var(--blue); }
+  .pt.on { border-color:var(--blue); background:var(--blue-tint); }
+  .pt .code { grid-row:span 2; display:grid; place-items:center; min-width:76px; height:56px; padding:0 10px; border-radius:14px;
+               background:var(--blue); color:#fff; font-size:1.35rem; font-weight:800; font-variant-numeric:tabular-nums; }
+  .pt.danger .code { background:var(--rose); }
+  .pt b { font-size:1.08rem; line-height:1.3; }
+  .pt .hint { margin:0; font-size:.95rem; }
+  .empty { margin-top:16px; padding:18px; border-radius:16px; background:var(--page); color:var(--soft); font-size:1.02rem; }
+  .bigcode { display:inline-grid; place-items:center; min-width:120px; height:72px; padding:0 18px; margin-right:16px; border-radius:18px;
+             background:var(--blue); color:#fff; font-size:2.2rem; font-weight:800; font-variant-numeric:tabular-nums; vertical-align:middle; }
+  .summary { margin-top:18px; padding:18px 20px; border-radius:var(--round); background:var(--violet-tint); color:#2f2466; font-size:1.12rem; }
+  .summary .hint { display:block; margin-top:6px; color:#46358f; font-size:.95rem; }
+  .done { margin-top:18px; padding:22px; border-radius:var(--round); background:var(--mint-tint); color:#12432e; }
+  .done h3 { font-size:1.4rem; font-weight:800; }
+  .done p { margin:8px 0 0; }
+  .linebox { padding-bottom:28px; }
+  .linebox .card { padding:24px 28px; }
+  .linebox h2 { font-size:1.35rem; font-weight:800; }
+  .linebox .row .go { margin-top:16px; min-height:56px; font-size:1.1rem; }
+  header.top .links { display:flex; flex-wrap:wrap; gap:10px; margin-left:auto; }
+  header.top .links + .size { margin-left:0; }
+  @media (max-width: 960px) { .list { position:static; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+        <rect width="44" height="44" rx="14" fill="#2152c4"/>
+        <path d="M18 10h8v8h8v8h-8v8h-8v-8h-8v-8h8z" fill="#fff"/>
+      </svg>
+      <div><h1>Meddy</h1><small>Nurse's screen · staff only</small></div>
+    </div>
+    <p>Patients appear here when they finish check-in on their phone. Open one by tapping it, by the code on their phone,
+      or by scanning their QR code.</p>
+    <div class="links">
+      <a class="mini" href="/" target="_blank" rel="noopener">Patient's phone</a>
+      <a class="mini" href="/doctor" target="_blank" rel="noopener">Doctor's screen</a>
+    </div>
+    <button class="size" id="size" type="button" aria-pressed="false"><span aria-hidden="true">A+</span>Larger text</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card list" aria-labelledby="list-heading">
+    <h2 id="list-heading">Waiting for the nurse</h2>
+    <p class="hint" id="list-note">Danger signs first, then who has waited longest. Updates by itself.</p>
+    <form class="find" id="find">
+      <input type="text" id="code" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Code, e.g. 0021"
+             aria-label="The code on the patient's phone">
+      <button class="mini" type="submit">Open</button>
+    </form>
+    <p class="error" id="find-error" role="alert"></p>
+    <div id="patients" aria-live="polite"></div>
+  </section>
+
+  <section class="card panel" id="panel" aria-live="polite"></section>
+</main>
+
+<div class="wrap linebox">
+  <section class="card" aria-labelledby="line-heading">
+    <h2 id="line-heading">The waiting room line</h2>
+    <p class="hint" style="margin:6px 0 0">With levels: staff only. Patients see only their ticket and their place.</p>
+    <div class="row">
+      <button class="go light" id="wait" type="button">15 minutes pass</button>
+      <button class="go" id="next" type="button">Call next patient</button>
+    </div>
+    <p class="hint moved" id="moved" role="status"></p>
+    <div id="line"></div>
+  </section>
+</div>
+
+<div class="wrap bottom-db">
+  <details class="card db" aria-live="polite">
+    <summary>Behind the scenes: the hospital database <span>doctors on duty and today's visits</span></summary>
+    <div class="db-body">
+      <div class="db-counts" id="db-counts"></div>
+      <p class="regime" id="reviews" role="status"></p>
+      <p class="hint" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
+      <div class="db-actions">
+        <button class="go light" id="new-day" type="button">Start a new day</button>
+        <p class="hint">Clears every list. Phones with an open visit go back to the entrance.</p>
+      </div>
+      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
+        <tbody id="staff"></tbody></table></div>
+    </div>
+  </details>
+</div>
+
+<footer class="bottom">
+  <div class="wrap">
+    <span class="disclaimer">This project is a prototype and is not medical advice.</span>
+    <span>Meddy never gives a diagnosis. The nurse decides.</span>
+    <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
+  </div>
+</footer>
+
+<script>
+const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
+const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
+const LEVEL_ICON = { 1:"⚠", 2:"⚠", 3:"▲", 4:"✓", 5:"✓" };
+const LEVEL_NAME = { 1:"Resuscitation", 2:"Emergency", 3:"Urgent", 4:"Less urgent", 5:"Non-urgent" };
+const panel = document.getElementById("panel");
+let cur = null;           // the patient open on the right: { reg, card, vitals, alert, result, nurseLevel, review }
+let shown = 0;            // counts the patients opened; an answer for an earlier one is dropped
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+async function api(path, body) {
+  const response = await fetch(path, body === undefined ? {} :
+    { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) });
+  if (!response.ok) throw Object.assign(new Error("The hospital server answered " + response.status + "."), { status: response.status });
+  return response.json();
+}
+// What a failed request means for the nurse, in words. A 404 or 409 is the hospital answering, not a dead server.
+function trouble(e) {
+  if (e.status === 404) return "The hospital does not know this patient any more: a new day was started. Open the next patient.";
+  if (e.status === 409) return "Someone has already dealt with this patient on another screen. Open the next patient.";
+  return "Meddy can't reach the hospital server. Check that it is running, then try again.";
+}
+
+const sizeButton = document.getElementById("size");
+function setLarge(on) {
+  document.documentElement.classList.toggle("large", on);
+  sizeButton.setAttribute("aria-pressed", on);
+  try { localStorage.setItem("meddy-large", on ? "1" : "0"); } catch (e) {}
+}
+try { if (localStorage.getItem("meddy-large") === "1") setLarge(true); } catch (e) {}
+sizeButton.addEventListener("click", () => setLarge(sizeButton.getAttribute("aria-pressed") !== "true"));
+
+function busy(button, text) { button.dataset.label = button.textContent; button.disabled = true; button.classList.add("loading"); button.textContent = text; }
+function idle(button) { if (!button || !button.dataset.label) return; button.disabled = false; button.classList.remove("loading"); button.textContent = button.dataset.label; }
+function choice(id, options, value, labelledBy) {
+  return `<div class="choice" id="${id}" role="group"${labelledBy ? ` aria-labelledby="${labelledBy}"` : ""}>` + options.map((o) =>
+    `<button type="button" data-v="${esc(o)}" class="${o === value ? "on" : ""}" aria-pressed="${o === value}">${esc(o)}</button>`).join("") + "</div>";
+}
+function bindChoice(id, onPick) {
+  document.getElementById(id).addEventListener("click", (event) => {
+    const button = event.target.closest("button"); if (!button) return;
+    for (const b of button.parentNode.children) { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", b === button); }
+    onPick(button.dataset.v);
+  });
+}
+const sexWord = (s) => String(s || "").toLowerCase();
+const regFor = (code) => /^P-/i.test(code) ? code.toUpperCase() : "P-2026-" + code.replace(/\D/g, "").padStart(4, "0");
+
+// ---------------------------------------------------------------- the list on the left
+async function loadList() {
+  let data;
+  try { data = await api("/api/nurse/patients"); }
+  catch (e) { document.getElementById("list-note").textContent = "Meddy can't reach the hospital server. Retrying…"; return; }
+  document.getElementById("list-note").textContent = "Danger signs first, then who has waited longest. Updates by itself.";
+  const box = document.getElementById("patients");
+  if (!data.patients.length) {
+    box.innerHTML = `<p class="empty">Nobody is waiting for the nurse. A patient appears here as soon as they finish check-in
+      on their phone (open the <a href="/" target="_blank" rel="noopener">patient's phone</a> to try).</p>`;
+    return;
+  }
+  box.innerHTML = data.patients.map((p) => `
+    <button type="button" class="pt ${p.danger ? "danger" : ""} ${cur && cur.reg === p.reg_no ? "on" : ""}" data-reg="${esc(p.reg_no)}">
+      <span class="code">${esc(p.code)}</span>
+      <b>${esc(p.complaint)}</b>
+      <span class="hint">${p.age} years, ${esc(sexWord(p.sex))} · waiting ${p.waited} min
+        ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.injury ? `<span class="tag">injury</span>` : ""}</span>
+    </button>`).join("");
+}
+document.getElementById("patients").addEventListener("click", (event) => {
+  const button = event.target.closest(".pt"); if (button) openPatient(button.dataset.reg);
+});
+document.getElementById("find").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const typed = document.getElementById("code").value.trim();
+  document.getElementById("find-error").textContent = typed ? "" : "Type the code shown on the patient's phone.";
+  if (typed) openPatient(regFor(typed));
+});
+
+// ---------------------------------------------------------------- one patient on the right
+function facts(card) {
+  const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
+  const list = [`“${card.complaint}”`, `${card.age} years, ${sexWord(card.sex)}`, card.arrival,
+    yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs", card.injury ? "Injury" : null,
+    ...card.answers.filter((a) => a.kind === "extra" && a.answer).map((a) => `${a.label || a.question}: ${a.answer}`)];
+  return `<div class="glance">${list.filter(Boolean).map((f) => `<span>${esc(f)}</span>`).join("")}</div>`;
+}
+const ids = (card) => `<div class="ids"><span class="regno">Registration no. ${esc(card.reg_no)}${card.ticket ? ", ticket " + esc(card.ticket) : ""}</span>
+  <span class="role staff">Nurse's screen · staff only</span></div>`;
+
+function welcome() {
+  cur = null;
+  panel.innerHTML = `<span class="role staff">Nurse's screen · staff only</span>
+    <h2 style="margin-top:16px">Open a patient</h2>
+    <p class="lede">Tap a patient on the left, type the code from their phone, or scan the QR code on their phone with this
+      device's camera. Meddy shows what they reported, then you measure and decide.</p>`;
+}
+
+async function openPatient(reg) {
+  const run = ++shown;
+  document.getElementById("find-error").textContent = "";
+  let card;
+  try { card = await api("/api/nurse/patient/" + encodeURIComponent(reg)); }
+  catch (e) {
+    if (run !== shown) return;
+    document.getElementById("find-error").textContent = e.status === 404 ? "No patient with this code today." : trouble(e);
+    return;
+  }
+  if (run !== shown) return;
+  cur = { reg, card, vitals:"normal", alert:"Alert", result:null, nurseLevel:null, review:null };
+  history.replaceState(null, "", "/nurse?reg=" + encodeURIComponent(reg));
+  loadList();
+  if (card.status === "registered") {
+    panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.code)}</span>Still checking in</h2>
+      <p class="lede">This patient has not finished check-in on their phone yet. They appear on the list when they do.</p>`;
+    return;
+  }
+  if (card.status !== "nurse") {
+    panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.code)}</span>Already seen</h2>
+      <p class="lede">The nurse station has already dealt with this patient${card.ticket ? ` (ticket ${esc(card.ticket)})` : ""}.</p>`;
+    return;
+  }
+  const answers = card.answers.map((a) => `<dt>${a.label ? `<span class="tag topic">${esc(a.label)}</span>` : ""}${esc(a.question)}</dt>
+    <dd>${esc(a.answer || "not answered")}</dd>`).join("");
+  panel.innerHTML = `
+    ${ids(card)}
+    <h2><span class="bigcode">${esc(card.code)}</span>${esc(card.complaint)}</h2>
+    <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
+      Waiting for the nurse ${card.waited} min.</p>
+    <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
+    <h3 class="sub">What the patient reported</h3>
+    ${facts(card)}
+    <details class="staffbox" style="margin-top:10px"><summary><span class="summary-text">Every answer from check-in</span></summary>
+      <dl class="hand">${answers || "<dt>No answers</dt><dd></dd>"}</dl></details>
+    <h3 class="sub">Measure the patient</h3>
+    <p class="hint" style="margin:6px 0 0">Blood pressure, pulse, breathing, temperature and oxygen. In this demo, choose how the patient is doing.</p>
+    <span class="label" id="vitals-label">Vital signs</span>${choice("vitals", ["Normal", "Feverish", "Unstable"], "Normal", "vitals-label")}
+    <label for="alert">How alert is the patient?</label>
+    <select id="alert">${["Alert", "Responds to voice", "Responds to pain", "Unresponsive"].map((o) => `<option>${o}</option>`).join("")}</select>
+    <button class="go" id="go">Measure and get Meddy's report</button>
+    <p class="error" id="error" role="alert"></p>
+    <div id="result"></div>`;
+  summarise(run, reg);
+  bindChoice("vitals", (v) => cur.vitals = v.toLowerCase());
+  document.getElementById("go").addEventListener("click", async (event) => {
+    cur.alert = document.getElementById("alert").value;
+    const go = event.currentTarget;
+    busy(go, "Measuring and writing the report…");
+    try {
+      cur.result = await api("/api/triage", { reg_no: cur.reg, arrival: card.arrival, injury: card.injury, pain: card.pain,
+        alert: cur.alert, vitals: cur.vitals,
+        answers: card.answers.map(({ question, answer, kind, topic }) => ({ question, answer, kind, topic: topic || null })) });
+      if (run !== shown) return;
+      idle(go); cur.nurseLevel = null; showLevel();
+    } catch (e) { idle(go); document.getElementById("error").textContent = trouble(e); }
+  });
+}
+
+// The summary comes from the language model and can take a few seconds, so it is fetched apart from the card.
+async function summarise(run, reg) {
+  let data = { source: "none" };
+  try { data = await api("/api/nurse/summary/" + encodeURIComponent(reg)); } catch (e) {}
+  const box = document.getElementById("summary");
+  if (run !== shown || !box) return;
+  box.innerHTML = data.source === "ai"
+    ? `<b>AI summary.</b> ${esc(data.text)}<span class="hint">Written by a language model from the patient's answers below. It never
+       gives a diagnosis and does not change the level. Check it against the answers.</span>`
+    : `<b>No AI summary this time.</b> <span class="hint" style="display:inline">The language model is off or was too slow. Everything the patient
+       reported is below.</span>`;
+}
+
+// Meddy's report, the nurse's verdict and her second check: the same as the walk-through, on the nurse's own device.
+function showLevel() {
+  const r = cur.result, v = r.vitals, advice = r.advice, likely = r.likely_doctor, urgent = r.level <= 2;
+  document.getElementById("go").textContent = "Measure again";
+  document.getElementById("go").className = "go light";
+  document.getElementById("error").textContent = "";
+  const where = urgent ? "straight to the resuscitation bay" : `to the waiting room for ${likely.doctor}`;
+  const verdict = advice.emergency
+    ? `<div class="note red" role="status"><b>⚠ Meddy suggests an emergency level.</b> Accepting the report sends the patient to the
+        resuscitation team at once.${advice.reasons.length ? " Note: " + esc(advice.reasons.join("; ")) + "." : ""}</div>`
+    : advice.quick
+    ? `<div class="note good" role="status"><b>✓ A quick review is reasonable.</b> Meddy is at least 80% sure of the level and sees no warning sign.
+        <span class="hint">In our tests, on patients like this Meddy's level was right 84% of the time and too low for 7%,
+        the same 7% as the nurses.</span></div>`
+    : `<div class="note amber" role="status"><b>▲ Meddy advises checking this patient in person.</b>
+        ${esc(advice.reasons.join("; "))}.
+        <span class="hint">In our tests, on patients like this Meddy's level was right only 63% of the time, against 84% for nurses.</span></div>`;
+  document.getElementById("result").innerHTML = `
+    <div class="report">
+      <span class="role staff">Meddy's report · for the nurse to review</span>
+      <p class="hint" style="margin:10px 0 0"><b>Meddy does not diagnose.</b> It suggests how urgent the patient is and which
+        department fits. What is wrong with the patient is for the doctor to say.</p>
+      <p class="measured">Measured: blood pressure <b>${v.SBP}/${v.DBP}</b>, pulse <b>${v.HR}</b>, breathing <b>${v.RR}</b>,
+        temperature <b>${v.BT}°C</b>, oxygen <b>${v.Saturation}%</b>, ${esc(cur.alert.toLowerCase())}</p>
+      ${r.danger ? `<div class="note red">The patient answered yes to a danger-sign question. In the line this counts as half a level more urgent.</div>` : ""}
+      ${r.unread ? `<div class="note amber"><b>▲ Meddy could not read this complaint.</b> It found no symptom word it knows (another
+        language, a typing slip, or no symptom named). Its level rests on the vital signs only, and the department is a guess.</div>` : ""}
+      <h3 class="sub">Suggested level</h3>
+      <div class="verdict" style="margin-top:12px;border-color:${LEVEL_COLOUR[r.level]};background:${LEVEL_TINT[r.level]}">
+        <span class="num" style="background:${LEVEL_COLOUR[r.level]}" aria-hidden="true">${r.level}</span>
+        <div><div class="t">${LEVEL_ICON[r.level]} Level ${r.level}: ${esc(r.name)}</div>
+          <span class="who">Meddy's suggestion. The nurse decides.</span></div>
+      </div>
+      <div class="bars">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
+        <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
+        <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
+      <h3 class="sub">Suggested doctor</h3>
+      <div class="note" style="margin-top:12px"><b>${urgent ? "Resuscitation team, Resus bay" : `${esc(r.department)}: ${esc(likely.doctor)}, ${esc(likely.room)}`}</b>
+        <span class="hint">${urgent ? "Levels 1 and 2 go in at once, whatever the department."
+          : `Department decided by the ${esc(r.department_how)}. ${esc(likely.doctor)} is the least busy doctor on duty there
+             (${likely.waiting} with them now). The lists can change before the patient is called.`}</span></div>
+      ${verdict}
+    </div>
+    <div id="verdict-buttons">
+      <button class="go ${advice.quick ? "" : "light"}" id="approve">Everything is correct: send ${esc(where)}</button>
+      <button class="go ${advice.quick ? "light" : ""}" id="check" style="margin-top:12px">I want to check the patient myself</button>
+    </div>
+    <p class="error" id="approve-error" role="alert"></p>
+    <div id="personal" hidden>
+      <div class="note" style="margin-top:22px"><b>Personal check.</b> Examine the patient and give your own level.
+        Meddy then compares it with its own.</div>
+      <h3 class="sub" id="level-label">The nurse's level</h3>
+      <div class="levels" id="levels" role="group" aria-labelledby="level-label" style="margin-top:12px">${[1, 2, 3, 4, 5].map((l) =>
+        `<button type="button" data-v="${l}" aria-pressed="false" style="--c:${LEVEL_COLOUR[l]}"><b>${l}</b>${LEVEL_NAME[l]}</button>`).join("")}</div>
+      <div id="after"></div>
+    </div>`;
+  document.getElementById("approve").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    busy(button, urgent ? "Calling the resuscitation team…" : "Finding a place in line…");
+    try {
+      const data = await api("/api/line/join", { reg_no: cur.reg, level: r.level, danger: r.danger,
+        department: r.department, department_how: r.department_how, review: "approved" });
+      finished(data.ticket, data.called, r.level);
+    } catch (e) { idle(button); document.getElementById("approve-error").textContent = trouble(e); }
+  });
+  document.getElementById("check").addEventListener("click", () => {
+    cur.review = "checked";
+    document.getElementById("verdict-buttons").hidden = true;
+    document.getElementById("personal").hidden = false;
+    document.getElementById("levels").firstElementChild.focus({ preventScroll: true });
+  });
+  document.getElementById("levels").addEventListener("click", (event) => {
+    const button = event.target.closest("button"); if (!button) return;
+    for (const b of button.parentNode.children) { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", b === button); }
+    cur.nurseLevel = Number(button.dataset.v);
+    afterLevel();
+  });
+}
+
+function afterLevel() {
+  const r = cur.result, mine = cur.nurseLevel, urgent = mine <= 2;
+  const flag = r.second_check[mine], chance = Math.round(r.more_urgent[mine] * 100);
+  const opinion = flag === "strong"
+    ? `<div class="note amber" role="status"><b>▲ Look again: Meddy thinks this patient is more urgent.</b>
+        Meddy puts the chance that the right level is more urgent than level ${mine} at ${chance}%. Its most likely level is
+        ${r.level} (${esc(r.name)}). Check the patient again, then keep the level or change it above.</div>`
+    : flag === "mild"
+    ? `<div class="note" role="status"><b>Meddy leans more urgent, but not strongly (${chance}%).</b> No flag is raised.</div>`
+    : r.level === mine ? `<div class="note" role="status"><b>✓ Meddy agrees with you.</b></div>`
+    : `<div class="note" role="status"><b>Meddy sees no reason to rate this patient more urgent.</b> Your level stands.</div>`;
+  document.getElementById("after").innerHTML = `
+    <h3 class="sub">Meddy's second check</h3>
+    ${opinion}
+    <div class="note"><b>Department: <span id="dept-name">${esc(r.department)}</span>.</b>
+      <div class="hint" style="margin-top:8px">You can change it. Percentages are the trained model's estimate:</div>
+      <div class="choice" id="dept">${r.department_options.map((o) =>
+        `<button type="button" data-v="${esc(o.department)}" class="${o.department === r.department ? "on" : ""}"
+           aria-pressed="${o.department === r.department}">${esc(o.department)}, ${Math.round(o.chance * 100)}%${
+             urgent || !o.doctor ? "" : " · " + esc(o.doctor.doctor)}</button>`).join("")}</div></div>
+    <button class="go" id="seat">${urgent ? "Level " + mine + ": straight to the resuscitation bay" : "Level " + mine + ": done, to the waiting room"}</button>
+    ${urgent ? "" : `<button class="go light" id="refer-open" style="margin-top:12px" aria-expanded="false" aria-controls="refer">Send straight to a doctor</button>
+    <div class="refer" id="refer" hidden>
+      <label for="reason">Why does this patient skip the line?</label>
+      <p class="hint" style="margin:0 0 10px">For a critical case you spot yourself. The doctor reads this reason.</p>
+      <input type="text" id="reason" maxlength="300" autocomplete="off" placeholder="For example: fainted at the desk">
+      <button class="go" id="refer-go" style="margin-top:16px">Send to the doctor now</button>
+    </div>`}
+    <p class="error" id="send-error" role="alert"></p>`;
+  bindChoice("dept", (v) => { r.department = v; r.department_how = "nurse, from the suggested departments";
+    document.getElementById("dept-name").textContent = v; });
+  document.getElementById("seat").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    busy(button, urgent ? "Calling the resuscitation team…" : "Finding a place in line…");
+    try {
+      const data = await api("/api/line/join", { reg_no: cur.reg, level: mine, danger: r.danger,
+        department: r.department, department_how: r.department_how, review: "checked" });
+      finished(data.ticket, data.called, mine);
+    } catch (e) { idle(button); document.getElementById("send-error").textContent = trouble(e); }
+  });
+  if (urgent) return;
+  const open = document.getElementById("refer-open"), box = document.getElementById("refer"), reason = document.getElementById("reason");
+  open.addEventListener("click", () => { box.hidden = !box.hidden; open.setAttribute("aria-expanded", !box.hidden); if (!box.hidden) reason.focus(); });
+  reason.addEventListener("keydown", (event) => { if (event.key === "Enter") document.getElementById("refer-go").click(); });
+  document.getElementById("refer-go").addEventListener("click", async (event) => {
+    const why = reason.value.trim();
+    if (why.length < 3) { document.getElementById("send-error").textContent = "Write a short reason first. The doctor needs to know why.";
+      reason.setAttribute("aria-invalid", "true"); reason.focus(); return; }
+    const button = event.currentTarget;
+    busy(button, "Sending to the doctor…");
+    try {
+      const sent = await api("/api/refer", { reg_no: cur.reg, level: mine, department: r.department, reason: why });
+      finished(sent.ticket, sent, mine);
+    } catch (e) { idle(button); document.getElementById("send-error").textContent = trouble(e); }
+  });
+}
+
+// Done: the patient's phone moves on by itself (it asks the server every few seconds).
+function finished(ticket, called, level) {
+  const card = cur.card;
+  panel.innerHTML = `
+    ${ids({ ...card, ticket })}
+    <h2><span class="bigcode">${esc(card.code)}</span>Done</h2>
+    <div class="done" role="status">
+      <h3>${called ? `Sent to ${esc(called.doctor)}, ${esc(called.room)}` : `In the waiting room, ticket ${esc(ticket)}`}</h3>
+      <p>Level ${level}: ${LEVEL_NAME[level]}. ${called ? "The patient skips the line." : "The patient waits for their ticket to be called."}</p>
+      <p>The patient's phone has already moved on by itself. It shows ${called ? "the room to go to" : "their ticket and place in line, never the level"}.</p>
+    </div>
+    <button class="go" id="next-patient">Open the next patient</button>`;
+  document.getElementById("next-patient").addEventListener("click", async () => {
+    const data = await api("/api/nurse/patients").catch(() => ({ patients: [] }));
+    if (data.patients.length) openPatient(data.patients[0].reg_no); else { welcome(); history.replaceState(null, "", "/nurse"); }
+  });
+  loadList(); loadLine(); refreshDatabase();
+}
+
+// ---------------------------------------------------------------- the line and the database
+async function loadLine(message) {
+  let data;
+  try { data = await api("/api/line"); } catch (e) { return; }
+  if (message !== undefined) document.getElementById("moved").textContent = message;
+  const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
+  document.getElementById("line").innerHTML = `<p class="hint">Demo clock <b class="mono">${hours}:${minutes}</b> · ${data.patients.length} waiting</p>` +
+    data.patients.map((p) => `<div class="line-row">
+      <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
+      <div><div class="who-line">${esc(p.ticket)} · ${esc(p.who)}</div>
+        <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
+        ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
+    </div>`).join("");
+}
+document.getElementById("next").addEventListener("click", async (event) => {
+  const button = event.currentTarget; busy(button, "Calling…");
+  try { const result = await api("/api/line/next", {});
+    loadLine(result.called ? `Ticket ${result.called.ticket} was called to ${result.called.doctor}, ${result.called.room}.` : "Nobody is waiting.");
+  } catch (e) { document.getElementById("moved").textContent = trouble(e); }
+  idle(button); refreshDatabase();
+});
+document.getElementById("wait").addEventListener("click", async (event) => {
+  const button = event.currentTarget; busy(button, "Moving the clock…");
+  try { const passed = await api("/api/line/wait", {});
+    loadLine("Fifteen minutes passed. " + (passed.called ? `Ticket ${passed.called.ticket} was called, and a` : "A") + " new patient walked in.");
+  } catch (e) { document.getElementById("moved").textContent = trouble(e); }
+  idle(button); refreshDatabase(); loadList();
+});
+
+async function refreshDatabase() {
+  let data;
+  try { data = await api("/api/staff"); } catch (e) { return; }
+  document.getElementById("db-counts").innerHTML = `
+    <div><b>${data.on_duty} of ${data.total}</b><span class="mono">doctors on duty</span></div>
+    <div><b>${data.visits["with nurse"] || 0}</b><span class="mono">waiting for the nurse</span></div>
+    <div><b>${data.visits.waiting}</b><span class="mono">in the line</span></div>
+    <div><b>${data.visits["with doctor"]}</b><span class="mono">with a doctor</span></div>`;
+  const t = data.reviews;
+  document.getElementById("reviews").innerHTML = `<b>Test regime.</b> ` + (t.reviewed === 0
+    ? "No report reviewed yet. Every time the nurse accepts Meddy's report or checks the patient herself, it is counted here."
+    : `The nurse has reviewed ${t.reviewed} of Meddy's report${t.reviewed === 1 ? "" : "s"}: accepted as it was <b>${t.accepted}</b>` +
+      (t.accepted_against_advice ? ` (${t.accepted_against_advice} against Meddy's own advice)` : "") +
+      `, checked in person <b>${t.checked}</b>` +
+      (t.checked ? ` (level changed in ${t.level_changed}, department changed in ${t.department_changed})` : "") + ".");
+  document.getElementById("staff").innerHTML = data.doctors.map((d) => `
+    <tr class="${d.on_duty ? "" : "off"}">
+      <td class="mono">${esc(d.reg_no)}</td><td>${esc(d.name)}</td><td>${esc(d.department)}</td><td>${esc(d.room)}</td>
+      <td class="num">${d.waiting}</td>
+      <td><button class="duty ${d.on_duty ? "on" : ""}" data-reg="${esc(d.reg_no)}" data-on="${d.on_duty}"
+            ${d.reg_no === "DR-1000" ? "disabled" : ""} aria-pressed="${d.on_duty}">${d.on_duty ? "On duty" : "Off duty"}</button></td>
+    </tr>`).join("");
+}
+document.getElementById("staff").addEventListener("click", async (event) => {
+  const button = event.target.closest(".duty"); if (!button || button.disabled) return;
+  await api("/api/staff/duty", { reg_no: button.dataset.reg, on_duty: button.dataset.on !== "true" }).catch(() => {});
+  refreshDatabase();
+});
+document.getElementById("new-day").addEventListener("click", async (event) => {
+  const button = event.currentTarget; busy(button, "Starting a new day…");
+  try { await api("/api/reset", {}); welcome(); history.replaceState(null, "", "/nurse"); loadList(); loadLine(""); refreshDatabase(); }
+  finally { idle(button); }
+});
+
+// A QR code scanned with the phone camera opens /nurse?reg=P-2026-0021 straight on that patient.
+const asked = new URLSearchParams(location.search).get("reg");
+if (asked) openPatient(asked); else welcome();
+loadList(); loadLine(); refreshDatabase();
+setInterval(loadList, 4000);
+setInterval(() => loadLine(), 8000);
+</script>
+</body>
+</html>

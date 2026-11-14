@@ -99,6 +99,15 @@ class Assessment(BaseModel):
     answers: list[Answer] = Field(default=[], max_length=20)
 
 
+class CheckIn(BaseModel):
+    """What the patient's phone sends when check-in is done. The nurse measures the rest on her own screen."""
+    reg_no: str
+    arrival: Literal["Walked in", "Public ambulance", "Private car", "Private ambulance"] = "Walked in"
+    injury: bool = False
+    pain: int = Field(default=0, ge=0, le=10)
+    answers: list[Answer] = Field(default=[], max_length=20)
+
+
 class Joining(BaseModel):
     reg_no: str
     level: int = Field(ge=1, le=5)
@@ -158,6 +167,12 @@ def doctor_page():
     return FileResponse(page, headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/nurse")
+def nurse_page():
+    """The nurse's own screen (static/nurse.html): the patients waiting for her, one card at a time."""
+    return FileResponse(STATIC / "nurse.html", headers={"Cache-Control": "no-cache"})
+
+
 @app.post("/api/register")
 def register(body: Arrival):
     """The patient arrives: give the visit a registration number and build its questionnaire."""
@@ -182,6 +197,47 @@ def follow_up(reg_no: str):
     if visit is None:
         raise HTTPException(404, "No visit with this registration number.")
     return core.follow_up(visit["complaint"], bool(visit["injury"]))
+
+
+@app.post("/api/checkin")
+def checkin(body: CheckIn):
+    """The patient's phone finishes check-in. The patient now waits for the nurse, and the phone shows a short
+    code; the nurse finds the patient by it on her own screen. Refused (409) once the nurse has seen them."""
+    open_visit(body.reg_no)
+    try:
+        code = db.check_in(body.reg_no, body.arrival, body.injury, body.pain, [a.model_dump() for a in body.answers])
+    except db.AlreadyWithNurse:
+        raise HTTPException(409, "The nurse has already seen this patient.")
+    except db.AlreadySent:
+        raise HTTPException(409, "This patient has already been sent to a doctor.")
+    if code is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return {"reg_no": body.reg_no, "code": code, "status": "nurse"}
+
+
+@app.get("/api/nurse/patients")
+def nurse_patients():
+    """The nurse's list: patients who finished check-in and wait for her, danger signs first."""
+    return db.nurse_patients()
+
+
+@app.get("/api/nurse/patient/{reg_no}")
+def nurse_patient(reg_no: str):
+    """One patient's card for the nurse: the complaint, how they came, and every answer from check-in."""
+    card = db.nurse_card(reg_no)
+    if card is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return card
+
+
+@app.get("/api/nurse/summary/{reg_no}")
+def nurse_summary(reg_no: str):
+    """Two sentences from the language model that sum up what the patient reported. The page asks for it apart
+    from the card, so the nurse never waits for the model; "source" is "none" when there is no summary."""
+    card = db.nurse_card(reg_no)
+    if card is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return core.nurse_summary(reg_no, card["complaint"], card["age"], card["sex"], card["answers"], card["injury"])
 
 
 @app.post("/api/triage")

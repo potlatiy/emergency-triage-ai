@@ -306,7 +306,7 @@ def test_the_patient_phone_never_shows_the_level():
     reg = assessed_visit("headache", 30, "Female")
     client.post("/api/line/join", json={"reg_no": reg, "level": 4})
     me = client.get(f"/api/me/{reg}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code"}
     assert not all_keys(me) & HIDDEN_FROM_PATIENT
     in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
     assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
@@ -772,8 +772,10 @@ def test_nothing_the_ai_returns_is_called_a_diagnosis():
 
 def test_the_screens_say_that_meddy_does_not_diagnose():
     page = client.get("/").text
-    assert "Meddy never gives a diagnosis." in page and "Meddy does not diagnose." in page
+    assert "Meddy never gives a diagnosis." in page
     assert "filed under" not in page                          # the patient is not shown a department as a verdict
+    nurse = client.get("/nurse").text                         # Meddy's report is on the nurse's own screen now
+    assert "Meddy never gives a diagnosis." in nurse and "Meddy does not diagnose." in nurse
     assert "Meddy never gives a diagnosis" in client.get("/doctor").text
 
 
@@ -953,3 +955,84 @@ def test_the_mild_flag_is_the_part_between_the_two_rules():
     assert core.second_check([0.0, 0.05, 0.50, 0.45, 0.0], 4) == "strong"
     assert core.second_check(odds, 3) is None and core.second_check(None, 3) is None
 
+
+
+# ---------------------------------------------------------------- one screen per role: phone, nurse, doctor
+
+def checked_in(complaint="chest pain since this morning", danger_yes=False, **extra):
+    """Register and finish check-in from the patient's phone, as the page does. Returns the registration number."""
+    reg = new_visit(complaint)
+    answers = [{"question": "Does the pain spread to your arm, jaw or back?", "answer": "Yes" if danger_yes else "No",
+                "kind": "danger"},
+               {"question": "What does the pain feel like?", "answer": "Pressure or tightness", "kind": "extra",
+                "topic": "feel"}]
+    body = {"reg_no": reg, "arrival": "Private car", "injury": False, "pain": 5, "answers": answers, **extra}
+    assert client.post("/api/checkin", json=body).status_code == 200
+    return reg
+
+
+def test_check_in_puts_the_patient_on_the_nurses_list_and_the_phone_shows_a_code():
+    reg = checked_in()
+    me = client.get(f"/api/me/{reg}").json()
+    assert me["status"] == "nurse" and me["code"] == reg.rsplit("-", 1)[-1] and me["ticket"] is None
+    assert not all_keys(me) & HIDDEN_FROM_PATIENT
+    waiting_for_nurse = client.get("/api/nurse/patients").json()["patients"]
+    assert [p["reg_no"] for p in waiting_for_nurse] == [reg] and waiting_for_nurse[0]["code"] == me["code"]
+    assert reg not in [p["reg_no"] for p in client.get("/api/line").json()["patients"]]     # not in the line yet
+
+
+def test_the_nurses_card_has_what_the_patient_reported():
+    card = client.get(f"/api/nurse/patient/{checked_in(danger_yes=True)}").json()
+    assert card["complaint"] == "chest pain since this morning" and card["arrival"] == "Private car"
+    assert card["pain"] == 5 and card["pain_word"] == "Has pain" and card["status"] == "nurse"
+    assert [a["answer"] for a in card["answers"]] == ["Yes", "Pressure or tightness"]
+    assert client.get("/api/nurse/patient/P-2026-9999").status_code == 404
+
+
+def test_a_danger_sign_puts_the_patient_first_on_the_nurses_list():
+    calm, worried = checked_in("sore throat"), checked_in(danger_yes=True)
+    order = [p["reg_no"] for p in client.get("/api/nurse/patients").json()["patients"]]
+    assert order == [worried, calm]
+
+
+def test_the_nurse_assesses_and_the_phone_moves_on_by_itself():
+    reg = checked_in()
+    card = client.get(f"/api/nurse/patient/{reg}").json()
+    result = client.post("/api/triage", json={"reg_no": reg, "arrival": card["arrival"], "injury": card["injury"],
+                                              "pain": card["pain"], "vitals": "normal",
+                                              "answers": card["answers"]}).json()
+    client.post("/api/line/join", json={"reg_no": reg, "level": max(result["level"], 3), "review": "approved"})
+    assert client.get(f"/api/me/{reg}").json()["status"] == "waiting"
+    assert reg not in [p["reg_no"] for p in client.get("/api/nurse/patients").json()["patients"]]
+    assert len(db.answers_for(reg)) == 2                         # the nurse's step kept the patient's answers
+    assert client.post("/api/checkin", json={"reg_no": reg}).status_code == 409     # check-in is over
+
+
+def test_check_in_twice_before_the_nurse_replaces_the_answers_and_keeps_the_place():
+    reg = checked_in()
+    first = db.visit_for(reg)["checked_in"]
+    db.pass_time(15)
+    assert client.post("/api/checkin", json={"reg_no": reg, "answers": []}).status_code == 200
+    assert db.visit_for(reg)["checked_in"] == first and db.answers_for(reg) == []
+    assert client.post("/api/checkin", json={"reg_no": "P-2026-9999"}).status_code == 404
+
+
+def test_the_nurses_summary_is_checked_and_is_none_without_the_model(monkeypatch):
+    reg = checked_in()
+    monkeypatch.setattr(core, "OLLAMA_URL", "http://127.0.0.1:9/api/chat")       # nothing listens there
+    assert client.get(f"/api/nurse/summary/{reg}").json() == {"source": "none", "text": None}
+    assert client.get("/api/nurse/summary/P-2026-9999").status_code == 404
+    complaint = "chest pain since this morning"
+    ok = "The patient has had chest pain since this morning. It feels like pressure."
+    assert core.checked_summary(ok, complaint) == ok
+    for bad in ["The patient may be having a heart attack.",                 # a condition the patient did not name
+                "You should call an ambulance.",                             # advice
+                "One. Two. Three sentences.",                                # too long
+                ""]:
+        with pytest.raises(ValueError):
+            core.checked_summary(bad, complaint)
+
+
+def test_the_nurse_page_is_served():
+    page = client.get("/nurse")
+    assert page.status_code == 200 and "Nurse" in page.text
