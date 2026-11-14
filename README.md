@@ -1,14 +1,15 @@
-# Triage Queue Assistant: AI sorts the waiting room, the nurse decides
+# Triage Queue Assistant: the nurse decides, the app shortens the wait after triage
 
 **Track:** Health
 **Team:** Yegor (backend), Denys (project decisions), Ostap (front end)
 
 *This project is a prototype and is not medical advice.*
 
-> **In one sentence:** our model is worse than nurses at giving emergency patients an urgency level
-> (68% right against 85%), so the nurse always decides. But used to sort a crowded waiting room it moves the most
-> urgent patients forward (88 minutes of waiting down to 24 in our simulation), and as a safety net it flags 107 of
-> the 131 patients that nurses rated less urgent than they really were.
+> **In one sentence:** our model is worse than nurses at rating emergency patients (68% right against 85%), so the
+> nurse always decides. But the nurse's level decides who waits for hours after triage, and about 1 patient in 10 is
+> rated too low. As a second check our model flags 107 of the 131 patients that nurses rated too low. Around it the
+> app handles the long wait: a line ordered by urgency (88 down to 13 minutes for the most urgent patients in our
+> simulation), the right doctor, and a note so the patient tells their story once.
 
 ![Simulated waiting time for the most urgent patients under four queue orders](images/waiting.png)
 
@@ -26,6 +27,10 @@ A triage nurse gives every arriving patient an urgency level from 1 (most urgent
 should follow those levels. When a patient is rated too low, someone who needs care now waits behind minor cases.
 In the study our data comes from, trained nurses rated about 1 patient in 10 too low.
 
+In the usual flow the wait before triage is short (minutes, up to half an hour). The long wait, which can take hours
+for a non-urgent case, comes after triage, when the patient has a level and is waiting for a doctor. Our app works
+mostly on that second wait.
+
 ## Our idea
 
 Our project helps **the nurse in a busy emergency department** by taking **a patient's complaint and the vital
@@ -36,15 +41,23 @@ How a visit would work, and how much of it we built and tested:
 
 | Step | What happens | Status |
 |---|---|---|
-| 1. Registration | The patient scans a QR code (or a nurse helps) and gives age, what hurts, why, and what could have caused it. The nurse adds pulse and other vital signs. | Built as a demo step. There is no real QR scanner. |
+| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they scan a QR code (or a nurse helps) and give age, what hurts, why, and what could have caused it. | Built as a demo step. There is no real QR scanner. |
 | 2. Follow-up questions | The AI asks one or two questions about this complaint. | Built, **not tested**. The answers go to the doctor and never change the level. |
-| 3. Suggested level | The AI suggests a level from 1 to 5 with the probability of each level. When no level is likely enough, it says it is not sure. | **Built and tested.** |
-| 4. Number on the phone | The patient sees their place in line, never a promised time. | Built as a demo. |
-| 5. Nurse decides | The nurse sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. | Second-look flag **tested**. The screen is a demo. |
+| 3. Suggested level | At triage the nurse measures vital signs and enters them. The AI suggests a level from 1 to 5 with the probability of each level. When no level is likely enough, it says it is not sure. | **Built and tested.** |
+| 4. Number on the phone | The patient sees their ticket number and place in line, never their level and never a promised time. | Designed so. In the demo all views share one screen, so the level is still visible there. |
+| 5. Nurse decides | The nurse sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. In a critical case she sends the patient straight to a doctor herself, skipping the line, and records the reason. | Second-look flag **tested**. The screen is a demo. Levels 1 and 2 already go straight to the resuscitation team automatically. Choosing the doctor and writing the reason by hand is **not built yet**. |
 | 6. Order of the line | Levels 1 and 2 always go first. A less urgent patient moves up one level for every 45 minutes waited, so nobody is stuck at the back. | Plain rules. Ordering effect **simulated**. |
 | 7. Doctor gets the note | When the patient is called, the system matches them to a department and to the least busy doctor on duty, and prepares a note for that doctor: complaint, age and sex, urgency level (and whether the AI was not sure), vital signs, pain, and the answers from check-in. The patient tells their story once. | Built as a demo: the note appears on screen, there is no separate doctor screen yet. The department choice is **tested**, the note itself is not. |
 
 The line is ordered by plain rules. The AI only supplies each patient's level.
+
+**Who sees what.** The level from 1 to 5 is shown only to staff, so a patient is not frightened by a number.
+
+| Person | Sees |
+|---|---|
+| Patient | Ticket number, place in line, what happens next. Never the level, the colours or the AI's probabilities. |
+| Nurse | The level, the probability of each level, the second-look flags and the whole line. She decides. |
+| Doctor | The note on the patient, including the level. |
 
 ## What we built
 
@@ -88,7 +101,8 @@ Our own idea. Three things go beyond a standard classifier:
 - **Safety-first decisions.** The model treats rating a patient too low as three times as costly as rating
   them too high.
 - **A different job for the AI.** When it turned out the model could not beat nurses, we stopped asking it to
-  replace them. We tested it as a way to sort the line and as a second check on them instead.
+  replace them and tested it as a second check on them instead. The queue simulation also shows what a line sorted
+  by the AI's own levels would do.
 
 ## How it works
 
@@ -118,8 +132,10 @@ waited this long to be seen:
 | By the nurses' levels | 13 minutes |
 | By the experts' levels | 7 minutes |
 
-Ordering by urgency matters more than who does it. The AI is not as good as a nurse, but a rough level is already
-much better than no level.
+Ordering by urgency matters more than who does it. In our design the nurse sets the level, so the row to read is
+"By the nurses' levels" (88 down to 13 minutes). The AI row shows what a line sorted by the AI's own levels would do,
+which we do not propose because the AI is worse than a nurse at the level. The experts' row is the best possible case.
+The second check exists to move the nurses' levels closer to it. We did not simulate the second check itself.
 
 ### 2. How good is the level itself
 
@@ -160,13 +176,13 @@ one of nine departments ourselves (`data/diagnosis_departments.csv`, reproduce w
 
 | Method | Picks the right department |
 |---|---|
-| Baseline: always gastroenterology and surgery | 21% |
-| Key-word rule on the complaint | 67% |
-| Trained model | 70% |
-| What the digital hospital uses: model when 70%+ sure, key-word rule otherwise | 69% |
+| Baseline: always gastroenterology and surgery | 22% |
+| Key-word rule on the complaint | 66% |
+| Trained model | 71% |
+| What the digital hospital uses: model when 70%+ sure, key-word rule otherwise | 68% |
 
-The model's lead over the rule is 3.7 points (95% range 1.4 to 6.1). It is weaker than the rule for respiratory,
-gynaecology and general medicine patients. The right department is among its top three suggestions 88% of the time. The model was trained on complaints as nurses write them, so it decides only when it is at
+The model's lead over the rule is 4.3 points (95% range 2.1 to 6.6). It is weaker than the rule for respiratory and
+gynaecology patients. The model was trained on complaints as nurses write them, so it decides only when it is at
 least 70% sure (about half of patients).
 
 ### Where it fails
@@ -183,9 +199,12 @@ least 70% sure (about half of patients).
 - One country, 1,267 patients and only 26 at level 1.
 - **The data is not from patients typing for themselves.** The complaints in our data were written by nurses in
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
+- Hiding the level from patients is our design choice to avoid panic. We did not test how patients react.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
+- **Patients may exaggerate or play things down.** Someone who writes "I am dying" about a sore finger can jump the line, and someone who plays down chest pain can be missed. The model cannot tell. We reduce the risk in three ways: vital signs are measured and not self-reported, the nurse sees every answer and decides, and the check-in screen asks people to describe what they feel and not what they fear. We did not test how well this works. The half-level boost for a "yes" to a danger question could be gamed.
+- **Who measures the vital signs is not solved.** In the demo the nurse types them in. In a real department it could be a self-service blood pressure cuff and finger pulse meter, or an assistant at the door, with people who answered "yes" to a danger question measured first. None of this is built or tested.
 - The waiting times are a simulation with invented arrivals.
-- The department answer key is our own diagnosis-to-department table. 83 rarer diagnoses matched no rule and default to general medicine. We read every row and corrected 14 by hand, but no clinician has reviewed it.
+- The department answer key is our own diagnosis-to-department table. 87 rarer diagnoses matched no rule and default to general medicine, and the table has not yet been reviewed by hand.
 - The three-to-one safety weighting and the 45-minute rule are our choices.
 - We did not test whether real nurses would act on the flags or the suggested order.
 - The QR registration, phone screen and digital hospital are demonstrations, not tried in a real department.
