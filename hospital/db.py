@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS visits (
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT NOT NULL REFERENCES visits(reg_no),
-    question TEXT NOT NULL, answer TEXT, kind TEXT NOT NULL);
+    question TEXT NOT NULL, answer TEXT, kind TEXT NOT NULL, topic TEXT);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 """
 
@@ -104,15 +104,18 @@ def register(complaint, age, sex):
 def save_answers(reg_no, answers, injury):
     with _lock, _conn:
         _conn.execute("DELETE FROM answers WHERE visit_reg = ?", (reg_no,))
-        _conn.executemany("INSERT INTO answers (visit_reg, question, answer, kind) VALUES (?, ?, ?, ?)",
-                          [(reg_no, a["question"], a.get("answer"), a["kind"]) for a in answers])
+        _conn.executemany("INSERT INTO answers (visit_reg, question, answer, kind, topic) VALUES (?, ?, ?, ?, ?)",
+                          [(reg_no, a["question"], a.get("answer"), a["kind"], a.get("topic")) for a in answers])
         _conn.execute("UPDATE visits SET injury = ? WHERE reg_no = ?", (int(injury), reg_no))
 
 
 def answers_for(reg_no):
+    """The answers of one visit. AI-written questions carry a history topic ("onset") and its label ("Started"),
+    so the doctor's screen can show them as a short overview."""
     with _lock:
-        return [dict(r) for r in _conn.execute(
-            "SELECT question, answer, kind FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
+        rows = [dict(r) for r in _conn.execute(
+            "SELECT question, answer, kind, topic FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
+    return [{**r, "label": core.topic_label(r["topic"])} for r in rows]
 
 
 def save_assessment(reg_no, ai_level, vitals, alert, pain):
@@ -310,6 +313,7 @@ def set_duty(reg_no, on_duty):
 # Create the tables on first use, and rebuild them if the file is from an older version of the code.
 with _conn:
     _conn.executescript(SCHEMA)
-_columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")}
-if not {"department", "referral_reason"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+_columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")} | {
+    "answers." + r["name"] for r in _conn.execute("PRAGMA table_info(answers)")}
+if not {"department", "referral_reason", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()

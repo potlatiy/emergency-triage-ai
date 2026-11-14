@@ -165,6 +165,65 @@ def test_the_api_rejects_impossible_input():
     assert client.post("/api/staff/duty", json={"reg_no": "DR-1000", "on_duty": False}).status_code == 400
 
 
+def test_follow_up_questions_come_from_their_own_request(monkeypatch):
+    """Registration with the model off answers at once; the AI's questions come from a separate request."""
+    reg_no = client.post("/api/register", json={"complaint": "chest pain", "age": 60, "use_model": False}).json()["reg_no"]
+    monkeypatch.setattr(core, "_written", {})
+    monkeypatch.setattr(core, "questions_from_model", lambda complaint, skip=(): [
+        {"question": "When did the chest pain start?", "topic": "onset"},
+        {"question": "Have you had this chest pain before?", "topic": "before"}])
+    answer = client.get(f"/api/follow-up/{reg_no}").json()
+    assert answer["source"] == "ai" and len(answer["questions"]) == core.FOLLOW_UPS == 2
+    first = answer["questions"][0]
+    assert first == {"question": "When did the chest pain start?", "topic": "onset", "kind": "extra", "label": "Started",
+                     "choices": ["Under an hour ago", "A few hours ago", "Yesterday", "Longer ago"]}
+    assert client.get("/api/follow-up/P-0000-0000").status_code == 404
+
+
+def test_standard_questions_when_the_language_model_is_off(monkeypatch):
+    def switched_off(complaint, skip=()):
+        raise OSError("connection refused")
+    monkeypatch.setattr(core, "_written", {})
+    monkeypatch.setattr(core, "questions_from_model", switched_off)
+    reg_no = client.post("/api/register", json={"complaint": "chest pain", "age": 60, "use_model": False}).json()["reg_no"]
+    answer = client.get(f"/api/follow-up/{reg_no}").json()
+    assert answer["source"] == "list"
+    assert [q["topic"] for q in answer["questions"]] == ["onset", "course"]
+    assert all(q["choices"] and q["question"].endswith("?") for q in answer["questions"])
+
+
+def test_a_topic_the_complaint_already_answers_is_not_asked():
+    assert core.already_answered("headache for three days, getting worse") >= {"onset", "course"}
+    assert "background" in core.already_answered("i feel unwell")           # general medicine asks it as a danger sign
+    assert core.already_answered("chest pain") == set()
+    topics = [q["topic"] for q in core.follow_up("headache for three days, getting worse", use_model=False)["questions"]]
+    assert topics == ["medicine", "before"]
+
+
+def test_the_plain_code_check_on_what_the_model_writes():
+    good = [{"topic": "onset", "question": "When did the pain start?"}, {"topic": "before", "question": "Have you had it before?"}]
+    assert [q["topic"] for q in core.checked_questions(good)] == ["onset", "before"]
+    for bad in ([good[0], good[0]],                                                      # the same topic twice
+                [good[0], {"topic": "before", "question": "You should call an ambulance?"}],   # advice
+                [good[0], {"topic": "weather", "question": "Is it raining?"}],            # not one of our topics
+                [good[0], {"topic": "before", "question": "Tell me more"}],               # not a question
+                "nonsense"):
+        with pytest.raises(ValueError):
+            core.checked_questions(bad)
+    with pytest.raises(ValueError):
+        core.checked_questions(good, skip={"onset"})                                      # a topic that is not allowed
+
+
+def test_the_topic_of_an_answer_reaches_the_doctor():
+    reg_no = new_visit()
+    answers = [{"question": "When did the chest pain start?", "answer": "Under an hour ago", "kind": "extra", "topic": "onset"},
+               {"question": "Does the pain spread to your arm, jaw or back?", "answer": "Yes", "kind": "danger"}]
+    client.post("/api/triage", json={"reg_no": reg_no, "complaint": "chest pain", "age": 67, "sex": "Male", "answers": answers})
+    saved = db.answers_for(reg_no)
+    assert saved[0]["topic"] == "onset" and saved[0]["label"] == "Started"
+    assert saved[1]["topic"] is None and saved[1]["label"] is None
+
+
 def test_the_page_is_served():
     page = client.get("/")
     assert page.status_code == 200 and "Digital hospital" in page.text
