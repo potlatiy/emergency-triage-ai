@@ -637,3 +637,16 @@ def test_insurance_never_changes_the_level_or_the_place_in_line():
         joined = client.post("/api/line/join", json={"reg_no": reg_no, "level": result["level"]}).json()
         places.append((result["level"], result["department"], next(p["position"] for p in joined["patients"] if p["reg_no"] == reg_no)))
     assert places[0] == places[1] == places[2]
+
+
+# ---------------------------------------------------------------- the QR code's address
+
+def test_address_is_empty_unless_the_lan_is_switched_on(monkeypatch):
+    monkeypatch.setattr(server, "LAN", False)
+    assert TestClient(server.app).get("/api/address").json() == {"url": None}
+
+
+def test_address_points_phones_to_this_computer(monkeypatch):
+    monkeypatch.setattr(server, "LAN", True)
+    monkeypatch.setattr(server, "lan_ip", lambda: "192.168.1.20")
+    assert TestClient(server.app).get("/api/address").json() == {"url": "http://192.168.1.20:8000/"}

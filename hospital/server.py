@@ -1,12 +1,16 @@
 """The digital hospital's web server.
 
 Run:   python hospital/server.py      then open http://localhost:8000
+       MEDDY_LAN=1 python hospital/server.py   also lets phones on the same Wi-Fi open it (the QR code
+                                               on the entrance step then points to this computer)
 
 It serves the walk-through page (static/index.html), the doctor's screen at /doctor (static/doctor.html)
 and a small API the pages talk to.
 Everything is kept in the internal database, hospital.db (see db.py).
 """
 
+import os
+import socket
 from pathlib import Path
 from typing import Literal
 
@@ -20,7 +24,21 @@ import core
 import db
 
 STATIC = Path(__file__).parent / "static"
+PORT = 8000
+# Off by default: the demo stays on this computer unless someone starts it with MEDDY_LAN=1.
+LAN = os.environ.get("MEDDY_LAN") == "1"
 app = FastAPI(title="Digital hospital")
+
+
+def lan_ip():
+    """This computer's address on the local network, or None. Connecting a UDP socket sends nothing."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("10.255.255.255", 1))
+            ip = probe.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") else ip
 
 
 Sex = Literal["Female", "Male"]
@@ -255,8 +273,15 @@ def reset():
     return db.line()
 
 
+@app.get("/api/address")
+def address():
+    """Where a phone on the same Wi-Fi can open the hospital, for the QR code. None unless MEDDY_LAN=1."""
+    ip = lan_ip() if LAN else None
+    return {"url": f"http://{ip}:{PORT}/" if ip else None}
+
+
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 if __name__ == "__main__":
     db.reset()                 # every start of the server begins a fresh demonstration day
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+    uvicorn.run(app, host="0.0.0.0" if LAN else "127.0.0.1", port=PORT, log_level="warning")
