@@ -142,6 +142,15 @@ def refer(body: Referral):
     return db.refer(body.reg_no, body.level, body.reason, body.department)
 
 
+@app.get("/api/doctor/{doctor_reg}/patients")
+def doctor_patients(doctor_reg: str):
+    """The doctor's screen: every patient now with this doctor, with the full card."""
+    screen = db.doctor_patients(doctor_reg)
+    if screen is None:
+        raise HTTPException(404, "No doctor with this registration number.")
+    return screen
+
+
 @app.get("/api/staff")
 def staff():
     return db.staff()

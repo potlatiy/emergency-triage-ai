@@ -266,6 +266,29 @@ def _pick_doctor(patient):
     return _on_duty("Resuscitation team")[0], "No doctor is on duty, so the resuscitation team takes the patient."
 
 
+def doctor_patients(doctor_reg):
+    """The doctor's screen: who the doctor is, and the full card of every patient now with them.
+
+    Unlike the patient's phone, the doctor sees everything: the nurse's level, the AI's level, the vital
+    signs and the answers. Patients the nurse sent straight in come first, then the most urgent."""
+    with _lock:
+        doctor = _conn.execute("SELECT reg_no, name, department, room FROM doctors WHERE reg_no = ?",
+                               (doctor_reg,)).fetchone()
+        if doctor is None:
+            return None
+        clock = _meta("clock")
+        rows = [dict(r) for r in _conn.execute(
+            "SELECT * FROM visits WHERE status = 'with doctor' AND doctor_reg = ?", (doctor_reg,))]
+    rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
+    return {"doctor": dict(doctor), "patients": [
+        {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
+         "level": p["level"], "ai_level": p["ai_level"],
+         "vitals": json.loads(p["vitals"]) if p["vitals"] else None,      # None for visits from before this column
+         "answers": answers_for(p["reg_no"]), "referred": bool(p["referred"]),
+         "referral_reason": p["referral_reason"], "waited": clock - p["arrived"]}
+        for p in rows]}
+
+
 def staff():
     with _lock:
         doctors = [dict(r) for r in _conn.execute("SELECT * FROM doctors ORDER BY reg_no")]

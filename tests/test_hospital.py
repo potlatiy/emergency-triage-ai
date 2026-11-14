@@ -260,3 +260,47 @@ def test_a_referral_at_level_1_or_2_always_goes_to_resuscitation(level):
     reg = new_visit("blurry vision", 40, "Male")
     sent = refer(reg, level=level, reason="Collapsed, pulse not felt", department="Eye, ear, nose and throat").json()
     assert sent["doctor_reg"] == "DR-1000" and sent["ticket"].startswith("A")    # a ticket is given on the way
+
+
+# ---------------------------------------------------------------- the doctor's screen
+
+def test_the_doctor_sees_only_their_patients_referred_first():
+    # A: assessed at the nurse station, joins the line at level 2, then is called to the resuscitation team
+    called = new_visit("chest pain", 67, "Male")
+    questions = core.questionnaire("chest pain", use_model=False)["questions"]
+    answers = [{**q, "answer": "Yes" if i == 0 else "No"} for i, q in enumerate(questions)]
+    client.post("/api/triage", json={"reg_no": called, "complaint": "chest pain", "age": 67, "sex": "Male",
+                                     "vitals": "unstable", "answers": answers})
+    client.post("/api/line/join", json={"reg_no": called, "level": 2})
+    assert client.post("/api/line/next").json()["called"]["reg_no"] == called
+    # B: sent straight in by the nurse at level 1. C: sent to cardiology, so not on this doctor's screen.
+    referred = new_visit("collapsed", 70, "Female")
+    refer(referred, level=1, reason="Collapsed, pulse not felt")
+    elsewhere = new_visit("palpitations", 55, "Male")
+    assert refer(elsewhere, department="Cardiology").json()["doctor_reg"] != "DR-1000"
+
+    screen = client.get("/api/doctor/DR-1000/patients").json()
+    assert screen["doctor"] == {"reg_no": "DR-1000", "name": "Resuscitation team",
+                                "department": "Resuscitation team", "room": "Resus bay"}
+    assert [p["reg_no"] for p in screen["patients"]] == [referred, called]
+    first, second = screen["patients"]
+    assert first["referred"] is True and first["referral_reason"] == "Collapsed, pulse not felt"
+    assert first["vitals"] is None and first["answers"] == []           # never went through the nurse station
+    assert second["referred"] is False and second["level"] == 2 and 1 <= second["ai_level"] <= 5
+    assert second["vitals"]["SBP"] == 88 and second["answers"][0]["answer"] == "Yes"
+    assert client.get("/api/doctor/DR-9999/patients").status_code == 404
+
+
+def test_an_old_style_visit_still_works_everywhere():
+    """The current page joins the line without ai_level or vitals. Nothing may break for such a visit."""
+    reg = new_visit("headache", 30, "Female")
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3, "danger": False})
+    assert client.get(f"/api/me/{reg}").json()["status"] == "waiting"
+    while (called := client.post("/api/line/next").json()["called"])["reg_no"] != reg:
+        pass
+    me = client.get(f"/api/me/{reg}").json()
+    assert me["status"] == "called" and me["doctor"] == called["doctor"]
+    card = next(p for p in client.get(f"/api/doctor/{called['doctor_reg']}/patients").json()["patients"]
+                if p["reg_no"] == reg)
+    assert card["ai_level"] is None and card["vitals"] is None and card["referred"] is False
+    assert card["referral_reason"] is None and card["level"] == 3
