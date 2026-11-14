@@ -256,7 +256,7 @@ EXAMPLES = [
     ["dizziness", 58, "Female", "Private car", False, "Alert", 0, 138, 85, 88, 18, 36.6, None, "Not given yet"],
 ]
 
-with gr.Blocks(title="Triage second check") as demo:
+with gr.Blocks(title="Meddy: second check") as demo:
     gr.Markdown("# A second check for emergency triage\n"
                 "The nurse records the complaint and vital signs at the door. The AI suggests an urgency level, "
                 "warns when a patient looks more urgent than the level they were given, and the electronic line "
