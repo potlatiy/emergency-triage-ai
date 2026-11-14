@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS visits (
     ai_odds TEXT, second_check TEXT,
     ai_department TEXT, quick_advised INTEGER, review TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
+    arrival TEXT, pain INTEGER, checked_in INTEGER,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
     person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
@@ -219,6 +220,73 @@ def save_answers(reg_no, answers, injury):
         _conn.execute("UPDATE visits SET injury = ? WHERE reg_no = ?", (int(injury), reg_no))
 
 
+def code_for(reg_no):
+    """The short code the patient's phone shows and the nurse looks for: the visit's number, "P-2026-0021" → "0021"."""
+    return reg_no.rsplit("-", 1)[-1]
+
+
+class AlreadyWithNurse(Exception):
+    """The nurse has already assessed this patient, so check-in cannot be done again."""
+
+
+def check_in(reg_no, arrival, injury, pain, answers):
+    """The patient's phone finishes check-in: the answers are kept and the patient waits for the nurse.
+
+    Nothing about urgency is worked out here. The nurse measures the vital signs on her own screen, and only
+    then does Meddy suggest a level. Doing check-in again before the nurse comes (a reload, a changed answer)
+    replaces the answers and keeps the time the patient first reached the nurse's list.
+    Returns the code, None for an unknown visit, or raises AlreadyWithNurse / AlreadySent."""
+    with _lock, _conn:
+        visit = _still_at_the_desk(reg_no)
+        if visit is None:
+            return None
+        if visit["status"] == "waiting":
+            raise AlreadyWithNurse(reg_no)
+        _conn.execute("DELETE FROM answers WHERE visit_reg = ?", (reg_no,))
+        _conn.executemany("INSERT INTO answers (visit_reg, question, answer, kind, topic) VALUES (?, ?, ?, ?, ?)",
+                          [(reg_no, a["question"], a.get("answer"), a["kind"], a.get("topic")) for a in answers])
+        _conn.execute("UPDATE visits SET arrival = ?, injury = ?, pain = ?, status = 'nurse', "
+                      "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
+                      (arrival, int(injury), pain, _meta("clock"), reg_no))
+    return code_for(reg_no)
+
+
+def _danger_yes(reg_no):
+    return _conn.execute("SELECT COUNT(*) AS n FROM answers WHERE visit_reg = ? AND kind = 'danger' AND answer = 'Yes'",
+                         (reg_no,)).fetchone()["n"]
+
+
+def nurse_patients():
+    """The nurse's list: everyone who finished check-in and waits for her. A patient who answered yes to a
+    danger sign comes first, then whoever has waited longest. No level yet: nothing has been measured."""
+    with _lock:
+        clock = _meta("clock")
+        rows = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE status = 'nurse'")]
+        for row in rows:
+            row["danger"] = _danger_yes(row["reg_no"])
+    rows.sort(key=lambda p: (-p["danger"], p["checked_in"], p["reg_no"]))
+    return {"clock": clock, "patients": [
+        {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "complaint": p["complaint"], "age": p["age"],
+         "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"]}
+        for p in rows]}
+
+
+def nurse_card(reg_no):
+    """Everything the nurse needs to see one patient before measuring: who, what they reported and how they came.
+    None for an unknown visit."""
+    visit = visit_for(reg_no)
+    if visit is None:
+        return None
+    with _lock:
+        clock = _meta("clock")
+    return {"reg_no": reg_no, "code": code_for(reg_no), "status": visit["status"], "complaint": visit["complaint"],
+            "age": visit["age"], "sex": visit["sex"], "arrival": visit["arrival"] or "Walked in",
+            "injury": bool(visit["injury"]), "pain": visit["pain"] or 0, "pain_word": core.pain_word(visit["pain"]),
+            "insurance": visit["insurance"], "card_end": visit["card_end"], "ticket": visit["ticket"],
+            "waited": None if visit["checked_in"] is None else clock - visit["checked_in"],
+            "answers": answers_for(reg_no)}
+
+
 def answers_for(reg_no):
     """The answers of one visit. AI-written questions carry a history topic ("onset") and its label ("Started"),
     so the doctor's screen can show them as a short overview."""
@@ -351,8 +419,10 @@ def where_is(reg_no):
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
-          "day": today}
-    if visit["status"] == "waiting":
+          "day": today, "code": code_for(reg_no)}
+    if visit["status"] == "nurse":
+        me.update(status="nurse")          # check-in done: the phone shows the code for the nurse
+    elif visit["status"] == "waiting":
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
         me.update(status="waiting", position=position, ahead=position - 1)
     elif visit["status"] == "with doctor":
@@ -541,7 +611,8 @@ def staff():
     regular = [d for d in doctors if d["department"] != "Resuscitation team"]
     return {"doctors": [{**d, "on_duty": bool(d["on_duty"])} for d in doctors],
             "on_duty": sum(d["on_duty"] for d in regular), "total": len(regular),
-            "visits": {"registered": sum(counts.values()), "waiting": counts.get("waiting", 0),
+            "visits": {"registered": sum(counts.values()), "with nurse": counts.get("nurse", 0),
+                       "waiting": counts.get("waiting", 0),
                        "with doctor": counts.get("with doctor", 0), "done": counts.get("done", 0)},
             "people": people, "reviews": review_stats()}
 
@@ -559,5 +630,5 @@ with _conn:
     _conn.executescript(SCHEMA)
 _columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")} | {
     "answers." + r["name"] for r in _conn.execute("PRAGMA table_info(answers)")}
-if not {"department", "referral_reason", "second_check", "person", "review", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+if not {"department", "referral_reason", "second_check", "person", "review", "checked_in", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()

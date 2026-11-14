@@ -450,6 +450,73 @@ def questionnaire(complaint, injury=False, use_model=True):
             "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL}}
 
 
+# ---------------------------------------------------------------- the nurse's summary (language model)
+# When the nurse opens a patient, the language model sums up what the patient tapped at check-in in two short
+# sentences. It is information only, shown next to the patient's own answers: it never sets the level, the
+# department or the place in line. The same rules as for the questions hold, checked again in plain code.
+
+SUMMARY_SYSTEM_PROMPT = """You help a triage nurse in a hospital emergency department. You get what one patient reported at check-in.
+Write a summary for the nurse: at most two short sentences, at most 40 words, in the third person ("The patient ...").
+
+Rules:
+- Only restate what the patient reported. Add nothing and leave out nothing important.
+- Never name a disease or a diagnosis, never guess the cause, never give advice, never say how serious it is.
+- Plain English, no lists, no headings."""
+SUMMARY_MAX_WORDS = 50
+_summaries = {}        # one summary per visit and set of answers, so the nurse's screen can ask again for free
+
+
+def checked_summary(text, complaint=""):
+    """The summary as it may be shown, or ValueError. Too long, advice, a diagnosis or a condition the patient
+    did not name themselves: thrown away, and the nurse sees the patient's own answers only."""
+    text = " ".join(str(text or "").split())
+    if not text or len(text.split()) > SUMMARY_MAX_WORDS or len(re.findall(r"[.!?](\s|$)", text)) > 2:
+        raise ValueError("not a short summary")
+    if _BANNED.search(text):
+        raise ValueError("advice or personal data")
+    said = lambda name: re.search(rf"\b{re.escape(name)}\b", complaint, re.I)       # noqa: E731
+    if any(not said(found.group(0)) for found in _NAMES_A_CONDITION.finditer(text)):
+        raise ValueError("names a condition")
+    return text
+
+
+def _report_for_summary(complaint, age, sex, answers, injury=False):
+    """What the patient reported, as plain lines for the model. Only answers the patient actually gave."""
+    lines = [f'Complaint, in the patient\'s words: "{complaint}"', f"Age {age:g}, {str(sex).lower()}"]
+    if injury:
+        lines.append("Caused by an injury: yes")
+    danger = [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"]
+    lines += [f"Danger sign, answered yes: {q}" for q in danger] or ["Danger signs: answered no to all"]
+    lines += [f"{a['question']} {a['answer']}" for a in answers if a.get("kind") == "extra" and a.get("answer")]
+    return "\n".join(lines)
+
+
+def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=True, timeout=OLLAMA_TIMEOUT):
+    """Two sentences for the nurse, written by the language model: {"source": "ai", "text": ...}.
+    {"source": "none", "text": None} when the model is off, too slow, or broke the rules."""
+    report = _report_for_summary(complaint, age, sex, answers, injury)
+    cache = (key, report)
+    if cache in _summaries:
+        return _summaries[cache]
+    if not use_model:
+        return {"source": "none", "text": None}
+    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "30m",
+            "messages": [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": report}],
+            "options": {"temperature": 0.2, "num_ctx": 2048, "num_predict": 120}}
+    request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            written = json.loads(response.read())["message"]["content"]
+        result = {"source": "ai", "text": checked_summary(written, complaint)}
+    except Exception:
+        return {"source": "none", "text": None}          # not kept: the next look may find the model ready
+    if len(_summaries) >= 500:
+        _summaries.clear()
+    _summaries[cache] = result
+    return result
+
+
 # ---------------------------------------------------------------- the electronic line (plain rules)
 
 def place(patient, clock):

@@ -320,6 +320,9 @@
   .qr .hint { margin:0; }
   .qr-url { margin:8px 0 0; font-weight:800; font-size:1.05rem; color:var(--blue-dark); word-break:break-all; }
   .qr.off .qr-code { display:none; }
+  .place .num.code { width:auto; min-width:84px; padding:0 18px; border-radius:24px; font-size:2.3rem; letter-spacing:.04em; }
+  .qr-code.small { width:128px; height:128px; margin-left:auto; } .qr-code.small[hidden] { display:none; }
+  .qr-code.small img, .qr-code.small canvas { width:112px !important; height:112px !important; }
   .qr.off { background:var(--page); }
   @media (max-width: 640px) { .qr { display:none; } }   /* already on a phone: nothing to scan */
   details.db { padding:0; }
@@ -392,7 +395,7 @@
       </svg>
       <div><h1>Meddy</h1><small>Digital hospital, your triage buddy</small></div>
     </div>
-    <p>You are the patient. Walk through the emergency department and see what Meddy does at each stop. Each stop says whose screen you are looking at.</p>
+    <p>This is the patient's phone. Check in here, then show your code to the nurse. The nurse and the doctor work on their own screens.</p>
     <button class="size" id="size" type="button" aria-pressed="false"><span aria-hidden="true">A+</span>Larger text</button>
   </div>
 </header>
@@ -441,28 +444,12 @@
   <section class="card panel" id="panel" aria-live="polite"></section>
 </main>
 
-<div class="wrap bottom-db">
-  <details class="card db" aria-live="polite">
-    <summary>Behind the scenes: the hospital database <span>staff only · doctors on duty and today's visits</span></summary>
-    <div class="db-body">
-      <div class="db-counts" id="db-counts"></div>
-      <p class="regime" id="reviews" role="status"></p>
-      <p class="hint" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
-      <div class="db-actions">
-        <button class="go light" id="new-day" type="button">Start a new day</button>
-        <p class="hint">Clears the waiting room and the doctors' lists, and starts this walk-through again.</p>
-      </div>
-      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
-        <tbody id="staff"></tbody></table></div>
-    </div>
-  </details>
-</div>
-
 <footer class="bottom">
   <div class="wrap">
     <span class="disclaimer">This project is a prototype and is not medical advice.</span>
     <span>Meddy never gives a diagnosis.</span>
     <span>Made by Koch Team</span>
+    <span>Staff screens: <a href="/nurse" target="_blank" rel="noopener">nurse</a> · <a href="/doctor" target="_blank" rel="noopener">doctor</a></span>
     <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
   </div>
 </footer>
@@ -531,7 +518,11 @@ function remember(step, called) {
   try { sessionStorage.setItem("meddy-visit", JSON.stringify({ me, step, called: called || null })); } catch (e) {}
 }
 function forget() { try { sessionStorage.removeItem("meddy-visit"); } catch (e) {} }
-function startOver() { me = fresh(); forget(); entrance(); }
+// A message says why the phone is back at the entrance (for example: the hospital started a new day).
+function startOver(message) {
+  me = fresh(); forget(); entrance();
+  if (message) document.getElementById("error").textContent = message;
+}
 // True when the hospital's answer is about the visit this page remembers, and not about another patient who
 // got the same registration number on a later day.
 const sameVisit = (now) => now.day === undefined || me.day === undefined || me.day === null || now.day === me.day;
@@ -551,8 +542,9 @@ async function start() {
   if (!sameVisit(now)) { startOver(); return; }
   if (now.status === "waiting") return waiting("Welcome back. Your place in line was kept.");
   if (now.status === "called" && me.result) return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
+  if (now.status === "nurse") return atNurse();
+  if (now.status === "called") return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
   if (now.status === "registered") {
-    if (saved.step === "nurse") return nurse();
     const writing = me.followUp === "writing";
     checkin();
     if (writing) askFollowUp();
@@ -614,33 +606,9 @@ function drawSeats(count) {
   document.getElementById("seats").innerHTML = html;
 }
 async function refreshDatabase() {
-  const data = await api("/api/staff");
-  drawSeats(data.visits.waiting);
-  document.getElementById("db-counts").innerHTML = `
-    <div><b>${data.on_duty} of ${data.total}</b><span class="mono">doctors on duty</span></div>
-    <div><b>${data.visits.registered}</b><span class="mono">visits registered</span></div>
-    <div><b>${data.visits.waiting}</b><span class="mono">waiting now</span></div>
-    <div><b>${data.visits["with doctor"]}</b><span class="mono">with a doctor</span></div>`;
-  const t = data.reviews;
-  document.getElementById("reviews").innerHTML = `<b>Test regime.</b> ` + (t.reviewed === 0
-    ? "No report reviewed yet. Every time the nurse accepts Meddy's report or checks the patient herself, it is counted here."
-    : `The nurse has reviewed ${t.reviewed} of Meddy's report${t.reviewed === 1 ? "" : "s"}: accepted as it was <b>${t.accepted}</b>` +
-      (t.accepted_against_advice ? ` (${t.accepted_against_advice} against Meddy's own advice)` : "") +
-      `, checked in person <b>${t.checked}</b>` +
-      (t.checked ? ` (level changed in ${t.level_changed}, department changed in ${t.department_changed})` : "") + ".");
-  document.getElementById("staff").innerHTML = data.doctors.map((d) => `
-    <tr class="${d.on_duty ? "" : "off"}">
-      <td class="mono">${esc(d.reg_no)}</td><td>${esc(d.name)}</td><td>${esc(d.department)}</td><td>${esc(d.room)}</td>
-      <td class="num">${d.waiting}</td>
-      <td><button class="duty ${d.on_duty ? "on" : ""}" data-reg="${esc(d.reg_no)}" data-on="${d.on_duty}"
-            ${d.reg_no === "DR-1000" ? "disabled" : ""} aria-pressed="${d.on_duty}">${d.on_duty ? "On duty" : "Off duty"}</button></td>
-    </tr>`).join("");
+  // The seats on the floor plan fill up with the people waiting. The staff table lives on the nurse's screen.
+  try { drawSeats((await api("/api/staff")).visits.waiting); } catch (e) {}
 }
-document.getElementById("staff").addEventListener("click", async (event) => {
-  const button = event.target.closest(".duty"); if (!button || button.disabled) return;
-  await api("/api/staff/duty", { reg_no: button.dataset.reg, on_duty: button.dataset.on !== "true" });
-  refreshDatabase();
-});
 
 function choice(id, options, value, labelledBy) {
   return `<div class="choice" id="${id}" role="group"${labelledBy ? ` aria-labelledby="${labelledBy}"` : ""}>` + options.map((o) =>
@@ -891,7 +859,7 @@ function checkin() {
   // server says which score stands for "there is pain" (the typical score in our data); no pain is 0.
   bindChoice("feel", (v) => { me.feel = v; me.pain = v === me.painForm.none ? 0 : me.painForm.score;
     document.getElementById("error").textContent = ""; });
-  document.getElementById("go").addEventListener("click", () => {
+  document.getElementById("go").addEventListener("click", async () => {
     if (!me.noDanger && !danger.some(([q]) => q.answer === "Yes")) {
       document.getElementById("error").textContent = "Tap what is true for you under “Is any of this true for you?”, or tap “No, none of these”.";
       ticks.scrollIntoView({ block: "center" }); ticks.firstElementChild.focus({ preventScroll: true }); return; }
@@ -902,202 +870,64 @@ function checkin() {
     danger.forEach(([q]) => { if (q.answer !== "Yes") q.answer = "No"; });
     me.questions.forEach((q, i) => { const typed = document.getElementById("xt" + i);
       if (q.kind === "extra" && typed && !typed.hidden) q.answer = typed.value.trim() || null; });
-    me.questions.push({ ...me.painForm.feel, answer: me.feel });                              // last, so nothing above shifts
-    nurse();
-  });
-}
-
-// ---------------------------------------------------------------- 3. nurse station
-// After the vital signs are measured, Meddy writes a report for the nurse: the patient at a glance, a suggested
-// level, and the likely department and doctor. The nurse reviews it and does one of two things:
-//   "Everything is correct"        she accepts the report as it is                      (recorded as "approved")
-//   "I want to check the patient"  she gives her own level, sees Meddy's second check,
-//                                  and can change the department or send the patient in  (recorded as "checked")
-// Every verdict is counted in Behind the scenes. That count is the running test of the app in use.
-function nurse() {
-  walkTo(3);
-  me.nurseLevel = null;
-  remember("nurse");
-  panel.innerHTML = `
-    ${head("staff", "Nurse's screen")}
-    ${stepNo(3)}
-    <h2>The nurse</h2>
-    <p class="lede">The nurse measures blood pressure, pulse, breathing, temperature and oxygen.
-    In this demo you play the nurse: choose how the patient is doing.</p>
-    <span class="label" id="vitals-label">Vital signs</span>${choice("vitals", ["Normal", "Feverish", "Unstable"], me.vitals[0].toUpperCase() + me.vitals.slice(1), "vitals-label")}
-    <label for="alert">How alert is the patient?</label>
-    <select id="alert">${["Alert", "Responds to voice", "Responds to pain", "Unresponsive"].map((o) =>
-      `<option ${o === me.alert ? "selected" : ""}>${o}</option>`).join("")}</select>
-    <button class="go" id="go">Measure and get Meddy's report</button>
-    <p class="error" id="error" role="alert"></p>
-    <div id="result"></div>`;
-  bindChoice("vitals", (v) => me.vitals = v.toLowerCase());
-  document.getElementById("go").addEventListener("click", async (event) => {
-    me.alert = document.getElementById("alert").value;
-    const go = event.currentTarget;
-    busy(go, "Measuring and writing the report…");
+    const answers = [...me.questions, { ...me.painForm.feel, answer: me.feel }]               // last, so nothing above shifts
+      .map(({ question, answer, kind, topic }) => ({ question, answer, kind, topic: topic || null }));
+    const go = document.getElementById("go");
+    busy(go, "Sending your answers…");
     try {
-      me.result = await api("/api/triage", { reg_no: me.reg, complaint: me.complaint, age: me.age, sex: me.sex,
-        arrival: me.arrival, injury: me.injury, alert: me.alert, pain: me.pain, vitals: me.vitals,
-        answers: me.questions.map(({ question, answer, kind, topic }) => ({ question, answer, kind, topic: topic || null })) });
+      const done = await api("/api/checkin", { reg_no: me.reg, arrival: me.arrival, injury: me.injury, pain: me.pain, answers });
+      me.code = done.code; me.followUp = "none";
+      atNurse();
+    } catch (e) {
       idle(go);
-      me.nurseLevel = null;
-      showLevel();
-    } catch (e) { idle(go);
-      document.getElementById("error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again."; }
-  });
-}
-function showLevel() {
-  const r = me.result, v = r.vitals, advice = r.advice, likely = r.likely_doctor, urgent = r.level <= 2;
-  document.getElementById("go").textContent = "Measure again";
-  document.getElementById("go").className = "go light";
-  document.getElementById("error").textContent = "";
-  const where = urgent ? "straight to the resuscitation bay" : `to the waiting room for ${likely.doctor}`;
-  const verdict = advice.emergency
-    ? `<div class="note red" role="status"><b>⚠ Meddy suggests an emergency level.</b> Accepting the report sends the patient to the
-        resuscitation team at once.${advice.reasons.length ? " Note: " + esc(advice.reasons.join("; ")) + "." : ""}</div>`
-    : advice.quick
-    ? `<div class="note good" role="status"><b>✓ A quick review is reasonable.</b> Meddy is at least 80% sure of the level and sees no warning sign.
-        <span class="hint">In our tests, on patients like this Meddy's level was right 84% of the time and too low for 7%,
-        the same 7% as the nurses.</span></div>`
-    : `<div class="note amber" role="status"><b>▲ Meddy advises checking this patient in person.</b>
-        ${esc(advice.reasons.join("; "))}.
-        <span class="hint">In our tests, on patients like this Meddy's level was right only 63% of the time, against 84% for nurses.</span></div>`;
-  document.getElementById("result").innerHTML = `
-    <div class="report">
-      <span class="role staff">Meddy's report · for the nurse to review</span>
-      <p class="hint" style="margin:10px 0 0"><b>Meddy does not diagnose.</b> It suggests how urgent the patient is and which
-        department fits. What is wrong with the patient is for the doctor to say.</p>
-      <h3 class="sub" style="margin-top:14px">The patient at a glance</h3>
-      ${glance()}
-      <p class="measured" style="margin-top:0">Measured: blood pressure <b>${v.SBP}/${v.DBP}</b>, pulse <b>${v.HR}</b>, breathing <b>${v.RR}</b>,
-        temperature <b>${v.BT}°C</b>, oxygen <b>${v.Saturation}%</b>, ${esc(me.alert.toLowerCase())}</p>
-      ${r.danger ? `<div class="note red">The patient answered yes to a danger-sign question. In the line this counts as half a level more urgent.</div>` : ""}
-      ${r.unread ? `<div class="note amber"><b>▲ Meddy could not read this complaint.</b> It found no symptom word it knows (another
-        language, a typing slip, or no symptom named). Its level rests on the vital signs only, and the department is a guess.</div>` : ""}
-      <h3 class="sub">Suggested level</h3>
-      <div class="verdict" style="margin-top:12px;border-color:${LEVEL_COLOUR[r.level]};background:${LEVEL_TINT[r.level]}">
-        <span class="num" style="background:${LEVEL_COLOUR[r.level]}" aria-hidden="true">${r.level}</span>
-        <div><div class="t">${LEVEL_ICON[r.level]} Level ${r.level}: ${esc(r.name)}</div>
-          <span class="who">Meddy's suggestion. The nurse decides.</span></div>
-      </div>
-      <div class="bars">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
-        <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
-        <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
-      <h3 class="sub">Suggested doctor</h3>
-      <div class="note" style="margin-top:12px"><b>${urgent ? "Resuscitation team, Resus bay" : `${esc(r.department)}: ${esc(likely.doctor)}, ${esc(likely.room)}`}</b>
-        <span class="hint">${urgent ? "Levels 1 and 2 go in at once, whatever the department."
-          : `Department decided by the ${esc(r.department_how)}. ${esc(likely.doctor)} is the least busy doctor on duty there
-             (${likely.waiting} with them now). This is an approximation: the lists can change before the patient is called.`}</span></div>
-      ${verdict}
-    </div>
-    <div id="verdict-buttons">
-      <button class="go ${advice.quick ? "" : "light"}" id="approve">Everything is correct: send ${esc(where)}</button>
-      <button class="go ${advice.quick ? "light" : ""}" id="check" style="margin-top:12px">I want to check the patient myself</button>
-    </div>
-    <p class="error" id="approve-error" role="alert"></p>
-    <div id="personal" hidden>
-      <div class="note" style="margin-top:22px"><b>Personal check.</b> The nurse examines the patient and gives her own level.
-        Meddy then compares it with its own.</div>
-      <h3 class="sub" id="level-label">The nurse's level</h3>
-      <div class="levels" id="levels" role="group" aria-labelledby="level-label" style="margin-top:12px">${[1, 2, 3, 4, 5].map((l) =>
-        `<button type="button" data-v="${l}" aria-pressed="false" style="--c:${LEVEL_COLOUR[l]}"><b>${l}</b>${LEVEL_NAME[l]}</button>`).join("")}</div>
-      <div id="after"></div>
-    </div>`;
-  document.getElementById("approve").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    busy(button, urgent ? "Calling the resuscitation team…" : "Finding a place in line…");
-    try {
-      const data = await api("/api/line/join", { reg_no: me.reg, level: r.level, danger: r.danger,
-        department: r.department, department_how: r.department_how, review: "approved" });
-      me.nurseLevel = r.level; me.review = "approved"; me.ticket = data.ticket; remember("waiting"); refreshDatabase();
-      if (data.called) doctor(data.called); else waiting("");
-    } catch (e) { idle(button);
-      document.getElementById("approve-error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again."; }
-  });
-  document.getElementById("check").addEventListener("click", () => {
-    me.review = "checked";
-    document.getElementById("verdict-buttons").hidden = true;
-    document.getElementById("personal").hidden = false;
-    document.getElementById("levels").firstElementChild.focus({ preventScroll: true });
-    document.getElementById("personal").scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  });
-  document.getElementById("levels").addEventListener("click", (event) => {
-    const button = event.target.closest("button"); if (!button) return;
-    for (const b of button.parentNode.children) { b.classList.toggle("on", b === button); b.setAttribute("aria-pressed", b === button); }
-    me.nurseLevel = Number(button.dataset.v);
-    afterLevel();
-  });
-}
-function afterLevel() {
-  const r = me.result, mine = me.nurseLevel, urgent = mine <= 2;
-  const flag = r.second_check[mine], chance = Math.round(r.more_urgent[mine] * 100);
-  const opinion = flag === "strong"
-    ? `<div class="note amber" role="status"><b>▲ Look again: Meddy thinks this patient is more urgent.</b>
-        Meddy puts the chance that the right level is more urgent than level ${mine} at ${chance}%. Its most likely level is
-        ${r.level} (${r.name}). Check the patient again, then keep the level or change it above.
-        <span class="hint">In our tests this flag was raised for about 1 patient in 5 and caught 91 of the 131 patients nurses
-        had rated too low. About 1 flag in 3 was right.</span></div>`
-    : flag === "mild"
-    ? `<div class="note" role="status"><b>Meddy leans more urgent, but not strongly (${chance}%).</b> No flag is raised.
-        <span class="hint">Counting these milder cases as flags too would catch 107 of the 131, at the price of re-checking
-        1 patient in 3.</span></div>`
-    : r.level === mine ? `<div class="note" role="status"><b>✓ Meddy agrees with the nurse.</b></div>`
-    : `<div class="note" role="status"><b>Meddy sees no reason to rate this patient more urgent.</b> The nurse's level stands.</div>`;
-  document.getElementById("after").innerHTML = `
-    <h3 class="sub">Meddy's second check</h3>
-    ${opinion}
-    <div class="note"><b>Department: <span id="dept-name">${esc(r.department)}</span>.</b>
-      <span class="hint" id="dept-how">${r.department_how.startsWith("nurse") ? "Chosen by the nurse from the suggested departments." : `Decided by the ${esc(r.department_how)}.`}</span>
-      <div class="hint" style="margin-top:8px">The nurse can change it. Percentages are the trained model's estimate:</div>
-      <div class="choice" id="dept">${r.department_options.map((o) =>
-        `<button type="button" data-v="${esc(o.department)}" class="${o.department === r.department ? "on" : ""}"
-           aria-pressed="${o.department === r.department}">${esc(o.department)}, ${Math.round(o.chance * 100)}%${
-             urgent || !o.doctor ? "" : " · " + esc(o.doctor.doctor)}</button>`).join("")}</div></div>
-    <button class="go" id="seat">${urgent ? "Level " + mine + ": straight to the resuscitation bay" : "Level " + mine + ": to the waiting room"}</button>
-    ${urgent ? "" : `<button class="go light" id="refer-open" style="margin-top:12px" aria-expanded="false" aria-controls="refer">Send straight to a doctor</button>
-    <div class="refer" id="refer" hidden>
-      <label for="reason">Why does this patient skip the line?</label>
-      <p class="hint" style="margin:0 0 10px">For a critical case the nurse spots herself. The doctor reads this reason.</p>
-      <input type="text" id="reason" maxlength="300" autocomplete="off" placeholder="For example: fainted at the desk">
-      <button class="go" id="refer-go" style="margin-top:16px">Send to the doctor now</button>
-    </div>`}
-    <p class="error" id="send-error" role="alert"></p>`;
-  const failed = () => document.getElementById("send-error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again.";
-  bindChoice("dept", (v) => { r.department = v; r.department_how = "nurse, from the suggested departments";
-    document.getElementById("dept-name").textContent = v;
-    document.getElementById("dept-how").textContent = "Chosen by the nurse from the suggested departments."; });
-  document.getElementById("seat").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    busy(button, urgent ? "Calling the resuscitation team…" : "Finding a place in line…");
-    try {
-      const data = await api("/api/line/join", { reg_no: me.reg, level: mine, danger: r.danger,
-        department: r.department, department_how: r.department_how, review: "checked" });
-      me.ticket = data.ticket; remember("waiting"); refreshDatabase();
-      // Levels 1 and 2 never wait in the line: the server has already sent the patient in, and says where.
-      if (data.called) doctor(data.called); else waiting("");
-    } catch (e) { idle(button); failed(); }
-  });
-  if (urgent) return;
-  const open = document.getElementById("refer-open"), box = document.getElementById("refer"), reason = document.getElementById("reason");
-  open.addEventListener("click", () => { box.hidden = !box.hidden; open.setAttribute("aria-expanded", !box.hidden);
-    if (!box.hidden) reason.focus(); });
-  reason.addEventListener("input", () => { reason.removeAttribute("aria-invalid"); document.getElementById("send-error").textContent = ""; });
-  reason.addEventListener("keydown", (event) => { if (event.key === "Enter") document.getElementById("refer-go").click(); });
-  document.getElementById("refer-go").addEventListener("click", async (event) => {
-    const why = reason.value.trim();
-    if (why.length < 3) { document.getElementById("send-error").textContent = "Write a short reason first. The doctor needs to know why.";
-      reason.setAttribute("aria-invalid", "true"); reason.focus(); return; }
-    const button = event.currentTarget;
-    busy(button, "Sending to the doctor…");
-    try {
-      const sent = await api("/api/refer", { reg_no: me.reg, level: mine, department: r.department, reason: why });
-      me.ticket = sent.ticket; refreshDatabase();
-      doctor({ ...sent, reg_no: me.reg, level: mine, waited: 0, referral_reason: why });
-    } catch (e) { idle(button); failed(); }
+      if (e.status === 404) { startOver("The hospital started a new day, so your visit was cleared. Please register again."); return; }
+      if (e.status === 409) { atNurse(); return; }                // the nurse already has the answers
+      document.getElementById("error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again.";
+    }
   });
 }
 
+// ---------------------------------------------------------------- 3. the nurse
+// The phone shows a short code and waits. The nurse opens the patient on her own screen (/nurse) by that code, by
+// tapping them on her list, or by scanning the QR code below. When she is done, this screen moves on by itself:
+// it asks the server every 3 seconds where the patient is. The phone never sees the level the nurse chose.
+function atNurse() {
+  walkTo(3);
+  remember("nurse");
+  const nurseLink = location.origin + "/nurse?reg=" + encodeURIComponent(me.reg);
+  panel.innerHTML = `
+    ${head("patient")}
+    ${stepNo(3)}
+    <h2>Show this code to the nurse</h2>
+    <div class="place">
+      <span class="num code" aria-hidden="true">${esc(me.code || me.reg.slice(-4))}</span>
+      <p>Your code<b>${esc(me.code || me.reg.slice(-4))}</b></p>
+      <div class="qr-code small" id="nurse-qr" aria-hidden="true"></div>
+    </div>
+    <p class="lede">Your answers are with the nurse. She will call your code, measure your blood pressure, pulse and
+      temperature, and then this screen moves on by itself.</p>
+    <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
+    <p class="hint">The nurse can also scan the square code with her phone: it opens your answers on her screen.</p>
+    <p class="error" id="error" role="alert"></p>`;
+  drawQr(document.getElementById("nurse-qr"), nurseLink, 112);
+  const run = tick;
+  watching = setInterval(async () => {
+    let now;
+    try { now = await api("/api/me/" + encodeURIComponent(me.reg)); }
+    catch (e) {
+      if (run !== tick) return;
+      if (e.status === 404) { startOver("The hospital started a new day, so your visit was cleared. Please register again."); return; }
+      document.getElementById("error").textContent = "Meddy can't reach the hospital server. Your visit is kept: this screen keeps trying.";
+      return;
+    }
+    if (run !== tick) return;
+    document.getElementById("error").textContent = "";
+    if (!sameVisit(now)) { startOver("The hospital started a new day, so your visit was cleared. Please register again."); return; }
+    if (now.status === "waiting") waiting("The nurse is done. You are in the waiting room now.");
+    else if (now.status === "called") doctor({ doctor: now.doctor, room: now.room, ticket: now.ticket });
+    else if (now.status === "finished") startOver();
+  }, 3000);
+}
 // ---------------------------------------------------------------- 4. waiting room
 // Only patients at levels 3-5 reach the waiting room, so only they see comfort tips.
 function tipsCard() {
@@ -1142,47 +972,8 @@ async function waiting(message) {
     <p class="lede">Please wait until your ticket is called. The most urgent patients go first, and the longer you wait,
     the further you move up. This screen updates by itself.</p>
     ${tipsCard()}
-    <div class="demo" role="group" aria-label="Demo controls">
-      <p class="hint"><b>Demo controls</b>, for trying the line. The demo clock shows <b class="mono">${hours}:${minutes}</b>.</p>
-      ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
-      <div class="row">
-        <button class="go light" id="wait">15 minutes pass</button>
-        <button class="go" id="next">Call next patient</button>
-      </div>
-    </div>
-    <details class="staffbox" id="staff-line" ${me.showLine ? "open" : ""}>
-      <summary><span class="role staff">Nurse's screen · staff only</span><span class="summary-text">The whole line, with levels</span></summary>
-      <p class="hint" style="margin:12px 0 0">The patient never sees this. The patient's phone above shows no level, no colour and no waiting time.</p>
-      ${data.patients.map((p) => `<div class="line-row ${p.reg_no === me.reg ? "you" : ""}">
-        <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
-        <div><div class="who-line">${esc(p.ticket)} · ${esc(p.who)}${p.reg_no === me.reg ? ` <span class="tag">this visit</span>` : ""}</div>
-          <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
-          ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
-        </div>`).join("")}
-    </details>`;
-  document.getElementById("staff-line").addEventListener("toggle", (event) => me.showLine = event.target.open);
-  const noAnswer = (button) => { idle(button);
-    const box = button.closest(".demo"); let line = box.querySelector(".moved");
-    if (!line) { line = document.createElement("p"); line.className = "hint moved"; line.setAttribute("role", "status"); box.insertBefore(line, box.lastElementChild); }
-    line.textContent = "Meddy can't reach the hospital server. Check that it is running, then try again."; };
-  document.getElementById("wait").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    busy(button, "Moving the clock…");
-    let passed;
-    try { passed = await api("/api/line/wait", {}); } catch (e) { noAnswer(button); return; }
-    refreshDatabase();
-    if (passed.called && passed.called.reg_no === me.reg) { doctor(passed.called); return; }
-    waiting("Fifteen minutes passed. " + (passed.called ? `Ticket ${esc(passed.called.ticket)} was called, and a` : "A") +
-            " new patient walked in."); });
-  document.getElementById("next").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    busy(button, "Calling…");
-    let result;
-    try { result = await api("/api/line/next", {}); } catch (e) { noAnswer(button); return; }
-    refreshDatabase();
-    if (result.called && result.called.reg_no === me.reg) doctor(result.called);
-    else waiting(result.called ? `Ticket ${esc(result.called.ticket)} was called. The line moved.` : "");
-  });
+    ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
+    <p class="hint">This screen updates by itself. Staff call the next patient on the <a href="/nurse" target="_blank" rel="noopener">nurse's screen</a>.</p>`;
   // The patient's phone asks again every 5 seconds, so it also follows a nurse working on another screen.
   watching = setInterval(async () => {
     try {
@@ -1196,22 +987,12 @@ async function waiting(message) {
 }
 
 // ---------------------------------------------------------------- 5. doctor
-// A short overview for the doctor, put together by plain code from what the patient tapped. No AI summary.
-function glance() {
-  const yes = me.questions.filter((q) => q.kind === "danger" && q.answer === "Yes").length;
-  const facts = [`“${me.complaint}”`, `${me.age} years, ${me.sex.toLowerCase()}`, 
-    yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs", me.injury ? "Injury" : null,
-    ...me.questions.filter((q) => q.kind === "extra" && q.answer).map((q) => `${q.label}: ${q.answer}`)];
-  return `<div class="glance">${facts.filter(Boolean).map((f) => `<span>${esc(f)}</span>`).join("")}</div>`;
-}
+// The phone says where to go. Everything the doctor needs is already on the doctor's own screen (/doctor).
 function doctor(called) {
   const resus = called.department === "Resuscitation team" || called.room === "Resus bay";
   walkTo(5, resus ? 6 : 5);
   remember("doctor", called);
   document.getElementById("doctor-line").textContent = resus ? "" : `${called.doctor}, ${called.room}`;
-  const r = me.result, v = r.vitals, level = me.nurseLevel || r.level;
-  const answers = me.questions.map((a) => `<dt>${a.label ? `<span class="tag topic">${esc(a.label)}</span>` : ""}${esc(a.question)}</dt>
-    <dd>${esc(a.answer || "not answered")}</dd>`).join("");
   panel.innerHTML = `
     ${head("patient")}
     ${stepNo(5)}
@@ -1219,47 +1000,34 @@ function doctor(called) {
     <div class="place">
       <span class="num" aria-hidden="true">→</span>
       <p>${resus ? "The team is ready for you in the" : "Please go to"}<b>${esc(called.room)}${resus ? "" : ", " + esc(called.doctor)}</b></p>
-      <div class="clock">Your ticket<b>${esc(called.ticket)}</b></div>
+      <div class="clock">Your ticket<b>${esc(called.ticket || "")}</b></div>
     </div>
-    <p class="lede">Your doctor already has your answers, so you tell your story once.</p>
-    <div class="staffbox">
-      <span class="role staff">Doctor's screen · staff only</span>
-      <h3 class="sub" style="margin-top:12px">The patient at a glance</h3>
-      ${glance()}
-      <dl class="hand">
-        <dt>Doctor</dt><dd>${esc(called.doctor)}${called.department && !resus ? ", " + esc(called.department) : ""}, ${esc(called.room)}${called.doctor_reg ? ` (${esc(called.doctor_reg)})` : ""}</dd>
-        ${called.reason ? `<dt>Why this doctor</dt><dd>${esc(called.reason)}</dd>` : ""}
-        ${called.referral_reason ? `<dt>Sent straight in</dt><dd>The nurse's reason: ${esc(called.referral_reason)}</dd>` : ""}
-        <dt>Visit</dt><dd>${esc(me.reg)}, ticket ${esc(called.ticket)}${called.waited === undefined ? "" : `, waited ${called.waited} min`}</dd>
-        <dt>Level</dt><dd>${level}: ${LEVEL_NAME[level]}. ${me.review === "approved"
-          ? "Meddy's suggestion, accepted by the nurse after reviewing the report."
-          : `Set by the nurse after a personal check. Meddy suggested level ${r.level}${r.unsure ? " and was not sure" : ""}.`}</dd>
-        <dt>Vital signs</dt><dd>${v.SBP}/${v.DBP}, pulse ${v.HR}, breathing ${v.RR}, ${v.BT}°C, oxygen ${v.Saturation}%</dd>
-        <dt>Arrived</dt><dd>${esc(me.arrival)}, ${esc(me.alert.toLowerCase())}</dd>
-        <dt>Insurance</dt><dd>${me.insurance === "none" ? "None" : (me.insurance === "private" ? "Private" : "Public") + ", card ending " + esc(me.cardEnd)}</dd>
-        ${answers}
-      </dl>
-    </div>
+    <p class="lede">Your doctor already has your answers and the nurse's measurements, so you tell your story once.</p>
     <div class="note" style="margin-top:24px"><b>What was real here.</b> Meddy's level comes from a model tested on 1,267 real patients;
     it matched experts 68% of the time against 85% for nurses, so the nurse sets the level and Meddy is her second check. The department
-    comes from a second model trained on the same patients' real diagnoses, used only when it is at least 70% sure, with a key-word rule
-    otherwise. Together they pick the right department 69% of the time, against 67% for the rule alone. Meddy suggests a level and a department and never a diagnosis.
-    The questions, the overview and the line are demonstrations and have not been tested. The doctors are made up. Not medical advice.</div>
+    comes from a second model trained on the same patients' real diagnoses. Meddy suggests a level and a department and never a diagnosis.
+    The doctors are made up. Not medical advice.</div>
     <button class="go" id="again">Start again as a new patient</button>`;
-  document.getElementById("again").addEventListener("click", () => { me = fresh(); forget(); entrance(); });
+  document.getElementById("again").addEventListener("click", () => startOver());
 }
 
-// "Start a new day" lives in Behind the scenes (spec, screen 7), not on the patient's screens.
-document.getElementById("new-day").addEventListener("click", async (event) => {
-  const button = event.currentTarget;              // kept: currentTarget is empty again after the await
-  busy(button, "Starting a new day…");
-  try {
-    await api("/api/reset", {}); me = fresh(); forget(); document.getElementById("doctor-line").textContent = "";
-    refreshDatabase(); entrance();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  } finally { idle(button); }
-});
-
+// The QR codes are drawn by a small library from cdnjs, loaded once when the first code is needed.
+let qrLibrary = null;
+function loadQr() {
+  if (!qrLibrary) qrLibrary = new Promise((ready, failed) => {
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+    script.onload = ready; script.onerror = failed;
+    document.head.appendChild(script);
+  });
+  return qrLibrary;
+}
+async function drawQr(box, text, size) {
+  try { await loadQr(); } catch (e) { box.hidden = true; return; }       // offline: the code in words still shows
+  if (!box.isConnected) return;
+  box.innerHTML = "";
+  new QRCode(box, { text, width: size, height: size, colorDark: "#16252a", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
+}
 // The QR code on the entrance step: the address phones on the same Wi-Fi can open.
 // The server gives it only when started with MEDDY_LAN=1; the code is drawn by a small library from cdnjs.
 async function showAddress() {
@@ -1272,13 +1040,8 @@ async function showAddress() {
       "Phones can join when the hospital runs on your Wi-Fi: start the server with MEDDY_LAN=1.";
     return;
   }
-  document.getElementById("qr-url").textContent = url.replace(/^http:\/\//, "").replace(/\/$/, "");
-  const script = document.createElement("script");
-  script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
-  script.onload = () => new QRCode(document.getElementById("qr-code"),
-    { text: url, width: 148, height: 148, colorDark: "#16252a", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
-  script.onerror = () => box.classList.add("off");   // offline: the address in words still shows
-  document.head.appendChild(script);
+  document.getElementById("qr-url").textContent = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  drawQr(document.getElementById("qr-code"), url, 148).then(() => { if (document.getElementById("qr-code").hidden) box.classList.add("off"); });
 }
 showAddress();
 
