@@ -496,9 +496,21 @@ def chief_report():
     return db.chief_report()
 
 
+def running_commit():
+    """The commit of the code this server runs, when it runs online: the Space writes it down while building and
+    after every update (deploy/huggingface/watch.py). None on a laptop."""
+    written = Path(os.environ.get("MEDDY_COMMIT_FILE", "/home/user/built_commit"))
+    try:
+        return written.read_text().strip()[:7] or None
+    except OSError:
+        return None
+
+
 @app.get("/api/version")
 def version():
-    return {"version": VERSION}
+    """"version" changes when the pages or the server's code change (open pages then offer to reload). "commit" is
+    the commit on GitHub that is online, so anybody can check that the live site runs the latest main."""
+    return {"version": VERSION, "commit": running_commit()}
 
 
 class Typed(BaseModel):

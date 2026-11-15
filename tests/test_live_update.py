@@ -146,3 +146,20 @@ def test_without_a_running_server_the_updater_does_not_pretend(tmp_path, monkeyp
     (tmp_path / "app").mkdir()
     assert watch.update_in_place(tree(tmp_path / "new", {"a.py": "x"}), "abc") is False     # falls back to a rebuild
     assert not (tmp_path / "updating").exists() and not (tmp_path / "app" / "a.py").exists()
+
+
+def test_the_site_says_which_commit_it_runs(tmp_path, monkeypatch):
+    """After an update the watcher writes the commit down, and /api/version reports it: that is how we check that
+    the live site really runs the latest main."""
+    sys.path.insert(0, str(ROOT / "hospital"))
+    import server
+    from fastapi.testclient import TestClient
+    client = TestClient(server.app)
+    monkeypatch.setenv("MEDDY_COMMIT_FILE", str(tmp_path / "nowhere"))
+    assert client.get("/api/version").json()["commit"] is None                 # on a laptop
+    written = tmp_path / "built_commit"
+    written.write_text("5ae6e55c0ffee0000000000000000000000000000\n")
+    monkeypatch.setenv("MEDDY_COMMIT_FILE", str(written))
+    answer = client.get("/api/version").json()
+    assert answer["commit"] == "5ae6e55" and len(answer["version"]) == 12
+
