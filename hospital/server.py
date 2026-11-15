@@ -327,9 +327,12 @@ def triage(body: Assessment):
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
     result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])
     # Keep the AI's suggestion and the measurements: the doctor's screen and the test regime need them later.
-    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
-                       [result["probabilities"][str(l)] for l in core.LEVELS],
-                       result["department"], result["advice"]["quick"])
+    try:        # the state is checked again inside the database: a doctor may have called the patient meanwhile
+        db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
+                           [result["probabilities"][str(l)] for l in core.LEVELS],
+                           result["department"], result["advice"]["quick"])
+    except db.AlreadySent:
+        raise HTTPException(409, "This patient has already been sent to a doctor.")
     return result
 
 

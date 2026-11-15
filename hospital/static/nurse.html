@@ -360,7 +360,8 @@ async function openPatient(reg, takeOver) {
       ${card.worse ? "The patient pressed “I feel worse” on their phone."
         : card.recheck_due ? `A level ${card.level} patient is looked at again every ${RECHECK_AFTER[card.level]} minutes while they wait.`
         : "This patient is already in the waiting room."}
-      Measure again and decide again. They keep their ticket and the minutes they have already waited.</div>`
+      Measure again and decide again. They keep their ticket and the minutes they have already waited. Once you
+      have measured, no doctor calls them for 15 minutes, so that your decision is not lost.</div>`
       : card.worse ? `<div class="note red" style="margin:10px 0"><b>The patient pressed “I feel worse” on their phone</b> while waiting for you.</div>` : ""}
     ${card.answers.some((a) => a.kind === "danger" && a.answer) ? "" : `<div class="note red" style="margin:10px 0">The patient
       did not answer the danger-sign questions. Ask about them yourself before you decide.</div>`}
@@ -603,7 +604,8 @@ async function loadLine(message) {
       <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
       <div><div class="who-line">${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.who)}</div>
         <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
-        ${p.worse ? `<span class="tag red">feels worse</span>` : ""}${p.recheck_due ? `<span class="tag amber">re-check due</span>` : ""}${
+        ${p.with_nurse ? `<span class="tag">with the nurse for a re-check</span>` : ""}${
+          p.worse ? `<span class="tag red">feels worse</span>` : ""}${p.recheck_due ? `<span class="tag amber">re-check due</span>` : ""}${
           p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
     </div>`).join("");
 }

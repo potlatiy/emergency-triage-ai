@@ -1686,9 +1686,26 @@ def test_a_patient_is_due_a_recheck_after_the_time_their_level_allows():
     assert mine()["recheck_due"] is False and mine()["worse"] is False
 
 
-def test_an_older_database_file_gets_the_new_columns():
+def test_an_older_database_file_gets_the_new_columns_and_still_works():
+    """A file from before this version: the columns are added, and a patient who was already waiting in it
+    (nothing in the new columns) is still listed, can say they feel worse and can be re-checked."""
+    reg = in_the_waiting_room()
+    added = ["seen_at", "worse_at", "worse_said", "rechecks", "ai_level_then", "remeasured", "held_at", "quick_pending"]
+    with db._lock, db._conn:
+        for column in added:
+            db._conn.execute(f"ALTER TABLE visits DROP COLUMN {column}")
+    db._upgrade()
     columns = {r["name"] for r in db._conn.execute("PRAGMA table_info(visits)")}
-    assert {"seen_at", "worse_at", "worse_said", "rechecks"} <= columns
+    assert set(added) <= columns
+    old = db.visit_for(reg)
+    assert (old["seen_at"], old["worse_at"], old["worse_said"], old["rechecks"], old["remeasured"]) == (None, None, 0, 0, 0)
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == reg)["recheck_due"] is False
+    assert client.get("/api/nurse/patient/" + reg).json()["since_seen"] == 0
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 200
+    report = client.post("/api/triage", json={"reg_no": reg}).json()
+    assert report["recheck"]["earlier_ai_level"] == old["ai_level"]
+    assert client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"}).status_code == 200
+    assert db.visit_for(reg)["rechecks"] == 1 and db.visit_for(reg)["ticket"] == old["ticket"]
 
 
 def test_the_patients_phone_never_downloads_the_whole_line():
@@ -1792,4 +1809,129 @@ def test_measuring_twice_in_one_recheck_keeps_what_stood_before():
     client.post("/api/triage", json={"reg_no": decided})
     client.post("/api/line/join", json={"reg_no": decided, "level": 4, "review": "checked"})
     assert db.visit_for(decided)["remeasured"] == 0 and db.visit_for(decided)["ai_level_then"] == db.visit_for(decided)["ai_level"]
+
+
+# ---------------------------------------------------------------- the re-check, attacked
+
+def test_a_patient_the_nurse_is_rechecking_is_not_called_away():
+    """She measured again and has not decided. A doctor's call would lose her decision, so the patient stays with
+    her: for fifteen minutes at most, so that a re-check nobody finishes cannot keep them out of the line for ever."""
+    reg = in_the_waiting_room("sore throat", level=3)
+    doctor = next(d["reg_no"] for d in db.staff()["doctors"] if d["department"] == "Eye, ear, nose and throat" and d["on_duty"])
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    held = next(p for p in db.line()["patients"] if p["reg_no"] == reg)
+    assert held["with_nurse"] is True and db.visit_for(reg)["status"] == "waiting"
+    called = client.post("/api/doctor/call", json={"doctor_reg": doctor}).json()["called"]
+    assert called is None or called["reg_no"] != reg
+    while (called := client.post("/api/line/next").json()["called"]) is not None:       # everyone else is called
+        assert called["reg_no"] != reg
+    assert db.visit_for(reg)["status"] == "waiting"
+    sent = client.post("/api/line/join", json={"reg_no": reg, "level": 2, "review": "checked"})   # her decision lands
+    assert sent.status_code == 200 and sent.json()["called"]["doctor_reg"] == "DR-1000"
+
+    left = in_the_waiting_room("sore throat", level=3)                                  # a re-check nobody finishes
+    client.post("/api/triage", json={"reg_no": left})
+    assert client.post("/api/line/next").json()["called"] is None
+    db._meta("clock", db._meta("clock") + db.HOLD_FOR)
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == left)["with_nurse"] is False
+    assert client.post("/api/line/next").json()["called"]["reg_no"] == left
+    assert doctors_view(left)["summary"]["nurse_found"]["remeasured"] is True           # and the doctor is told
+
+
+def test_joining_again_without_measuring_is_not_a_recheck():
+    reg = checked_in("sore throat")
+    client.post("/api/triage", json={"reg_no": reg})
+    join = {"reg_no": reg, "level": 4, "review": "checked"}
+    assert client.post("/api/line/join", json=join).status_code == 200
+    assert client.post("/api/line/join", json=join).status_code == 200                 # a second click, a retry
+    assert db.visit_for(reg)["rechecks"] == 0
+    client.post("/api/worse", json={"reg_no": reg})
+    seen = db.visit_for(reg)["seen_at"]
+    db._meta("clock", db._meta("clock") + 10)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3})                    # a new level, nobody measured
+    visit = db.visit_for(reg)
+    assert (visit["level"], visit["rechecks"], visit["seen_at"]) == (3, 0, seen)
+    assert visit["worse_at"] is not None and client.get("/api/me/" + reg).json()["worse"] is True
+    steps = [step["what"] for step in client.get(f"/api/visit/{reg}/history").json()["steps"]]
+    assert "re-checked" not in steps
+
+
+def test_a_report_that_arrives_after_the_doctors_call_is_refused(monkeypatch):
+    reg = in_the_waiting_room()
+    before = db.visit_for(reg)
+    real = core.assess
+    monkeypatch.setattr(core, "assess", lambda *a, **k: (db.call_next(reg), real(*a, **k))[1])   # called while Meddy works
+    late = client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    assert late.status_code == 409
+    after = db.visit_for(reg)
+    assert after["status"] == "with doctor" and (after["vitals"], after["ai_level"]) == (before["vitals"], before["ai_level"])
+    steps = [step["what"] for step in client.get(f"/api/visit/{reg}/history").json()["steps"]]
+    assert steps[-1] != "assessed"
+
+
+def test_the_test_regime_counts_the_advice_the_nurse_had_when_she_decided():
+    reg, report = report_for("ankle pain", pain=4)
+    assert report["advice"]["quick"] is True
+    client.post("/api/line/join", json={"reg_no": reg, "level": report["level"], "review": "approved"})
+    assert db.staff()["reviews"]["accepted_against_advice"] == 0
+    client.post("/api/worse", json={"reg_no": reg})
+    again = client.post("/api/triage", json={"reg_no": reg}).json()                     # now Meddy advises a check
+    assert again["advice"]["quick"] is False
+    assert db.staff()["reviews"]["accepted_against_advice"] == 0                         # she has not decided again
+    db.call_next(reg)                                                                   # called before she does
+    assert db.staff()["reviews"]["accepted_against_advice"] == 0
+    other, report = report_for("ankle pain", pain=4)
+    client.post("/api/line/join", json={"reg_no": other, "level": report["level"], "review": "approved"})
+    client.post("/api/worse", json={"reg_no": other})
+    client.post("/api/triage", json={"reg_no": other})
+    client.post("/api/line/join", json={"reg_no": other, "level": report["level"]})    # a re-check with no verdict given
+    assert db.visit_for(other)["review"] == "checked"
+    assert json.loads(db.visit_for(other)["summary"])["nurse_found"]["against_advice"] is False
+
+
+def test_a_made_up_patient_can_be_rechecked_and_keeps_what_meddy_said_before():
+    waiting = next(p for p in db.line()["patients"] if not p["you"])
+    reg, first = waiting["reg_no"], db.visit_for(waiting["reg_no"])["ai_level"]
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable", "alert": "Unresponsive"})
+    again = client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable", "alert": "Unresponsive"}).json()
+    assert again["recheck"]["earlier_ai_level"] == first and again["recheck"]["worse"] is False
+    client.post("/api/line/join", json={"reg_no": reg, "level": waiting["level"], "review": "checked"})
+    visit = db.visit_for(reg)
+    assert visit["ticket"] == waiting["ticket"] and visit["rechecks"] == 1
+
+
+def test_who_asked_first_is_seen_first_and_the_due_are_not_forgotten():
+    danger = checked_in("sore throat", danger_yes=True)
+    early, late = checked_in("sore throat"), checked_in("sore throat")
+    client.post("/api/worse", json={"reg_no": late})
+    assert client.get("/api/me/" + late).json()["worse"] is True                        # shown while waiting for the nurse
+    db._meta("clock", db._meta("clock") + 5)
+    client.post("/api/worse", json={"reg_no": danger})
+    assert [p["reg_no"] for p in client.get("/api/nurse/patients").json()["patients"]] == [late, danger, early]
+
+    due = in_the_waiting_room(level=3)
+    asked = in_the_waiting_room(level=5)
+    db._meta("clock", db._meta("clock") + 30)
+    assert client.get("/api/nurse/patient/" + due).json()["recheck_due"] is True
+    client.post("/api/worse", json={"reg_no": asked})
+    listed = [p["reg_no"] for p in client.get("/api/nurse/patients").json()["recheck"]]
+    assert listed[0] == asked and due in listed                                         # asked first, the due still listed
+    report = client.post("/api/triage", json={"reg_no": due}).json()                    # a re-check nobody asked for
+    assert report["recheck"]["worse"] is False and report["recheck"]["earlier_level"] == 3
+
+
+def test_a_second_press_after_a_recheck_counts_and_none_counts_once_the_visit_is_over():
+    reg = in_the_waiting_room()
+    for _ in range(2):
+        client.post("/api/worse", json={"reg_no": reg})
+        client.post("/api/triage", json={"reg_no": reg})
+        client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"})
+    assert (db.visit_for(reg)["worse_said"], db.visit_for(reg)["rechecks"]) == (2, 2)
+    client.post("/api/worse", json={"reg_no": reg})
+    db.call_next(reg)
+    assert client.get("/api/nurse/patient/" + reg).json()["worse"] is False            # no longer the nurse's to answer
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 409
+    client.post("/api/doctor/finish", json={"reg_no": reg})
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 409
+    assert db.visit_for(reg)["worse_said"] == 3
 
