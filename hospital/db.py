@@ -709,6 +709,7 @@ def _waiting():
 def line():
     with _lock:
         clock, rows = _waiting()
+        names = {r["reg_no"]: r["name"] for r in _conn.execute("SELECT reg_no, name FROM doctors")}
     return {"clock": clock, "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "who": p["complaint"], "patient": full_name(p), "level": p["level"],
          "name": core.LEVEL_NAMES[p["level"]], "danger": bool(p["danger"]), "you": bool(p["you"]),
@@ -716,7 +717,7 @@ def line():
          # For the nurse: the patient pressed "I feel worse", or has waited longer than their level allows
          # without a nurse looking at them again (core.RECHECK_AFTER).
          "worse": p["worse_at"] is not None, "recheck_due": core.recheck_due(p, clock),
-         "with_nurse": _with_nurse(p, clock)}
+         "with_nurse": _with_nurse(p, clock), "doctor": names.get(p["wanted_doctor"])}
         for i, p in enumerate(rows, 1)]}
 
 
@@ -732,6 +733,7 @@ def where_is(reg_no):
             return None
         _, rows = _waiting()            # the same order as the line the nurse sees
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
+        wanted = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["wanted_doctor"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
           "day": today, "code": code_for(reg_no), "worse": False}
@@ -741,11 +743,79 @@ def where_is(reg_no):
     elif visit["status"] == "waiting":
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
         me.update(status="waiting", position=position, ahead=position - 1, worse=visit["worse_at"] is not None)
+        if wanted:          # the nurse chose the doctor: the patient knows whom they wait for
+            me.update(doctor=wanted["name"], room=wanted["room"])
     elif visit["status"] == "with doctor":
         me.update(status="called", doctor=doctor["name"], room=doctor["room"])
     elif visit["status"] == "done":
         me.update(status="finished")
     return me
+
+
+# ---------------------------------------------------------------- the nurse manages her patients
+
+REMOVED_BECAUSE = ("left without being seen", "sent home by the nurse", "registered by mistake")
+
+
+class NotHere(Exception):
+    """The patient is not waiting for the nurse or in the waiting room: there is nothing to manage."""
+
+
+def still_fine(reg_no):
+    """The nurse looked at a waiting patient again and nothing changed: the re-check time starts again and an
+    "I feel worse" is answered. Level, ticket and place in line stay as they are. None for an unknown visit."""
+    with _lock, _conn:
+        visit = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        if visit["status"] != "waiting":
+            raise NotHere(reg_no)
+        _conn.execute("UPDATE visits SET seen_at = ?, worse_at = NULL WHERE reg_no = ?", (_clock(), reg_no))
+        _event(reg_no, "looked at again", "nurse", "still fine, nothing changed")
+    return {"reg_no": reg_no, "status": "waiting"}
+
+
+def remove_visit(reg_no, why):
+    """The nurse takes a patient off her list or out of the line: they left, she sent them home, or the visit was
+    registered by mistake. The visit is closed and kept, like every visit. None for an unknown visit."""
+    if why not in REMOVED_BECAUSE:
+        raise ValueError(why)
+    with _lock, _conn:
+        visit = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        if visit["status"] not in ("registered", "nurse", "waiting"):
+            raise NotHere(reg_no)
+        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = ? WHERE reg_no = ?",
+                      (_now(), why, reg_no))
+        _event(reg_no, "removed", "nurse", why)
+    return {"reg_no": reg_no, "status": "done", "why": why}
+
+
+def todays_patients(limit=60):
+    """Today's real patients, newest first, and where each one is or went: for the nurse's "Today's patients".
+    The simulated patients of other nurses are left out."""
+    with _lock:
+        rows = [dict(r) for r in _conn.execute(
+            "SELECT v.*, d.name AS doctor_name, d.room AS doctor_room, w.name AS wanted_name FROM visits v "
+            "LEFT JOIN doctors d ON d.reg_no = v.doctor_reg LEFT JOIN doctors w ON w.reg_no = v.wanted_doctor "
+            "WHERE v.day = ? AND v.you = 1 ORDER BY v.reg_no DESC LIMIT ?", (_meta("day"), limit))]
+
+    def where(v):
+        if v["status"] == "registered":
+            return "Checking in on the phone"
+        if v["status"] == "nurse":
+            return "Waiting for the nurse"
+        if v["status"] == "waiting":
+            return f"In the waiting room{' for ' + v['wanted_name'] if v['wanted_name'] else ''}"
+        if v["status"] == "with doctor":
+            return f"With {v['doctor_name']}, {v['doctor_room']}"
+        if v["closed_why"] == "finished by the doctor":
+            return f"Seen by {v['doctor_name']}: finished"
+        return f"Closed: {v['closed_why'] or 'finished'}"
+    return [{"reg_no": v["reg_no"], "code": code_for(v["reg_no"]), "ticket": v["ticket"], "patient": full_name(v),
+             "complaint": v["complaint"], "level": v["level"], "status": v["status"], "where": where(v),
+             "department": v["department"]} for v in rows]
 
 
 def wait(minutes=15):

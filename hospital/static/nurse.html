@@ -85,6 +85,12 @@
   .vitals .bp input { min-width:0; }
   .vitals .unit { color:var(--soft); font-size:.85rem; font-weight:400; }
   .fill { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+  .manage { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:10px 0; }
+  .manage .why { display:flex; flex-wrap:wrap; gap:8px; width:100%; }
+  .manage .why[hidden] { display:none; }
+  .mini.danger { border-color:#e3b3b2; color:var(--rose); }
+  .line-row[data-reg] { cursor:pointer; } .line-row[data-reg]:hover { border-color:var(--blue); }
+  .today td { vertical-align:top; }
 </style>
 </head>
 <body>
@@ -133,6 +139,13 @@
 </div>
 
 <div class="wrap bottom-db">
+  <details class="card db" id="today-box">
+    <summary>Today's patients <span>where each one went</span></summary>
+    <div class="db-body">
+      <div class="table-wrap"><table class="staff today"><thead><tr><th>Ticket</th><th>Patient</th><th>Level</th><th>Where now</th></tr></thead>
+        <tbody id="today"></tbody></table></div>
+    </div>
+  </details>
   <details class="card db" aria-live="polite">
     <summary>Behind the scenes: the hospital database <span>doctors on duty and today's visits</span></summary>
     <div class="db-body">
@@ -354,8 +367,9 @@ async function openPatient(reg, takeOver) {
     if (!takeOver) { document.getElementById("take-over").addEventListener("click", () => openPatient(reg, true)); return; }
   }
   if (card.status !== "nurse" && card.status !== "registered" && card.status !== "waiting") {
-    panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.code)}</span>Already seen</h2>
-      <p class="lede">The nurse station has already dealt with this patient${card.ticket ? ` (ticket ${esc(card.ticket)})` : ""}.</p>`;
+    panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.ticket || card.code)}</span>${esc(card.patient || "Already seen")}</h2>
+      ${card.patient ? `<p class="lede" style="font-weight:700;color:var(--ink)">“${esc(card.complaint)}”</p>` : ""}
+      <p class="lede">${todayWhere[reg] ? "Now: " + esc(todayWhere[reg]) + "." : "The nurse station has already dealt with this patient."}</p>`;
     return;
   }
   const answers = card.answers.map((a) => `<dt>${a.label ? `<span class="tag topic">${esc(a.label)}</span>` : ""}${esc(a.question)}</dt>
@@ -375,6 +389,14 @@ async function openPatient(reg, takeOver) {
       Measure again and decide again. They keep their ticket and the minutes they have already waited. Once you
       have measured, no doctor calls them for 15 minutes, so that your decision is not lost.</div>`
       : card.worse ? `<div class="note red" style="margin:10px 0"><b>The patient pressed “I feel worse” on their phone</b> while waiting for you.</div>` : ""}
+    <div class="manage">
+      ${card.status === "waiting" && (card.worse || card.recheck_due) ? `<button type="button" class="mini" id="still-fine">Still fine: no re-check now</button>` : ""}
+      <button type="button" class="mini danger" id="remove-open" aria-expanded="false">Remove patient…</button>
+      <div class="why" id="remove-why" hidden><span class="hint" style="margin:0;align-self:center">Why?</span>
+        ${["left without being seen", "sent home by the nurse", "registered by mistake"].map((w) =>
+          `<button type="button" class="mini" data-why="${w}">${w[0].toUpperCase() + w.slice(1)}</button>`).join("")}</div>
+      <p class="error" id="manage-error" role="alert" style="width:100%;margin:0"></p>
+    </div>
     ${card.answers.some((a) => a.kind === "danger" && a.answer) ? "" : `<div class="note red" style="margin:10px 0">The patient
       did not answer the danger-sign questions. Ask about them yourself before you decide.</div>`}
     <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
@@ -407,6 +429,7 @@ async function openPatient(reg, takeOver) {
     <p class="error" id="error" role="alert"></p>
     <div id="result"></div>`;
   summarise(run, reg);
+  manage(reg, card);
   // A re-check starts from what the nurse wrote and ticked before, so that deciding again does not wipe it.
   if (card.note) { document.getElementById("note").value = card.note; document.getElementById("note-count").textContent = card.note.length + " / 300"; }
   document.getElementById("summary-wrong").checked = Boolean(card.summary_held_back);
@@ -429,6 +452,46 @@ async function openPatient(reg, takeOver) {
       idle(go); cur.nurseLevel = null; cur.shortList = false; cur.how = cur.result.department_how; showLevel();
     } catch (e) { idle(go); document.getElementById("error").textContent = trouble(e); }
   });
+}
+
+// ---------------------------------------------------------------- managing a patient
+// "Still fine": the nurse looked again and nothing changed. "Remove": the patient left, was sent home, or was
+// registered by mistake. The visit is closed and kept; it shows under "Today's patients".
+function manage(reg, card) {
+  const error = document.getElementById("manage-error"), open = document.getElementById("remove-open"), why = document.getElementById("remove-why");
+  const done = (title, text) => {
+    panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.ticket || card.code)}</span>${esc(title)}</h2><p class="lede">${esc(text)}</p>
+      <button class="go" id="next-patient">Open the next patient</button>`;
+    document.getElementById("next-patient").addEventListener("click", () => { welcome(); history.replaceState(null, "", "/nurse"); });
+    loadList(); loadLine(); loadToday(); refreshDatabase();
+  };
+  open.addEventListener("click", () => { why.hidden = !why.hidden; open.setAttribute("aria-expanded", !why.hidden); });
+  why.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-why]"); if (!button) return;
+    try { await api("/api/nurse/remove", { reg_no: reg, why: button.dataset.why });
+          done(card.patient || card.complaint, "Removed: " + button.dataset.why + ". The visit is closed and kept."); }
+    catch (e) { error.textContent = trouble(e); }
+  });
+  const fine = document.getElementById("still-fine");
+  if (fine) fine.addEventListener("click", async () => {
+    try { await api("/api/nurse/still-fine", { reg_no: reg });
+          done(card.patient || card.complaint, `Still fine. Ticket ${card.ticket} keeps its place in line, and the re-check time starts again.`); }
+    catch (e) { error.textContent = trouble(e); }
+  });
+}
+
+// Today's patients and where each one went.
+const todayWhere = {};
+async function loadToday() {
+  const box = document.getElementById("today");
+  if (!box || !document.getElementById("today-box").open) return;
+  let data;
+  try { data = await api("/api/nurse/today"); } catch (e) { return; }
+  data.patients.forEach((p) => { todayWhere[p.reg_no] = p.where; });
+  box.innerHTML = data.patients.length ? data.patients.map((p) => `<tr data-reg="${esc(p.reg_no)}" tabindex="0" style="cursor:pointer">
+      <td class="mono">${esc(p.ticket || p.code)}</td><td><b>${esc(p.patient || "")}</b><br><span class="hint">${esc(p.complaint)}</span></td>
+      <td class="num">${p.level || "–"}</td><td>${esc(p.where)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="hint">No patient yet today.</td></tr>`;
 }
 
 // ---------------------------------------------------------------- the measurements
@@ -717,13 +780,14 @@ async function loadLine(message) {
   if (message !== undefined) document.getElementById("moved").textContent = message;
 
   document.getElementById("line").innerHTML = `<p class="hint">${data.patients.length} waiting</p>` +
-    data.patients.map((p) => `<div class="line-row">
+    data.patients.map((p) => `<div class="line-row" data-reg="${esc(p.reg_no)}" role="button" tabindex="0" title="Open this patient">
       <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
       <div><div class="who-line">${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.who)}</div>
         <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
         ${p.with_nurse ? `<span class="tag">with the nurse for a re-check</span>` : ""}${
           p.worse ? `<span class="tag red">feels worse</span>` : ""}${p.recheck_due ? `<span class="tag amber">re-check due</span>` : ""}${
-          p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
+          p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}${
+          p.doctor ? `<span class="tag">for ${esc(p.doctor)}</span>` : ""}</div></div>
     </div>`).join("");
 }
 document.getElementById("next").addEventListener("click", async (event) => {
@@ -801,6 +865,15 @@ if (asked) openPatient(asked); else welcome();
 loadList(); loadLine(); refreshDatabase();
 setInterval(loadList, 4000);
 setInterval(() => loadLine(), 8000);
+// Today's patients: drawn when opened, and kept current while open. A row, like a row of the line, opens the patient.
+document.getElementById("today-box").addEventListener("toggle", loadToday);
+setInterval(loadToday, 6000);
+for (const id of ["today", "line"]) {
+  const box = document.getElementById(id);
+  box.addEventListener("click", (event) => { const row = event.target.closest("[data-reg]"); if (row) openPatient(row.dataset.reg); });
+  box.addEventListener("keydown", (event) => { const row = event.target.closest("[data-reg]");
+    if (row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); openPatient(row.dataset.reg); } });
+}
 </script>
 </body>
 </html>
