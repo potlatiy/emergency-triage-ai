@@ -108,11 +108,15 @@
   <section class="card" aria-labelledby="storage">
     <h2 id="storage">Items saved in your browser</h2>
     <p>A few small items are saved in your browser's own storage so a screen keeps working after a reload. They stay
-      on your device and are not sent anywhere.</p>
+      on your device. One of them, the key of the patient's own visit, is sent back to Meddy's server and to nobody
+      else.</p>
     <div class="scroll"><table>
       <thead><tr><th>Name</th><th>What it does</th><th>Lasts</th></tr></thead>
       <tbody>
-        <tr><td><code>meddy-visit</code></td><td>The patient's own visit number and step, so the phone can carry on after a reload</td><td>Until the visit ends</td></tr>
+        <tr><td><code>meddy-visit</code></td><td>The patient's own visit, so the phone can carry on after a reload: its number and
+          step, what was typed at check-in (name, age, the complaint and the answers), and a key for this visit. The phone
+          sends the key back to Meddy's server each time it asks about the visit, so that only this phone is given the
+          doctor's note</td><td>Until the visit ends or a new one is started</td></tr>
         <tr><td><code>meddy-doctor</code></td><td>Which doctor's screen is open on this computer</td><td>Until another doctor is chosen</td></tr>
         <tr><td><code>meddy-offered-…</code></td><td>Which new patients this doctor was already asked about, so the question is not repeated</td><td>Until the site data is cleared</td></tr>
         <tr><td><code>meddy-large</code></td><td>Whether you chose larger text</td><td>Until changed</td></tr>
@@ -129,6 +133,9 @@
       <a href="https://huggingface.co/privacy">Hugging Face privacy policy</a>.</p>
     <p><b>Google Fonts</b> provides the typeface (Atkinson Hyperlegible Next), so your browser asks Google for it and
       Google sees your IP address: <a href="https://policies.google.com/privacy">Google privacy policy</a>.</p>
+    <p><b>Cloudflare (cdnjs)</b> provides the small library that draws the QR codes on the patient's page. Your browser
+      asks Cloudflare for it the first time a code is shown, so Cloudflare sees your IP address:
+      <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare privacy policy</a>. Nothing you typed is sent to it.</p>
     <p>Links to GitHub open GitHub's own site.</p>
   </section>
 
