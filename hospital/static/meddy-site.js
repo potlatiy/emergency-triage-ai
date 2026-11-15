@@ -195,7 +195,9 @@
     lockShown = true;
     const lock = document.createElement("div");
     lock.id = "staff-lock";
-    lock.style.cssText = "position:fixed;inset:0;z-index:1200;display:grid;place-items:center;background:rgba(243,246,242,.97)";
+    // Nothing of the page may show behind the lock: a tab opened before the PIN was set still holds names.
+    for (const child of document.body.children) child.style.visibility = "hidden";
+    lock.style.cssText = "position:fixed;inset:0;z-index:1200;display:grid;place-items:center;background:#f3f6f2;visibility:visible";
     lock.innerHTML = '<form style="width:min(360px,90vw);padding:28px;border-radius:20px;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.12);text-align:center">' +
       '<img src="/static/meddy-logo.webp" alt="Meddy" width="120" height="40" style="height:40px;width:auto">' +
       '<h2 style="margin:14px 0 6px">Staff only</h2><p style="margin:0 0 16px;color:#45555b">Enter the staff PIN.</p>' +
