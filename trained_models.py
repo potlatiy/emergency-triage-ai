@@ -20,7 +20,8 @@ import numpy as np
 import sklearn
 
 from assignment import TABLE, fair_predictions, labels as department_labels, make_assignment_model
-from triage import CATEGORIES, DATA, LEVELS, NUMBERS, TEXT, fair_probabilities, load, make_model, most_likely
+from triage import (CATEGORIES, DATA, LEVELS, NUMBERS, RANGE_COVERAGE, TEXT, fair_probabilities, level_range_figures,
+                    load, make_model, most_likely, range_cut)
 
 FOLDER = Path(__file__).parent / "models"
 URGENCY_FILE = FOLDER / "urgency_model.joblib"
@@ -56,7 +57,11 @@ def save():
 
     # The saved models have seen every patient, so they cannot be tested on this data.
     # The fair figures come from the same recipe tested on patients it had not seen.
-    level_right = float((most_likely(fair_probabilities(data)) == data["KTAS_expert"]).mean())
+    unseen = fair_probabilities(data)
+    level_right = float((most_likely(unseen) == data["KTAS_expert"]).mean())
+    # The range of levels: the cut comes from those same fair probabilities, never from the saved model's own
+    # answers on patients it has seen (it is too sure of those, and the range would come out too narrow).
+    range_figures = level_range_figures(data["KTAS_expert"].values, unseen)
     target = department_labels(data)
     department_right = float((fair_predictions(data, target)[0] == target).mean())
     in_top_three = float((fair_predictions.ranked[:, :3] == target.to_numpy()[:, None]).any(axis=1).mean())
@@ -85,6 +90,16 @@ def save():
                 "fingerprint": fingerprint(DEPARTMENT_FILE),
             },
         },
+        "level_range": {
+            "promise": RANGE_COVERAGE,
+            # Not rounded: rounding it up would drop the very patient the cut was set on.
+            "keep_a_level_when_its_probability_is_at_least": range_cut(unseen, data["KTAS_expert"].values),
+            "expert_level_inside_on_unseen_patients": round(float(range_figures["inside"]), 3),
+            "inside_when_the_range_is_one_two_three_or_more_levels": {
+                str(width): round(float(share), 3) for width, share in range_figures["inside_by_width"].items()},
+            "average_levels_in_range": round(float(range_figures["width"]), 2),
+            "urgent_patients_inside": round(float(range_figures["urgent_inside"]), 3),
+        },
         "note": "The figures were measured with 5-fold cross-validation: every patient scored by a model that "
                 "never saw them. The saved files were then trained on all patients, for the demonstration.",
     }
@@ -111,6 +126,27 @@ def why_not_usable():
         if fingerprint(file) != info["models"][file.name]["fingerprint"]:
             return f"{file.name} does not match model_info.json"
     return None
+
+
+def level_range_settings():
+    """What Meddy's range of levels needs: {"cut": how small a level's probability may be for the level to stay
+    in the range (see triage.range_cut), "inside": how often the experts' level was inside in our tests, for a
+    range of 1, 2 and 3-or-more levels}. Read from model_info.json when the saved models are usable, worked out
+    from the data otherwise."""
+    if why_not_usable() is None:
+        saved = json.loads(INFO_FILE.read_text()).get("level_range")
+        if saved and saved.get("promise") == RANGE_COVERAGE and "inside_when_the_range_is_one_two_three_or_more_levels" in saved:
+            return {"cut": saved["keep_a_level_when_its_probability_is_at_least"],
+                    "inside": {int(w): share for w, share in saved["inside_when_the_range_is_one_two_three_or_more_levels"].items()}}
+    data = load()
+    unseen = fair_probabilities(data)
+    figures = level_range_figures(data["KTAS_expert"].values, unseen)
+    return {"cut": range_cut(unseen, data["KTAS_expert"].values),
+            "inside": {width: round(float(share), 3) for width, share in figures["inside_by_width"].items()}}
+
+
+def level_range_cut():
+    return level_range_settings()["cut"]
 
 
 def ready(announce=True):

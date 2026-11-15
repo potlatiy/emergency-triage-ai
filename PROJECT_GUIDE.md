@@ -80,10 +80,14 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
    urgent, chooses the doctor (Meddy suggests one and a short list of three more, each marked free or busy),
    or sends a critical patient straight to a doctor with a reason.
    Every verdict is counted: that count is the **test regime**, a running test of the app in use.
-4. **Waiting room.** The electronic line orders everyone by urgency, then by waiting time.
+4. **Waiting room.** The electronic line orders everyone by urgency, then by waiting time. The phone has an
+   **"I feel worse"** button: one press puts the patient on top of the nurse's list for another look, and changes
+   neither the level nor the place in line (a patient still waiting for the nurse's first look goes first on her list). The nurse's screen also marks patients who have waited longer than
+   their level allows without a second look (level 3: 30 minutes, 4: 60, 5: 120). After a re-check the patient
+   keeps their ticket and the minutes they have waited.
 5. **Doctor.** When called, the patient goes to the doctor the nurse chose, or to the least busy doctor on
    duty in their department. The doctor's card opens with a patient summary in three parts (the patient said, the nurse
-   found, Meddy suggested), written once when the nurse sends the patient on. The nurse can hold back the AI
+   found, Meddy suggested), written when the nurse sends the patient on, and again if she re-checks them. The nurse can hold back the AI
    sentences and add a note of her own. The complaint, level, vital signs and every answer are below it.
    The summary is not tested with real doctors.
 
@@ -113,6 +117,16 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
   flag is raised when Meddy thinks it more likely than not that the patient is more urgent than the nurse said;
   a milder note when only the safety-first level is more urgent.
 - **What it outputs:** a level, the probability of each level, and "not sure" when no level reaches 60%.
+- **A range of levels** (`triage.py`, section 9 of its output; notebook section 14). A level is in the range when
+  its probability reaches a cut of about 10%. The cut was set so that the experts' level stays in the range for
+  90% of patients, and on patients the cut had not seen it did for 90.6%. The range is two levels wide on average.
+  Weak spots, all on the screen or in the README: it holds for only 8 in 10 of the most urgent patients, and when
+  it misses one of them it is nearly always too low; a one-level range is right 82% of the time; and with model
+  and cut from one hospital tried at the other it drops to 87% (urgent patients 64%).
+- **Patients like this one** (`similar.py`; notebook section 15). The five real patients in the data most like
+  the new one, with their nurse's level and the experts' level. The most common level among the five was the
+  experts' level for 61% of unseen patients (five random patients: 33%), which is weaker than the model (68%), so
+  they are evidence to look at and not a second opinion. The diagnosis is never used.
 
 ### Part B: the assignment model (trained on real data)
 
@@ -211,6 +225,9 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 - [x] The chain checked end to end for weak links: a patient who is with a doctor cannot be assessed or queued again, joining the line needs an assessment, unknown values
       are refused, emergencies never sit in the line, a reload keeps the patient's place, and every doctor's
       list is made of real visits
+- [x] A range of levels with a measured promise, and five similar past patients, on the nurse's report
+      (`triage.py`, `similar.py`, notebook sections 14 and 15)
+- [x] "I feel worse" on the patient's phone and re-check times on the nurse's screen (`hospital/`)
 - [x] Question writer steered by a system prompt (`hospital/core.py`)
 - [x] Diagnosis-to-department table read row by row; 14 corrections made (`data/diagnosis_departments.csv`)
 - [x] Department model added to the notebook (section 13)

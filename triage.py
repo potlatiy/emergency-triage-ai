@@ -234,6 +234,110 @@ def quick_review_report(df, probabilities):
     return quick
 
 
+# ---------------------------------------------------------------- a range of levels with a promise
+
+RANGE_COVERAGE = 0.90   # the promise: the expert's level is inside the range for 9 patients in 10
+
+
+def range_cut(probabilities, truth, coverage=RANGE_COVERAGE):
+    """How small a level's probability may be for the level to stay in the range.
+
+    For every patient, look at the probability the model gave to the level the experts chose. Sort those from
+    smallest to largest and put the cut just low enough that `coverage` of the patients keep the experts'
+    level. On new patients the experts' level then stays in the range about that often. The method is called
+    conformal prediction; no number is tuned by hand."""
+    given = np.sort(np.asarray(probabilities)[np.arange(len(truth)), np.asarray(truth) - 1])
+    may_miss = int(np.floor((len(given) + 1) * (1 - coverage)))          # how many patients the promise lets us miss
+    return float(given[may_miss - 1]) if may_miss else 0.0
+
+
+def level_range(probabilities, cut):
+    """The most urgent and the least urgent level of each patient's range.
+
+    A level is in the range when its probability reaches the cut. The most likely level is always in, and so
+    is every level between two levels that are in: a range has no holes."""
+    probabilities = np.asarray(probabilities)
+    keep = probabilities >= cut
+    keep[np.arange(len(probabilities)), probabilities.argmax(axis=1)] = True
+    return keep.argmax(axis=1) + 1, 5 - keep[:, ::-1].argmax(axis=1)
+
+
+def level_range_figures(truth, probabilities, coverage=RANGE_COVERAGE, rounds=500):
+    """Is the promise kept? The cut is found on one random half of the patients and tried on the other half,
+    `rounds` times. Every probability already comes from a model that never saw the patient."""
+    truth, n = np.asarray(truth), len(truth)
+    rng = np.random.default_rng(SEED)
+    rows, by_level = [], []
+    for _ in range(rounds):
+        order = rng.permutation(n)
+        first, second = order[: n // 2], order[n // 2:]
+        low, high = level_range(probabilities[second], range_cut(probabilities[first], truth[first], coverage))
+        t = truth[second]
+        inside = (low <= t) & (t <= high)
+        width, urgent = high - low + 1, t <= 2
+        rows.append([inside.mean(), width.mean(), (high == low).mean(), inside[urgent].mean(),
+                     (t < low).mean(), (t > high).mean(),
+                     (t[urgent] < low[urgent]).mean(),                  # urgent patients whose whole range is less urgent
+                     inside[width == 1].mean(), inside[width == 2].mean(), inside[width >= 3].mean(),
+                     (width == 1).mean(), (width == 2).mean(), (width >= 3).mean()])
+        by_level.append([inside[t == level].mean() for level in LEVELS])
+    rows = np.array(rows)
+    mean = rows.mean(axis=0)
+    return {"inside": mean[0], "inside_low": np.percentile(rows[:, 0], 2.5), "inside_high": np.percentile(rows[:, 0], 97.5),
+            "width": mean[1], "one_level": mean[2], "urgent_inside": mean[3], "more_urgent_than_range": mean[4],
+            "less_urgent_than_range": mean[5], "urgent_above_range": mean[6],
+            # How often the experts' level was inside, for ranges of one level, two levels, three or more.
+            "inside_by_width": {1: mean[7], 2: mean[8], 3: mean[9]}, "share_by_width": {1: mean[10], 2: mean[11], 3: mean[12]},
+            "by_level": dict(zip(LEVELS, np.mean(by_level, axis=0)))}
+
+
+def range_across_hospitals(df, coverage=RANGE_COVERAGE):
+    """Does the promise survive a move? The model and the cut come from one hospital (the cut from that hospital's
+    own fair probabilities) and are tried on the patients of the other. Returns [(from, to, inside, urgent inside)]."""
+    rows = []
+    for home, away in [(1, 2), (2, 1)]:
+        train, test = df[df["Group"] == home], df[df["Group"] == away]
+        cut = range_cut(fair_probabilities(train), train["KTAS_expert"].values, coverage)
+        model = make_model().fit(train, train["KTAS_expert"])
+        p = np.zeros((len(test), 5))
+        p[:, [LEVELS.index(c) for c in model.classes_]] = model.predict_proba(test)
+        low, high = level_range(p, cut)
+        t = test["KTAS_expert"].values
+        inside = (low <= t) & (t <= high)
+        rows.append((home, away, float(inside.mean()), float(inside[t <= 2].mean())))
+    return rows
+
+
+def level_range_report(df, probabilities):
+    truth = df["KTAS_expert"].values
+    print("\n9. A RANGE OF LEVELS WITH A PROMISE (the cut is found on one half of the patients, tried on the other, 500 times)")
+    for coverage in (RANGE_COVERAGE, 0.95):
+        f = level_range_figures(truth, probabilities, coverage)
+        print(f"   Promise {coverage:.0%}: the expert's level was inside the range for {f['inside']:.1%} of patients "
+              f"(from {f['inside_low']:.0%} to {f['inside_high']:.0%} over the 500 tries).")
+        print(f"      The range is {f['width']:.1f} levels wide on average; it is a single level for {f['one_level']:.0%} of patients.")
+        print(f"      Missed: the patient was more urgent than the range for {f['more_urgent_than_range']:.1%}, "
+              f"less urgent for {f['less_urgent_than_range']:.1%}.")
+        print(f"      Of the urgent patients (levels 1-2), {f['urgent_above_range']:.0%} got a range that was entirely less urgent "
+              f"than they were: for them a miss is nearly always the dangerous way.")
+        print("      Inside, by how wide the range is: " + ", ".join(
+            f"{name} {f['inside_by_width'][w]:.0%} ({f['share_by_width'][w]:.0%} of patients)"
+            for w, name in [(1, "one level"), (2, "two levels"), (3, "three or more")]) + ".")
+        print("      By expert level: " + ", ".join(f"L{level} {share:.0%}" for level, share in f["by_level"].items())
+              + f".  Urgent patients (levels 1-2): {f['urgent_inside']:.0%}.")
+    likely = most_likely(probabilities)
+    low, high = np.maximum(likely - 1, 1), np.minimum(likely + 1, 5)
+    inside = (low <= truth) & (truth <= high)
+    print(f"   Baseline, the most likely level and one level either side: inside for {inside.mean():.1%}, "
+          f"{(high - low + 1).mean():.1f} levels wide; urgent patients {inside[truth <= 2].mean():.0%}.")
+    print(f"   The single most likely level: right for {(likely == truth).mean():.0%}.")
+    print("   Weak spot: the promise holds on average, not for every group. Levels 1, 2 and 5 are inside less often.")
+    for home, away, inside_away, urgent_away in range_across_hospitals(df):
+        print(f"   Model and cut from hospital {home}, tried at hospital {away}: inside for {inside_away:.0%}, "
+              f"urgent patients {urgent_away:.0%}.")
+    print("   So the promise is for patients like the ones in the data. It does not travel to another hospital.")
+
+
 def make_flag_model():
     """A model built for the second check itself: it sees everything known at the door AND the
     nurse's level, and learns to predict 'the nurse rated this patient too low'."""
@@ -339,6 +443,7 @@ def main():
 
     second_check_report(df, probabilities)
     quick_review_report(df, probabilities)
+    level_range_report(df, probabilities)
 
 
 def second_check_report(df, probabilities):
