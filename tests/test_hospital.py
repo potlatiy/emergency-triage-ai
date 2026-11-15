@@ -711,7 +711,7 @@ def test_the_report_names_the_likely_doctor_without_sending_the_patient():
     assert likely["department"] == report["department"] and likely["doctor"].startswith("Dr.")
     assert all(option["doctor"]["doctor"] for option in report["department_options"])
     assert {d["reg_no"]: d["waiting"] for d in db.staff()["doctors"]} == before        # nobody was assigned yet
-    assert db.visit_for(reg_no)["status"] == "registered"
+    assert db.visit_for(reg_no)["status"] == "nurse"                                   # measured, not sent anywhere
     client.post("/api/line/join", json={"reg_no": reg_no, "level": report["level"], "department": report["department"],
                                         "review": "approved"})
     while (called := client.post("/api/line/next").json()["called"])["reg_no"] != reg_no:
@@ -969,7 +969,7 @@ def test_the_mild_flag_is_the_part_between_the_two_rules():
 def checked_in(complaint="chest pain since this morning", danger_yes=False, **extra):
     """Register and finish check-in from the patient's phone, as the page does. Returns the registration number."""
     reg = new_visit(complaint)
-    answers = [{"question": "Does the pain spread to your arm, jaw or back?", "answer": "Yes" if danger_yes else "No",
+    answers = [{"question": core.danger_questions_for(complaint)[0], "answer": "Yes" if danger_yes else "No",
                 "kind": "danger"},
                {"question": "What does the pain feel like?", "answer": "Pressure or tightness", "kind": "extra",
                 "topic": "feel"}]
@@ -1230,7 +1230,7 @@ def test_good_ai_sentences_reach_the_doctor_unless_the_nurse_says_they_are_not_r
 def test_the_nurses_note_is_short_and_a_blank_one_is_dropped():
     reg_no = assessed_visit()
     too_long = client.post("/api/line/join", json={"reg_no": reg_no, "level": 4, "note": "x" * 301})
-    assert too_long.status_code == 422 and db.visit_for(reg_no)["status"] == "registered"
+    assert too_long.status_code == 422 and db.visit_for(reg_no)["status"] == "nurse"
     client.post("/api/refer", json={"reg_no": reg_no, "level": 3, "reason": "Looks unwell", "note": "     "})
     assert summary_on_the_doctors_card(reg_no)["nurse_found"]["note"] is None
     assert db.visit_for(reg_no)["nurse_note"] is None
@@ -1352,3 +1352,106 @@ def test_the_database_is_copied_to_lasting_storage(monkeypatch, tmp_path):
     copy.close()
     new_visit()
     assert db.keep_copy() is True                                               # a change: copied again
+
+
+# ---------------------------------------------------------------- the chain's guards: what each screen may not do
+
+def test_a_danger_answer_must_be_one_of_this_complaints_own_questions():
+    """A yes to a danger question moves the patient up, so the server does not take the phone's word for
+    what was asked: a made-up question, another complaint's question or the same one twice is refused."""
+    reg = new_visit("sore throat")
+    own = core.danger_questions_for("sore throat")
+
+    def check_in(answers):
+        return client.post("/api/checkin", json={"reg_no": reg, "answers": answers}).status_code
+
+    assert check_in([{"question": "Are you dying?", "answer": "Yes", "kind": "danger"}]) == 422
+    assert check_in([{"question": core.DANGER_QUESTIONS["Cardiology"][0], "answer": "Yes", "kind": "danger"}]) == 422
+    assert check_in([{"question": own[0], "answer": "Yes", "kind": "danger"}] * 2) == 422       # one yes, counted once
+    assert check_in([{"question": own[0], "answer": "Very much", "kind": "danger"}]) == 422
+    assert check_in([{"question": own[0], "answer": "Yes", "kind": "banana"}]) == 422
+    assert check_in([{"question": "Since when?", "answer": "Today", "kind": "extra", "topic": "nope"}]) == 422
+    assert db.visit_for(reg)["status"] == "registered" and db.answers_for(reg) == []            # nothing was kept
+    assert client.get("/api/nurse/patients").json()["patients"] == []
+
+    assert check_in([{"question": own[0], "answer": "Yes", "kind": "danger"},
+                     {"question": "Since when?", "answer": "Today", "kind": "extra", "topic": "onset"}]) == 200
+    assert client.get("/api/nurse/patients").json()["patients"][0]["danger"] == 1
+
+
+def test_an_injury_brings_its_own_danger_questions():
+    """The questionnaire is built before anyone knows about an injury, so both readings of the complaint count."""
+    with_injury = core.danger_questions_for("pain in my leg", injury=True)
+    assert set(core.DANGER_QUESTIONS["Trauma and orthopaedics"]) <= set(with_injury)
+    assert set(core.danger_questions_for("pain in my leg")) <= set(with_injury)
+
+
+def test_check_in_is_closed_once_the_nurse_has_measured():
+    """Meddy's report is worked out from the answers as they were. New answers afterwards would leave the
+    nurse reading a report that no longer fits them, so the phone is told the nurse already has the patient."""
+    reg = checked_in(danger_yes=False)
+    before = db.answers_for(reg)
+    again = {"reg_no": reg, "answers": [{"question": core.danger_questions_for("chest pain since this morning")[0],
+                                         "answer": "Yes", "kind": "danger"}]}
+    assert client.post("/api/checkin", json=again).status_code == 200            # before the nurse: answers can change
+    assert client.post("/api/checkin", json={"reg_no": reg, "answers": before}).status_code == 200
+    assert client.post("/api/triage", json={"reg_no": reg}).json()["danger"] is False
+    assert client.post("/api/checkin", json=again).status_code == 409            # after she measured: closed
+    assert db.answers_for(reg) == before
+
+
+def test_the_nurse_can_take_a_patient_who_never_finished_check_in():
+    """Too unwell to tap, or no phone: the nurse measures anyway. The visit is then with the nurse, the phone's
+    late answers are refused, and Meddy asks for a personal check because nobody answered the danger questions."""
+    reg = new_visit("sore throat", age=30)
+    report = client.post("/api/triage", json={"reg_no": reg}).json()
+    assert report["asked"] is False and report["advice"]["quick"] is False
+    assert "the patient did not answer the danger-sign questions" in report["advice"]["reasons"]
+    visit = db.visit_for(reg)
+    assert visit["status"] == "nurse" and visit["checked_in"] is not None
+    assert [p["reg_no"] for p in client.get("/api/nurse/patients").json()["patients"]] == [reg]
+    assert client.get("/api/me/" + reg).json()["status"] == "nurse"
+    assert client.post("/api/checkin", json={"reg_no": reg, "answers": []}).status_code == 409
+    assert client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"}).status_code == 200
+
+
+def test_answering_no_to_every_danger_question_is_not_the_same_as_not_being_asked():
+    result = {"level": 4, "probabilities": {"4": 0.9}, "sure": 0.9, "unread": False, "warnings": []}
+    assert core.review_advice(result, danger=False, asked=True)["quick"] is True
+    assert core.review_advice(result, danger=False, asked=False)["quick"] is False
+    assert core.review_advice({**result, "level": 2}, asked=False) == {"quick": True, "emergency": True, "reasons": []}
+
+
+def test_a_doctor_who_is_off_duty_cannot_call_a_patient():
+    reg = assessed_visit("sore throat", age=30)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "department": "Eye, ear, nose and throat"})
+    doctor = next(d["reg_no"] for d in db.staff()["doctors"] if d["department"] == "Eye, ear, nose and throat")
+    client.post("/api/staff/duty", json={"reg_no": doctor, "on_duty": False})
+    waiting = len(db.line()["patients"])
+    refused = client.post("/api/doctor/call", json={"doctor_reg": doctor})
+    assert refused.status_code == 409 and "off duty" in refused.json()["detail"]
+    assert len(db.line()["patients"]) == waiting and db.visit_for(reg)["status"] == "waiting"      # nobody was moved
+    client.post("/api/staff/duty", json={"reg_no": doctor, "on_duty": True})
+    assert client.post("/api/doctor/call", json={"doctor_reg": doctor}).json()["called"]["doctor_reg"] == doctor
+
+
+def test_not_asked_is_never_summed_up_as_no_danger_signs():
+    """Seen on the nurse's screen: for a patient who answered nothing, the language model wrote that he
+    "denies experiencing any danger signs". The model is now told he was not asked, and such a sentence is cut."""
+    report = core._report_for_summary("my father fainted", 81, "Male", answers=[])
+    assert core.NOT_ASKED in report and "answered no to all" not in report
+    written = "The patient reports his father fainted. He denies experiencing any danger signs."
+    assert core.checked_summary(written, "my father fainted", report) == "The patient reports his father fainted."
+    answered = core._report_for_summary("my father fainted", 81, "Male", answers=[
+        {"question": core.danger_questions_for("my father fainted")[0], "answer": "No", "kind": "danger"}])
+    assert "answered no to all" in answered and core.checked_summary(written, "my father fainted", answered) == written
+
+    reg = new_visit("sore throat", age=30)                       # the nurse takes over; the doctor is told
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"})
+    assert json.loads(db.visit_for(reg)["summary"])["patient_said"]["danger_asked"] is False
+    done = checked_in("sore throat")
+    client.post("/api/triage", json={"reg_no": done})
+    client.post("/api/line/join", json={"reg_no": done, "level": 4, "review": "checked"})
+    assert json.loads(db.visit_for(done)["summary"])["patient_said"]["danger_asked"] is True
+

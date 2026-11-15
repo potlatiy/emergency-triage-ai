@@ -110,8 +110,11 @@ def vital_warnings(vitals, alert="Alert", pain=0):
     return [name for name in table.columns if bool(table[name].iloc[0])]
 
 
-def review_advice(result, danger=False):
+def review_advice(result, danger=False, asked=True):
     """Can the nurse accept Meddy's report after a quick look, or should she check the patient in person?
+
+    asked says whether the patient answered the danger-sign questions at all. "Not asked" is not "no": a
+    patient the nurse took over before check-in was finished has no answers, so a quick look is not enough.
 
     A quick review is advised only where Meddy's level held up in our tests: Meddy is at least 80% sure,
     the level is 3 to 5 and nothing in the measurements or the answers is a warning. On such patients its
@@ -127,6 +130,8 @@ def review_advice(result, danger=False):
         reasons.append(f"Meddy is only {sure:.0%} sure of the level")
     if danger:
         reasons.append("the patient answered yes to a danger sign")
+    elif not asked:
+        reasons.append("the patient did not answer the danger-sign questions")
     if result["warnings"]:
         reasons.append("warning signs: " + ", ".join(result["warnings"]))
     return {"quick": not reasons, "emergency": False, "reasons": reasons}
@@ -347,6 +352,18 @@ OWN_WORDS = {"question": "Tell the nurse in your own words what happened", "kind
              "label": "In their own words"}
 
 
+def danger_questions_for(complaint, injury=False):
+    """The danger questions a patient with this complaint can have been asked. The questionnaire is built
+    before anyone knows about an injury, so both readings of the complaint count."""
+    asked = list(DANGER_QUESTIONS[department_for(complaint)])
+    return asked + [q for q in DANGER_QUESTIONS[department_for(complaint, injury)] if q not in asked]
+
+
+def known_topic(topic):
+    """Is this one of the topics an answer can carry: a history topic, the pain question or the patient's own words?"""
+    return topic in TOPICS or topic in (PAIN_FEEL["topic"], OWN_WORDS["topic"])
+
+
 def topic_label(topic):
     if topic == PAIN_FEEL["topic"]:
         return PAIN_FEEL["label"]
@@ -519,6 +536,12 @@ def _grounded(sentence, report):
     return all(mentioned(found.group(0)) for found in _BODY_AND_SYMPTOMS.finditer(sentence))
 
 
+# "Not asked" is not "no". A patient the nurse took over before check-in was finished answered no danger question,
+# and Gemma 3 4B still wrote "denies experiencing any danger signs". With this line in the report, a sentence
+# about danger signs or about what the patient denies is dropped.
+NOT_ASKED = "Danger signs: the patient was not asked"
+_ABOUT_DANGER = re.compile(r"\b(danger\w*|den(y|ies|ied|ying)|warning signs?|red flags?)\b", re.I)
+
 _summaries = {}        # one summary per visit and set of answers, so the nurse's screen can ask again for free
 
 
@@ -528,7 +551,10 @@ def checked_summary(text, complaint="", report=None):
     text = " ".join(str(text or "").split())
     # Keep the first two sentences that do not guess. A third sentence is cut off rather than costing the whole summary.
     sentences = [_without_guess(s) for s in re.split(r"(?<=[.!?])\s+", text)]
-    sentences = [s for s in sentences if s and not _JUDGES.search(s) and (report is None or _grounded(s, report))][:2]
+    sentences = [s for s in sentences if s and not _JUDGES.search(s) and (report is None or _grounded(s, report))]
+    if report is not None and NOT_ASKED in report:
+        sentences = [s for s in sentences if not _ABOUT_DANGER.search(s)]
+    sentences = sentences[:2]
     text = " ".join(sentences)
     if not text or len(text.split()) > SUMMARY_MAX_WORDS:
         raise ValueError("not a short summary")
@@ -546,7 +572,8 @@ def _report_for_summary(complaint, age, sex, answers, injury=False):
     if injury:
         lines.append("Caused by an injury: yes")
     danger = [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"]
-    lines += [f"Danger sign, answered yes: {q}" for q in danger] or ["Danger signs: answered no to all"]
+    asked = any(a.get("kind") == "danger" and a.get("answer") in ("Yes", "No") for a in answers)
+    lines += [f"Danger sign, answered yes: {q}" for q in danger] or ["Danger signs: answered no to all" if asked else NOT_ASKED]
     story = [a["answer"] for a in answers if a.get("topic") == OWN_WORDS["topic"] and a.get("answer")]
     lines += [f'The patient wrote, in their own words: "{text}"' for text in story]
     lines += [f"{a['question']} {a['answer']}" for a in answers
@@ -626,6 +653,10 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
         "written_by": "ai" if use_ai else "code",
         "own_words": story,
         "danger_yes": [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"],
+        # False: the patient came through check-in without answering a danger question (the nurse took them
+        # over). None for the made-up patients, who never checked in. "Not asked" must not read as "no".
+        "danger_asked": (any(a.get("kind") == "danger" and a.get("answer") in ("Yes", "No") for a in answers)
+                         if visit.get("checked_in") is not None else None),
         "facts": [{"label": topic_label(a.get("topic")), "value": a["answer"]} for a in answers
                   if a.get("kind") == "extra" and a.get("answer") and a.get("topic") != OWN_WORDS["topic"]
                   and topic_label(a.get("topic"))],

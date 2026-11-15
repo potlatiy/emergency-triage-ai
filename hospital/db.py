@@ -337,7 +337,7 @@ def code_for(reg_no):
 
 
 class AlreadyWithNurse(Exception):
-    """The nurse has already assessed this patient, so check-in cannot be done again."""
+    """The nurse has already measured this patient, so check-in cannot be done again."""
 
 
 def check_in(reg_no, arrival, injury, pain, answers):
@@ -346,12 +346,15 @@ def check_in(reg_no, arrival, injury, pain, answers):
     Nothing about urgency is worked out here. The nurse measures the vital signs on her own screen, and only
     then does Meddy suggest a level. Doing check-in again before the nurse comes (a reload, a changed answer)
     replaces the answers and keeps the time the patient first reached the nurse's list.
+
+    Once the nurse has measured the patient, check-in is closed: Meddy's report was worked out from the
+    answers as they were, so new answers would leave the nurse reading a report that no longer fits them.
     Returns the code, None for an unknown visit, or raises AlreadyWithNurse / AlreadySent."""
     with _lock, _conn:
         visit = _still_at_the_desk(reg_no)
         if visit is None:
             return None
-        if visit["status"] == "waiting":
+        if visit["status"] == "waiting" or visit["ai_level"] is not None:
             raise AlreadyWithNurse(reg_no)
         _conn.execute("DELETE FROM answers WHERE visit_reg = ?", (reg_no,))
         _conn.executemany("INSERT INTO answers (visit_reg, question, answer, kind, topic) VALUES (?, ?, ?, ?, ?)",
@@ -437,12 +440,17 @@ def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department
     """Keep what the AI suggested and what was measured, so the doctor can see it later.
 
     ai_level is stored apart from level: level is the nurse's final decision and may be different.
-    The six vital signs, the alertness and the pain score go into one JSON text column."""
+    The six vital signs, the alertness and the pain score go into one JSON text column.
+
+    A patient the nurse measures before they finished check-in on the phone (too unwell to tap, no phone) is
+    now with the nurse: the visit moves on, so it shows on her list and the phone stops asking questions."""
     record = json.dumps({**vitals, "alert": alert, "pain": pain})
     with _lock, _conn:
-        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_advised = ? "
-                      "WHERE reg_no = ?", (ai_level, record, json.dumps(odds) if odds else None, department,
-                                           None if quick is None else int(quick), reg_no))
+        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_advised = ?, "
+                      "status = CASE WHEN status = 'registered' THEN 'nurse' ELSE status END, "
+                      "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
+                      (ai_level, record, json.dumps(odds) if odds else None, department,
+                       None if quick is None else int(quick), _meta("clock"), reg_no))
         if _conn.execute("SELECT 1 FROM visits WHERE reg_no = ?", (reg_no,)).fetchone():
             _event(reg_no, "assessed", "nurse", f"Meddy suggested level {ai_level}" + (f", {department}" if department else ""))
 
@@ -606,6 +614,10 @@ def call_next(reg_no=None):
         return _called(rows[0], clock)
 
 
+class OffDuty(Exception):
+    """A doctor who is off duty cannot call a patient: nobody would be in the room."""
+
+
 def call_for_doctor(doctor_reg):
     """The doctor presses "Call my next patient": the first patient in line for this doctor's department comes
     to this doctor. Their phone then says which room to go to.
@@ -613,11 +625,13 @@ def call_for_doctor(doctor_reg):
     The line's order is kept: the patient called is the first of this department, so a more urgent patient of
     the department is never overtaken. General medicine covers everyone, so it takes the first in line when
     nobody of its own is waiting. Returns the call, None when nobody is waiting for this doctor, or raises
-    LookupError for an unknown doctor."""
+    LookupError for an unknown doctor and OffDuty for one who is not on duty."""
     with _lock, _conn:
         doctor = _conn.execute("SELECT * FROM doctors WHERE reg_no = ?", (doctor_reg,)).fetchone()
         if doctor is None:
             raise LookupError(doctor_reg)
+        if not doctor["on_duty"]:
+            raise OffDuty(doctor_reg)
         clock, rows = _waiting()
         department = doctor["department"]
         mine = [p for p in rows if (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]

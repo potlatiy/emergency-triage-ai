@@ -216,7 +216,9 @@ document.getElementById("find").addEventListener("submit", (event) => {
 function facts(card) {
   const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
   const list = [`“${card.complaint}”`, `${card.age} years, ${sexWord(card.sex)}`, card.arrival,
-    yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes` : "No danger signs", card.injury ? "Injury" : null,
+    yes ? `${yes} danger sign${yes > 1 ? "s" : ""}: yes`
+        : card.answers.some((a) => a.kind === "danger" && a.answer) ? "No danger signs" : "Danger signs: not answered",
+    card.injury ? "Injury" : null,
     ...card.answers.filter((a) => a.kind === "extra" && a.answer && a.topic !== "story" && a.answer.length <= 40)
       .map((a) => `${a.label || a.question}: ${a.answer}`)];
   return `<div class="glance">${list.filter(Boolean).map((f) => `<span>${esc(f)}</span>`).join("")}</div>`;
@@ -225,8 +227,10 @@ function facts(card) {
 function said(card) {
   const story = card.answers.find((a) => a.topic === "story" && a.answer);
   const asked = card.answers.filter((a) => a.kind === "extra" && a.answer && a.topic !== "story");
-  if (!story && !asked.length) return "";
+  const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes");
+  if (!story && !asked.length && !yes.length) return "";
   return `<h3 class="sub">What the patient said</h3>
+    ${yes.map((a) => `<div class="note red" style="margin:8px 0"><b>⚠ Yes:</b> ${esc(a.question)}</div>`).join("")}
     ${story ? `<blockquote class="words">“${esc(story.answer)}”<span class="hint">In their own words, typed at check-in.</span></blockquote>` : ""}
     ${asked.length ? `<dl class="hand">${asked.map((a) => `<dt>${esc(a.question)}</dt><dd>${esc(a.answer)}</dd>`).join("")}</dl>` : ""}`;
 }
@@ -241,7 +245,7 @@ function welcome() {
       device's camera. Meddy shows what they reported, then you measure and decide.</p>`;
 }
 
-async function openPatient(reg) {
+async function openPatient(reg, takeOver) {
   const run = ++shown;
   document.getElementById("find-error").textContent = "";
   let card;
@@ -257,10 +261,13 @@ async function openPatient(reg) {
   loadList();
   if (card.status === "registered") {
     panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.code)}</span>Still checking in</h2>
-      <p class="lede">This patient has not finished check-in on their phone yet. They appear on the list when they do.</p>`;
-    return;
+      <p class="lede">This patient has not finished check-in on their phone yet. They appear on the list when they do.</p>
+      <p class="hint">Too unwell to tap, or no phone? Take the patient now and ask the questions yourself. Meddy has no
+        answers from them, so it will ask you to check the patient in person.</p>
+      <button class="go light" id="take-over">The patient cannot finish: take them now</button>`;
+    if (!takeOver) { document.getElementById("take-over").addEventListener("click", () => openPatient(reg, true)); return; }
   }
-  if (card.status !== "nurse") {
+  if (card.status !== "nurse" && card.status !== "registered") {
     panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.code)}</span>Already seen</h2>
       <p class="lede">The nurse station has already dealt with this patient${card.ticket ? ` (ticket ${esc(card.ticket)})` : ""}.</p>`;
     return;
@@ -271,7 +278,9 @@ async function openPatient(reg) {
     ${ids(card)}
     <h2><span class="bigcode">${esc(card.code)}</span>${esc(card.complaint)}</h2>
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
-      Waiting for the nurse ${card.waited} min.</p>
+      ${card.waited === null ? "Did not finish check-in on the phone." : `Waiting for the nurse ${card.waited} min.`}</p>
+    ${card.answers.some((a) => a.kind === "danger" && a.answer) ? "" : `<div class="note red" style="margin:10px 0">The patient
+      did not answer the danger-sign questions. Ask about them yourself before you decide.</div>`}
     <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
     <div class="for-doctor">
       <label class="tick" id="summary-wrong-row" hidden><input type="checkbox" id="summary-wrong">
