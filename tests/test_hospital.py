@@ -18,6 +18,7 @@ import server
 @pytest.fixture(autouse=True)
 def fresh_day():
     db.reset()
+    db._watched.clear()          # no doctor's screen is open at the start of a test
 
 
 # ---------------------------------------------------------------- questionnaire and department rule
@@ -53,7 +54,7 @@ def test_assessment_shape():
     assert 1 <= result["level"] <= 5
     assert abs(sum(result["probabilities"].values()) - 1) < 0.01
     options = [o["department"] for o in result["department_options"]]
-    assert len(options) == 3 and options[0] == result["department"]
+    assert len(options) == 4 and options[0] == result["department"]          # the best and three more
 
 
 def test_sicker_vital_signs_never_lower_the_urgency():
@@ -272,8 +273,7 @@ def test_the_doctor_screen_reads_the_doctor_api_and_carries_the_disclaimer():
     page = client.get("/doctor")
     assert page.status_code == 200
     assert "/api/doctor/" in page.text and "/patients" in page.text
-    assert "This project is a prototype and is not medical advice." in page.text
-    assert "Meddy suggests, the nurse decides." in page.text
+    assert "Prototype, not medical advice. Meddy never gives a diagnosis." in page.text
 
 
 # ---------------------------------------------------------------- saving the assessment
@@ -312,7 +312,7 @@ def test_the_patient_phone_never_shows_the_level():
     reg = assessed_visit("headache", 30, "Female")
     client.post("/api/line/join", json={"reg_no": reg, "level": 4})
     me = client.get(f"/api/me/{reg}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse"}
     assert not all_keys(me) & HIDDEN_FROM_PATIENT
     in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
     assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
@@ -781,7 +781,7 @@ def test_the_screens_say_that_meddy_does_not_diagnose():
     assert "Meddy never gives a diagnosis." in page
     assert "filed under" not in page                          # the patient is not shown a department as a verdict
     nurse = client.get("/nurse").text                         # Meddy's report is on the nurse's own screen now
-    assert "Meddy never gives a diagnosis." in nurse and "Meddy does not diagnose." in nurse
+    assert "Meddy never gives a diagnosis." in nurse
     assert "Meddy never gives a diagnosis" in client.get("/doctor").text
 
 
@@ -1253,7 +1253,9 @@ def test_the_summary_is_written_once_and_cannot_change_after_the_patient_is_call
     client.get(f"/api/nurse/summary/{reg_no}")
     assert client.post("/api/line/join", json={"reg_no": reg_no, "level": 5, "note": "third note"}).status_code == 409
     assert summary_on_the_doctors_card(reg_no) == before
-    assert before["patient_said"]["text"] == "The patient reports chest pain. The pain feels like pressure."
+    # The model left the sweating out, so the complaint itself goes first.
+    assert before["patient_said"]["text"] == ('Came with "crushing chest pain and sweating". '
+                                              "The patient reports chest pain. The pain feels like pressure.")
 
 
 def test_a_patient_sent_in_before_any_measurement_still_has_a_summary():
@@ -1279,7 +1281,7 @@ def test_the_summary_never_reaches_the_patients_phone_and_is_never_called_a_diag
     client.post("/api/triage", json={"reg_no": reg_no})
     refer(reg_no, department="Cardiology", reason="Looks unwell")
     me = client.get(f"/api/me/{reg_no}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse"}
     summary = summary_on_the_doctors_card(reg_no)
     assert not any("diagnos" in key.lower() for key in all_keys(summary))
     assert "diagnos" not in json.dumps(summary).lower()
@@ -1542,4 +1544,605 @@ def test_the_log_says_when_the_nurse_took_a_patient_over():
     done = checked_in("sore throat")
     client.post("/api/triage", json={"reg_no": done})
     assert "taken by the nurse" not in [s["what"] for s in client.get(f"/api/visit/{done}/history").json()["steps"]]
+
+
+# ---------------------------------------------------------------- the range of levels and the patients like this one
+
+def test_the_report_gives_a_range_of_levels_and_five_similar_patients():
+    reg = checked_in()
+    report = client.post("/api/triage", json={"reg_no": reg}).json()
+    low, high = report["range"]["low"], report["range"]["high"]
+    assert 1 <= low <= report["level"] <= high <= 5 and report["range"]["promise"] == 0.9
+    for level in core.LEVELS:                               # every level that reaches the cut is inside the range
+        if report["probabilities"][str(level)] >= core._RANGE_CUT + 0.001:
+            assert low <= level <= high
+    patients = report["similar"]["patients"]
+    assert len(patients) == 5 and all(1 <= p["expert_level"] <= 5 and 1 <= p["nurse_level"] <= 5 for p in patients)
+    assert report["similar"]["complaint_matched"] is True and "chest" in patients[0]["complaint"]
+    assert report["similar"]["under_rated"] == sum(p["nurse_level"] > p["expert_level"] for p in patients)
+    assert "diagnos" not in json.dumps(report["similar"]).lower()
+
+
+def test_a_complaint_nobody_in_the_data_had_is_said_to_be_unmatched():
+    odd = core.assess("zxqv blorp", 40)
+    assert odd["similar"]["complaint_matched"] is False and all(p["other_complaint"] for p in odd["similar"]["patients"])
+    # Everyday words find the patients the data describes in clinical words: the key-word rule reads the kind.
+    assert core.kind_of_complaint("it burns when i pee") == "Urology and kidney" and core.kind_of_complaint("zxqv blorp") is None
+    everyday = core.assess("it burns when i pee", 29)["similar"]
+    assert everyday["complaint_matched"] is True and not any(p["other_complaint"] for p in everyday["patients"])
+    assert all(core.kind_of_complaint(p["complaint"]) == "Urology and kidney" for p in everyday["patients"])
+
+
+def test_the_range_reaches_the_doctor_and_never_the_patients_phone():
+    reg = checked_in()
+    report = client.post("/api/triage", json={"reg_no": reg}).json()
+    client.post("/api/line/join", json={"reg_no": reg, "level": report["level"], "review": "checked"})
+    summary = json.loads(db.visit_for(reg)["summary"])
+    assert summary["meddy_suggested"]["range"] == report["range"]
+    phone = json.dumps(client.get("/api/me/" + reg).json())
+    assert "range" not in phone and "similar" not in phone and "level" not in phone
+
+
+# ---------------------------------------------------------------- "I feel worse" and the re-check times
+
+def in_the_waiting_room(complaint="sore throat", level=4, **more):
+    """A patient who has been through check-in and the nurse and now waits with a ticket."""
+    reg = checked_in(complaint, **more)
+    client.post("/api/triage", json={"reg_no": reg})
+    assert client.post("/api/line/join", json={"reg_no": reg, "level": level, "review": "checked"}).status_code == 200
+    return reg
+
+
+def test_feeling_worse_calls_the_nurse_and_changes_neither_level_nor_place():
+    reg = in_the_waiting_room()
+    before = client.get("/api/me/" + reg).json()
+    level = db.visit_for(reg)["level"]
+    said = client.post("/api/worse", json={"reg_no": reg})
+    assert said.status_code == 200 and said.json() == {"reg_no": reg, "status": "waiting", "worse": True}
+    after = client.get("/api/me/" + reg).json()
+    assert after["worse"] is True and after["position"] == before["position"] and after["ticket"] == before["ticket"]
+    assert db.visit_for(reg)["level"] == level and "level" not in json.dumps(after)
+    again = client.get("/api/nurse/patients").json()["recheck"]
+    assert [p["reg_no"] for p in again] == [reg] and again[0]["worse"] is True
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == reg)["worse"] is True
+    client.post("/api/worse", json={"reg_no": reg})                               # pressing twice asks once
+    assert db.visit_for(reg)["worse_said"] == 1
+    steps = [s["what"] for s in client.get(f"/api/visit/{reg}/history").json()["steps"]]
+    assert steps.count("said they feel worse") == 1
+
+
+def test_the_nurse_rechecks_and_the_patient_keeps_ticket_and_waiting_time():
+    reg = in_the_waiting_room()
+    ticket, arrived = db.visit_for(reg)["ticket"], db.visit_for(reg)["arrived"]
+    db.pass_time(15)
+    client.post("/api/worse", json={"reg_no": reg})
+    card = client.get("/api/nurse/patient/" + reg).json()
+    assert card["status"] == "waiting" and card["worse"] is True and card["level"] == 4
+    report = client.post("/api/triage", json={"reg_no": reg, "vitals": "feverish"}).json()
+    assert report["recheck"] == {"earlier_level": 4, "earlier_ai_level": card["ai_level"], "worse": True}
+    assert report["advice"]["quick"] is False and "the patient says they feel worse" in report["advice"]["reasons"]
+    joined = client.post("/api/line/join", json={"reg_no": reg, "level": 3, "review": "checked", "note": "Now feverish."})
+    assert joined.status_code == 200 and joined.json()["ticket"] == ticket
+    visit = db.visit_for(reg)
+    assert (visit["level"], visit["arrived"], visit["worse_at"], visit["rechecks"]) == (3, arrived, None, 1)
+    assert visit["seen_at"] == db.line()["clock"]
+    assert client.get("/api/me/" + reg).json()["worse"] is False
+    assert client.get("/api/nurse/patients").json()["recheck"] == []
+    found = json.loads(visit["summary"])["nurse_found"]
+    assert found["said_worse"] == 1 and found["rechecks"] == 1 and found["level"] == 3 and found["note"] == "Now feverish."
+    steps = client.get(f"/api/visit/{reg}/history").json()["steps"]
+    assert steps[-1]["what"] == "re-checked" and steps[-1]["detail"] == "level 4 to level 3, after the patient said they felt worse"
+
+
+def test_a_recheck_to_level_two_goes_straight_to_the_resuscitation_team():
+    reg = in_the_waiting_room()
+    client.post("/api/worse", json={"reg_no": reg})
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    sent = client.post("/api/line/join", json={"reg_no": reg, "level": 2, "review": "checked"}).json()
+    assert sent["called"]["doctor_reg"] == "DR-1000" and db.visit_for(reg)["status"] == "with doctor"
+
+
+def test_feeling_worse_before_the_nurse_puts_the_patient_first_on_her_list():
+    first = checked_in("sore throat", danger_yes=True)
+    second = checked_in("sore throat")
+    assert [p["reg_no"] for p in client.get("/api/nurse/patients").json()["patients"]] == [first, second]
+    assert client.post("/api/worse", json={"reg_no": second}).json()["status"] == "nurse"
+    listed = client.get("/api/nurse/patients").json()["patients"]
+    assert [p["reg_no"] for p in listed] == [second, first] and listed[0]["worse"] is True
+    report = client.post("/api/triage", json={"reg_no": second}).json()            # the first look also counts it
+    assert "the patient says they feel worse" in report["advice"]["reasons"] and "recheck" not in report
+    client.post("/api/line/join", json={"reg_no": second, "level": 4, "review": "checked"})
+    assert db.visit_for(second)["worse_at"] is None and db.visit_for(second)["rechecks"] == 0
+
+
+def test_feeling_worse_is_refused_when_nobody_is_waiting():
+    assert client.post("/api/worse", json={"reg_no": "P-0000-0000"}).status_code == 404
+    reg = new_visit("sore throat")                                               # still checking in
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 409
+    waiting = in_the_waiting_room()
+    client.post("/api/line/join", json={"reg_no": waiting, "level": 2})          # now with the resuscitation team
+    assert client.post("/api/worse", json={"reg_no": waiting}).status_code == 409
+    assert db.visit_for(waiting)["worse_said"] == 0
+
+
+def test_a_patient_is_due_a_recheck_after_the_time_their_level_allows():
+    """Level 3 every 30 minutes, 4 every 60, 5 every 120 (the reassessment times of the Canadian scale, which the
+    Korean scale of our data was built from), counted from the last time the nurse decided on them."""
+    assert core.RECHECK_AFTER == {3: 30, 4: 60, 5: 120}
+    assert core.recheck_due({"level": 3, "arrived": 0, "seen_at": None}, 29) is False
+    assert core.recheck_due({"level": 3, "arrived": 0, "seen_at": None}, 30) is True
+    assert core.recheck_due({"level": 3, "arrived": 0, "seen_at": 20}, 45) is False      # seen again at minute 20
+    assert core.recheck_due({"level": 5, "arrived": 0, "seen_at": None}, 119) is False
+    assert core.recheck_due({"level": 2, "arrived": 0, "seen_at": None}, 500) is False   # levels 1-2 do not wait here
+    reg = in_the_waiting_room(level=3)
+    mine = lambda: next(p for p in db.line()["patients"] if p["reg_no"] == reg)          # noqa: E731
+    assert mine()["recheck_due"] is False
+    db._meta("clock", db._meta("clock") + 30)                                            # half an hour, nobody called
+    assert mine()["recheck_due"] is True
+    due = client.get("/api/nurse/patients").json()["recheck"]
+    assert reg in [p["reg_no"] for p in due] and all(p["recheck_due"] or p["worse"] for p in due)
+    client.post("/api/worse", json={"reg_no": reg})                                      # who asked comes before who is due
+    assert client.get("/api/nurse/patients").json()["recheck"][0]["reg_no"] == reg
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3, "review": "checked"})
+    assert mine()["recheck_due"] is False and mine()["worse"] is False
+
+
+def test_an_older_database_file_gets_the_new_columns_and_still_works():
+    """A file from before this version: the columns are added, and a patient who was already waiting in it
+    (nothing in the new columns) is still listed, can say they feel worse and can be re-checked."""
+    reg = in_the_waiting_room()
+    added = ["seen_at", "worse_at", "worse_said", "rechecks", "ai_level_then", "remeasured", "held_at", "quick_pending"]
+    with db._lock, db._conn:
+        for column in added:
+            db._conn.execute(f"ALTER TABLE visits DROP COLUMN {column}")
+    db._upgrade()
+    columns = {r["name"] for r in db._conn.execute("PRAGMA table_info(visits)")}
+    assert set(added) <= columns
+    old = db.visit_for(reg)
+    assert (old["seen_at"], old["worse_at"], old["worse_said"], old["rechecks"], old["remeasured"]) == (None, None, 0, 0, 0)
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == reg)["recheck_due"] is False
+    assert client.get("/api/nurse/patient/" + reg).json()["since_seen"] == 0
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 200
+    report = client.post("/api/triage", json={"reg_no": reg}).json()
+    assert report["recheck"]["earlier_ai_level"] == old["ai_level"]
+    assert client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"}).status_code == 200
+    assert db.visit_for(reg)["rechecks"] == 1 and db.visit_for(reg)["ticket"] == old["ticket"]
+
+
+def test_the_patients_phone_never_downloads_the_whole_line():
+    """The line holds every waiting patient's name, complaint and level. The phone page used to fetch it just to
+    read the clock. It may only ask about its own visit."""
+    page = (server.STATIC / "index.html").read_text()
+    assert "/api/line" not in page and "/api/nurse" not in page and "/api/doctor" not in page
+    assert "/api/me/" in page and "/api/worse" in page
+
+
+# ---------------------------------------------------------------- what the audit found
+
+def test_the_nurse_and_the_doctor_always_see_the_same_range():
+    """The doctor's range is worked out again from the stored probabilities, which are rounded to three decimals.
+    The nurse's is now worked out from the same rounded figures, so the two cannot differ."""
+    import triage
+    for odds in triage.fair_probabilities(triage.load())[::7]:
+        shown = [round(float(p), 3) for p in odds]
+        assert core.level_range_of(odds) == core.level_range_of(shown)
+    one = core.level_range_of([0.01, 0.02, 0.02, 0.93, 0.02])
+    assert (one["low"], one["high"]) == (4, 4) and one["inside"] == core._RANGE["inside"][1]
+    wide = core.level_range_of([0.2, 0.2, 0.2, 0.2, 0.2])
+    assert (wide["low"], wide["high"]) == (1, 5) and wide["inside"] == core._RANGE["inside"][3]
+
+
+def doctors_view(reg):
+    doctor = db.visit_for(reg)["doctor_reg"]
+    return next(p for p in client.get(f"/api/doctor/{doctor}/patients").json()["patients"] if p["reg_no"] == reg)
+
+
+def test_the_doctor_is_told_about_a_call_the_nurse_did_not_get_to():
+    reg = in_the_waiting_room()
+    client.post("/api/worse", json={"reg_no": reg})
+    assert db.call_next(reg)["reg_no"] == reg                          # called before the nurse looked again
+    found = doctors_view(reg)["summary"]["nurse_found"]
+    assert (found["said_worse"], found["rechecks"], found["worse_unanswered"]) == (1, 0, True)
+    assert client.get("/api/me/" + reg).json()["worse"] is False       # the phone only shows the room now
+
+
+def test_a_press_before_the_nurses_first_look_is_not_called_unanswered():
+    reg = checked_in("sore throat")
+    client.post("/api/worse", json={"reg_no": reg})
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"})
+    db.call_next(reg)
+    found = doctors_view(reg)["summary"]["nurse_found"]
+    assert (found["said_worse"], found["rechecks"], found["worse_unanswered"]) == (1, 0, False)
+
+
+def test_sending_a_waiting_patient_straight_in_counts_as_the_recheck():
+    reg = in_the_waiting_room()
+    client.post("/api/worse", json={"reg_no": reg})
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    sent = client.post("/api/refer", json={"reg_no": reg, "level": 2, "reason": "Now short of breath and grey."})
+    assert sent.status_code == 200
+    visit = db.visit_for(reg)
+    assert (visit["status"], visit["worse_at"], visit["rechecks"], visit["remeasured"]) == ("with doctor", None, 1, 0)
+    found = doctors_view(reg)["summary"]["nurse_found"]
+    assert (found["said_worse"], found["rechecks"], found["worse_unanswered"]) == (1, 1, False)
+    steps = client.get(f"/api/visit/{reg}/history").json()["steps"]
+    assert "felt worse" in next(step["detail"] for step in steps if step["what"] == "sent straight in")
+
+
+def test_a_recheck_keeps_the_nurses_note_and_her_word_on_the_summary():
+    reg = checked_in("sore throat")
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked",
+                                        "note": "Lives alone, daughter is on her way."})
+    card = client.get("/api/nurse/patient/" + reg).json()
+    assert card["note"] == "Lives alone, daughter is on her way." and card["summary_held_back"] is False
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "approved"})            # no note sent: it stays
+    assert db.visit_for(reg)["nurse_note"] == "Lives alone, daughter is on her way."
+    assert json.loads(db.visit_for(reg)["summary"])["nurse_found"]["note"] == "Lives alone, daughter is on her way."
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "approved", "note": ""})   # cleared on purpose
+    assert db.visit_for(reg)["nurse_note"] is None
+
+
+def test_the_nurse_card_remembers_that_she_held_the_ai_summary_back():
+    reg = checked_in("sore throat")
+    card = client.get("/api/nurse/patient/" + reg).json()
+    report = core._report_for_summary(card["complaint"], card["age"], card["sex"], card["answers"], card["injury"])
+    core._summaries[(reg, report)] = {"source": "ai", "text": "The patient reports a sore throat."}
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked", "summary_ok": False})
+    said = json.loads(db.visit_for(reg)["summary"])["patient_said"]
+    assert said["written_by"] == "code" and said["held_back"] is True
+    assert client.get("/api/nurse/patient/" + reg).json()["summary_held_back"] is True
+
+
+def test_measuring_twice_in_one_recheck_keeps_what_stood_before():
+    reg = in_the_waiting_room()
+    first = db.visit_for(reg)["ai_level"]
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    again = client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"}).json()
+    assert again["recheck"]["earlier_ai_level"] == first and again["recheck"]["earlier_level"] == 4
+    assert db.visit_for(reg)["remeasured"] == 1
+    db.call_next(reg)                                                  # the doctor calls before the nurse decides
+    assert doctors_view(reg)["summary"]["nurse_found"]["remeasured"] is True
+    decided = in_the_waiting_room()
+    client.post("/api/triage", json={"reg_no": decided})
+    client.post("/api/line/join", json={"reg_no": decided, "level": 4, "review": "checked"})
+    assert db.visit_for(decided)["remeasured"] == 0 and db.visit_for(decided)["ai_level_then"] == db.visit_for(decided)["ai_level"]
+
+
+# ---------------------------------------------------------------- the re-check, attacked
+
+def test_a_patient_the_nurse_is_rechecking_is_not_called_away():
+    """She measured again and has not decided. A doctor's call would lose her decision, so the patient stays with
+    her: for fifteen minutes at most, so that a re-check nobody finishes cannot keep them out of the line for ever."""
+    reg = in_the_waiting_room("sore throat", level=3)
+    doctor = next(d["reg_no"] for d in db.staff()["doctors"] if d["department"] == "Eye, ear, nose and throat" and d["on_duty"])
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    held = next(p for p in db.line()["patients"] if p["reg_no"] == reg)
+    assert held["with_nurse"] is True and db.visit_for(reg)["status"] == "waiting"
+    called = client.post("/api/doctor/call", json={"doctor_reg": doctor}).json()["called"]
+    assert called is None or called["reg_no"] != reg
+    while (called := client.post("/api/line/next").json()["called"]) is not None:       # everyone else is called
+        assert called["reg_no"] != reg
+    assert db.visit_for(reg)["status"] == "waiting"
+    sent = client.post("/api/line/join", json={"reg_no": reg, "level": 2, "review": "checked"})   # her decision lands
+    assert sent.status_code == 200 and sent.json()["called"]["doctor_reg"] == "DR-1000"
+
+    left = in_the_waiting_room("sore throat", level=3)                                  # a re-check nobody finishes
+    client.post("/api/triage", json={"reg_no": left})
+    assert client.post("/api/line/next").json()["called"] is None
+    db._meta("clock", db._meta("clock") + db.HOLD_FOR)
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == left)["with_nurse"] is False
+    assert client.post("/api/line/next").json()["called"]["reg_no"] == left
+    assert doctors_view(left)["summary"]["nurse_found"]["remeasured"] is True           # and the doctor is told
+
+
+def test_joining_again_without_measuring_is_not_a_recheck():
+    reg = checked_in("sore throat")
+    client.post("/api/triage", json={"reg_no": reg})
+    join = {"reg_no": reg, "level": 4, "review": "checked"}
+    assert client.post("/api/line/join", json=join).status_code == 200
+    assert client.post("/api/line/join", json=join).status_code == 200                 # a second click, a retry
+    assert db.visit_for(reg)["rechecks"] == 0
+    client.post("/api/worse", json={"reg_no": reg})
+    seen = db.visit_for(reg)["seen_at"]
+    db._meta("clock", db._meta("clock") + 10)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3})                    # a new level, nobody measured
+    visit = db.visit_for(reg)
+    assert (visit["level"], visit["rechecks"], visit["seen_at"]) == (3, 0, seen)
+    assert visit["worse_at"] is not None and client.get("/api/me/" + reg).json()["worse"] is True
+    steps = [step["what"] for step in client.get(f"/api/visit/{reg}/history").json()["steps"]]
+    assert "re-checked" not in steps
+
+
+def test_a_report_that_arrives_after_the_doctors_call_is_refused(monkeypatch):
+    reg = in_the_waiting_room()
+    before = db.visit_for(reg)
+    real = core.assess
+    monkeypatch.setattr(core, "assess", lambda *a, **k: (db.call_next(reg), real(*a, **k))[1])   # called while Meddy works
+    late = client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable"})
+    assert late.status_code == 409
+    after = db.visit_for(reg)
+    assert after["status"] == "with doctor" and (after["vitals"], after["ai_level"]) == (before["vitals"], before["ai_level"])
+    steps = [step["what"] for step in client.get(f"/api/visit/{reg}/history").json()["steps"]]
+    assert steps[-1] != "assessed"
+
+
+def test_the_test_regime_counts_the_advice_the_nurse_had_when_she_decided():
+    reg, report = report_for("ankle pain", pain=4)
+    assert report["advice"]["quick"] is True
+    client.post("/api/line/join", json={"reg_no": reg, "level": report["level"], "review": "approved"})
+    assert db.staff()["reviews"]["accepted_against_advice"] == 0
+    client.post("/api/worse", json={"reg_no": reg})
+    again = client.post("/api/triage", json={"reg_no": reg}).json()                     # now Meddy advises a check
+    assert again["advice"]["quick"] is False
+    assert db.staff()["reviews"]["accepted_against_advice"] == 0                         # she has not decided again
+    db.call_next(reg)                                                                   # called before she does
+    assert db.staff()["reviews"]["accepted_against_advice"] == 0
+    other, report = report_for("ankle pain", pain=4)
+    client.post("/api/line/join", json={"reg_no": other, "level": report["level"], "review": "approved"})
+    client.post("/api/worse", json={"reg_no": other})
+    client.post("/api/triage", json={"reg_no": other})
+    client.post("/api/line/join", json={"reg_no": other, "level": report["level"]})    # a re-check with no verdict given
+    assert db.visit_for(other)["review"] == "checked"
+    assert json.loads(db.visit_for(other)["summary"])["nurse_found"]["against_advice"] is False
+
+
+def test_a_made_up_patient_can_be_rechecked_and_keeps_what_meddy_said_before():
+    waiting = next(p for p in db.line()["patients"] if not p["you"])
+    reg, first = waiting["reg_no"], db.visit_for(waiting["reg_no"])["ai_level"]
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable", "alert": "Unresponsive"})
+    again = client.post("/api/triage", json={"reg_no": reg, "vitals": "unstable", "alert": "Unresponsive"}).json()
+    assert again["recheck"]["earlier_ai_level"] == first and again["recheck"]["worse"] is False
+    client.post("/api/line/join", json={"reg_no": reg, "level": waiting["level"], "review": "checked"})
+    visit = db.visit_for(reg)
+    assert visit["ticket"] == waiting["ticket"] and visit["rechecks"] == 1
+
+
+def test_who_asked_first_is_seen_first_and_the_due_are_not_forgotten():
+    danger = checked_in("sore throat", danger_yes=True)
+    early, late = checked_in("sore throat"), checked_in("sore throat")
+    client.post("/api/worse", json={"reg_no": late})
+    assert client.get("/api/me/" + late).json()["worse"] is True                        # shown while waiting for the nurse
+    db._meta("clock", db._meta("clock") + 5)
+    client.post("/api/worse", json={"reg_no": danger})
+    assert [p["reg_no"] for p in client.get("/api/nurse/patients").json()["patients"]] == [late, danger, early]
+
+    due = in_the_waiting_room(level=3)
+    asked = in_the_waiting_room(level=5)
+    db._meta("clock", db._meta("clock") + 30)
+    assert client.get("/api/nurse/patient/" + due).json()["recheck_due"] is True
+    client.post("/api/worse", json={"reg_no": asked})
+    listed = [p["reg_no"] for p in client.get("/api/nurse/patients").json()["recheck"]]
+    assert listed[0] == asked and due in listed                                         # asked first, the due still listed
+    report = client.post("/api/triage", json={"reg_no": due}).json()                    # a re-check nobody asked for
+    assert report["recheck"]["worse"] is False and report["recheck"]["earlier_level"] == 3
+
+
+def test_a_second_press_after_a_recheck_counts_and_none_counts_once_the_visit_is_over():
+    reg = in_the_waiting_room()
+    for _ in range(2):
+        client.post("/api/worse", json={"reg_no": reg})
+        client.post("/api/triage", json={"reg_no": reg})
+        client.post("/api/line/join", json={"reg_no": reg, "level": 4, "review": "checked"})
+    assert (db.visit_for(reg)["worse_said"], db.visit_for(reg)["rechecks"]) == (2, 2)
+    client.post("/api/worse", json={"reg_no": reg})
+    db.call_next(reg)
+    assert client.get("/api/nurse/patient/" + reg).json()["worse"] is False            # no longer the nurse's to answer
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 409
+    client.post("/api/doctor/finish", json={"reg_no": reg})
+    assert client.post("/api/worse", json={"reg_no": reg}).status_code == 409
+    assert db.visit_for(reg)["worse_said"] == 3
+
+
+
+# ---------------------------------------------------------------- everyday words, the doctor the nurse chooses, the simulation
+
+@pytest.mark.parametrize("patient, nurse", [
+    ("my heart hurts since this morning", "chest pain"),
+    ("i cant breathe", "dyspnea"),
+    ("it burns when i pee", "dysuria"),
+    ("stomach ache", "abd pain"),
+    ("I fainted at work", "syncope"),
+    ("ant. chest pain", "ant. chest pain"),          # nurses' own words are left as they are
+])
+def test_everyday_words_are_put_in_the_nurses_words(patient, nurse):
+    assert core.nurse_words(patient) == nurse
+
+
+@pytest.mark.parametrize("complaint, department", [
+    ("heart pain", "Cardiology"), ("pain when peeing", "Urology and kidney"), ("stomach ache", "Gastroenterology and surgery"),
+    ("i cant breathe", "Respiratory medicine"), ("pregnant bleeding", "Obstetrics and gynaecology"),
+    ("broken arm", "Trauma and orthopaedics"), ("sore throat", "Eye, ear, nose and throat"),
+])
+def test_everyday_complaints_find_their_department(complaint, department):
+    """ "heart pain" used to come out as neurology 31%, urology 37% and the like: the model alone did not know the words."""
+    result = core.assess(complaint, 45)
+    options = result["department_options"]
+    assert result["department"] == department == options[0]["department"]
+    assert len({o["department"] for o in options}) == 4 and options[0]["chance"] > options[1]["chance"]
+    assert abs(sum(result["department_match"].values()) - 1) < 0.01
+
+
+def test_the_report_suggests_a_doctor_and_a_short_list_of_three_more():
+    _, report = report_for("chest pain on and off", pain=4)
+    best, others = report["doctors"]["suggested"], report["doctors"]["others"]
+    assert best["department"] == report["department"] == "Cardiology" and len(others) == 3
+    assert others[0]["department"] == "Cardiology"                         # the next cardiologist first
+    assert len({d["department"] for d in others[1:]}) == 2 and "Cardiology" not in {d["department"] for d in others[1:]}
+    assert len({d["doctor_reg"] for d in [best, *others]}) == 4
+    on_duty = {d["reg_no"]: d for d in db.staff()["doctors"] if d["on_duty"]}
+    for d in [best, *others]:
+        assert d["doctor_reg"] in on_duty and d["busy"] == (on_duty[d["doctor_reg"]]["waiting"] > 0)
+    # Of two cardiologists the less busy one is suggested.
+    assert best["with_now"] <= others[0]["with_now"]
+
+
+def test_a_busy_doctor_can_still_be_chosen_and_the_patient_waits_for_them():
+    busy = "DR-1001"                                         # Dr. Marlow starts the day with two patients
+    assert db.staff()["doctors"][1]["busy"]
+    reg_no = assessed_visit("chest pain", age=40)
+    joined = client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "department": "Cardiology",
+                                                 "review": "checked", "doctor_reg": busy})
+    assert joined.status_code == 200 and db.visit_for(reg_no)["wanted_doctor"] == busy
+    assert {d["reg_no"]: d["queue"] for d in db.staff()["doctors"]}[busy] == 1
+    # Another cardiologist calls: the patient is waiting for Dr. Marlow, so they stay in line.
+    other = client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"]
+    assert other is None or other["reg_no"] != reg_no
+    called = client.post("/api/doctor/call", json={"doctor_reg": busy}).json()["called"]
+    assert called["reg_no"] == reg_no and called["doctor_reg"] == busy
+    assert any(e["what"] == "doctor chosen" for e in db.history(reg_no))
+
+
+def test_the_chosen_doctor_also_takes_a_patient_called_from_the_line_or_sent_straight_in():
+    reg_no = assessed_visit("headache", age=40)
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "doctor_reg": "DR-1013"})   # obstetrics, on purpose
+    assert db.visit_for(reg_no)["department"] == "Obstetrics and gynaecology"     # the visit takes the doctor's department
+    called = db.call_next(reg_no)
+    assert called["doctor_reg"] == "DR-1013" and "nurse chose" in called["reason"]
+    sent = client.post("/api/refer", json={"reg_no": assessed_visit("cough"), "level": 3, "reason": "Looks very unwell",
+                                           "doctor_reg": "DR-1016"}).json()
+    assert sent["doctor_reg"] == "DR-1016"
+
+
+def test_a_chosen_doctor_who_goes_off_duty_is_covered_by_the_department():
+    reg_no = assessed_visit("chest pain", age=40)
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "doctor_reg": "DR-1001"})
+    db.set_duty("DR-1001", False)
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"]["reg_no"] == reg_no
+
+
+@pytest.mark.parametrize("doctor", ["DR-9999", "DR-1000", "Dr. Marlow"])
+def test_only_a_doctor_from_the_staff_list_can_be_chosen(doctor):
+    reg_no = assessed_visit("chest pain", age=40)
+    answer = client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "doctor_reg": doctor})
+    assert answer.status_code == 422
+    assert db.visit_for(reg_no)["status"] == "nurse" and db.visit_for(reg_no)["wanted_doctor"] is None
+
+
+def test_the_short_list_can_be_asked_for_again():
+    _, report = report_for("ear pain", pain=4)
+    again = client.post("/api/doctor-choices", json={"match": report["department_match"]}).json()
+    assert again["suggested"]["department"] == report["doctors"]["suggested"]["department"]
+    junk = client.post("/api/doctor-choices", json={"match": {"Nowhere": 1.0, "Cardiology": 7}}).json()
+    assert junk == {"suggested": None, "others": []}
+
+
+class FixedDice:
+    """Dice that always roll the same, so a step of the simulation is known in advance."""
+    def __init__(self, roll):
+        self.roll = roll
+    def random(self):
+        return self.roll
+    def uniform(self, low, high):
+        return high
+    def choice(self, items):
+        return items[0]
+
+
+def test_the_simulation_brings_and_finishes_made_up_patients_only():
+    real = assessed_visit("chest pain", age=40)
+    db.refer(real, 3, "Looks unwell", doctor_reg="DR-1001")          # a real patient with a doctor
+    before = db.staff()["visits"]["with doctor"]
+    db.simulate(FixedDice(0.99), now=1000)                           # the morning's patients get a time to leave
+    assert db.staff()["visits"]["with doctor"] == before
+    left = db.simulate(FixedDice(0.99), now=1000 + 10_000)["left"]   # long after: all made-up patients have left
+    assert left == before - 1 and db.staff()["visits"]["with doctor"] == 1
+    assert db.visit_for(real)["status"] == "with doctor"             # the real patient is never touched
+    free = [d for d in db.staff()["doctors"] if d["on_duty"] and not d["busy"] and d["reg_no"] != "DR-1000"]
+    came = db.simulate(FixedDice(0.0), now=20_000)["came"]           # every free doctor gets a patient
+    assert came == len(free) and all(d["busy"] for d in db.staff()["doctors"] if d["on_duty"] and d["reg_no"] != "DR-1000")
+    assert len(db.line()["patients"]) == len(db.SEED_WAITING)        # the line itself is never touched
+
+
+def test_the_simulation_leaves_a_watched_doctor_and_can_be_switched_off():
+    client.get("/api/doctor/DR-1001/patients")                      # Dr. Marlow's screen is open
+    db.simulate(FixedDice(0.99), now=1000)
+    db.simulate(FixedDice(0.99), now=50_000)
+    assert len(db.doctor_patients("DR-1001")["patients"]) == 2       # still the two of the morning
+    db._watched.clear()
+    client.post("/api/staff/simulation", json={"on": False})
+    assert db.staff()["simulation"] is False
+    assert db.simulate(FixedDice(0.0), now=90_000) == {"left": 0, "came": 0}
+    client.post("/api/staff/simulation", json={"on": True})
+
+
+# ---------------------------------------------------------------- the complaint in the summary, measured values, busy doctors
+
+def test_the_summary_always_names_what_the_patient_came_with():
+    """For "Hurt pain for one hour" the model wrote only "She describes the pain as sharp and stabbing."."""
+    assert core.with_complaint("She describes the pain as sharp and stabbing.", "Hurt pain for one hour") == (
+        'Came with "Hurt pain for one hour". She describes the pain as sharp and stabbing.')
+    told = "The patient reports chest pain since this morning."
+    assert core.with_complaint(told, "chest pain since this morning") == told          # already there: left alone
+
+
+def test_the_nurse_can_type_in_what_she_measured():
+    reg_no = new_visit("cough", age=50)
+    measured = {"SBP": 92, "DBP": 58, "HR": 121, "RR": 27, "BT": 39.2, "Saturation": 90}
+    report = client.post("/api/triage", json={"reg_no": reg_no, "vitals": measured}).json()
+    assert report["vitals"] == measured
+    assert json.loads(db.visit_for(reg_no)["vitals"])["HR"] == 121
+    for wrong in [{**measured, "HR": 900}, {**measured, "Saturation": 140}, {k: v for k, v in measured.items() if k != "BT"}]:
+        assert client.post("/api/triage", json={"reg_no": reg_no, "vitals": wrong}).status_code == 422
+    assert client.post("/api/triage", json={"reg_no": reg_no, "vitals": "feverish"}).status_code == 200   # presets still work
+
+
+def test_a_busy_doctor_says_since_when_and_about_when_they_are_free():
+    db.simulate(FixedDice(0.99), now=1000)                       # the morning's made-up patients went in at 1000
+    for _ in range(3):                                           # three finished visits of five minutes each
+        reg = assessed_visit("chest pain", age=40)
+        db.refer(reg, 3, "Looks unwell", doctor_reg="DR-1014")
+        with db._lock, db._conn:
+            db._conn.execute("UPDATE visits SET seen_from = 0 WHERE reg_no = ?", (reg,))
+        db.finish_visit(reg)
+        with db._lock, db._conn:
+            db._conn.execute("UPDATE visits SET seen_to = 300 WHERE reg_no = ?", (reg,))
+    with db._lock:
+        times = db._doctor_times(now=1000 + 120)
+    marlow = times["DR-1001"]                                    # two patients, the first in at 1000
+    assert marlow["since"] == 1000 and marlow["usual_minutes"] == 5
+    assert marlow["free_in_minutes"] == 8                        # two visits of 5 minutes, 2 minutes gone
+    doctors = {d["reg_no"]: d for d in db.staff()["doctors"]}
+    assert doctors["DR-1001"]["since"] == 1000 and doctors["DR-1014"]["since"] is None     # Dr. Kowalski is free
+
+
+@pytest.mark.parametrize("typed, meant", [
+    ("hurt pain for one hour", "heart pain for one hour"), ("breating problems", "breathing problems"),
+    ("headake since morning", "headache since morning"), ("i have diarea", "i have diarrhea"),
+    ("pain in my chets", "pain in my chest"), ("feaver and cough", "fever and cough"),
+    ("it hurts when i swallow", "it hurts when i swallow"),        # real words and their endings are left alone
+    ("burned my hand", "burned my hand"), ("abd pain", "abd pain"), ("i was walking and fell", "i was walking and fell"),
+])
+def test_typing_slips_are_put_right(typed, meant):
+    assert core.spelling(typed) == meant
+    assert client.get("/api/spelling", params={"text": typed}).json() == {"text": meant, "changed": typed != meant}
+
+
+def test_a_typing_slip_still_finds_the_right_questions_and_department():
+    assert core.questionnaire("breating problems", use_model=False)["topic"] == "Respiratory medicine"
+    assert core.assess("hurt pain for one hour", 30)["department"] == "Cardiology"
+    assert core.known_words("breating problems")
+    reg = new_visit("hurt pain for one hour", age=30)
+    assert client.get(f"/api/nurse/patient/{reg}").json()["complaint_read"] == "heart pain for one hour"
+    report = core._report_for_summary("hurt pain for one hour", 30, "Female", [])
+    assert 'typing slips corrected: "heart pain for one hour"' in report
+
+
+def test_an_open_page_can_tell_a_new_version_is_online():
+    assert re.fullmatch(r"[0-9a-f]{12}", client.get("/api/version").json()["version"])
+
+
+def test_what_the_patient_types_is_never_put_in_an_address():
+    """The phone asks for the spelling fix while the patient types. It sends the words in the body of the request:
+    an address can be written down by any proxy in front of the hospital, and this is a health complaint."""
+    fixed = client.post("/api/spelling", json={"text": "hurt pain for one hour"})
+    assert fixed.status_code == 200 and fixed.json() == {"text": "heart pain for one hour", "changed": True}
+    assert client.post("/api/spelling", json={"text": "chest pain"}).json() == {"text": "chest pain", "changed": False}
+    assert client.post("/api/spelling", json={"text": "x" * 201}).status_code == 422
+    page = (server.STATIC / "index.html").read_text(encoding="utf-8")
+    assert "/api/spelling?" not in page and "?text=" not in page and "?complaint=" not in page
 

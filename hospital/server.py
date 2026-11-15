@@ -9,6 +9,7 @@ and a small API the pages talk to.
 Everything is kept in the internal database, hospital.db (see db.py).
 """
 
+import hashlib
 import os
 import socket
 from pathlib import Path
@@ -25,12 +26,24 @@ import core
 import db
 
 STATIC = Path(__file__).parent / "static"
+# A fingerprint of the pages and the code this server started with. An open page compares it from time to time
+# and offers a reload when a new version is online: otherwise an old tab keeps showing the old screens.
+VERSION = hashlib.sha256(b"".join(f.read_bytes() for f in sorted([*STATIC.iterdir(), *Path(__file__).parent.glob("*.py")])
+                                  if f.is_file())).hexdigest()[:12]
 PORT = int(os.environ.get("MEDDY_PORT", 8000))
 # Off by default: the demo stays on this computer unless someone starts it with MEDDY_LAN=1.
 LAN = os.environ.get("MEDDY_LAN") == "1"
 # Set when the hospital runs online (see deploy/huggingface): the QR code then points to this address.
 PUBLIC_URL = os.environ.get("MEDDY_PUBLIC_URL") or None
 app = FastAPI(title="Digital hospital")
+
+
+@app.middleware("http")
+async def watched(request, call_next):
+    """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching."""
+    if request.url.path.startswith("/api/"):
+        db.seen()
+    return await call_next(request)
 
 
 def lan_ip():
@@ -85,6 +98,17 @@ class Answer(BaseModel):
     topic: str | None = Field(default=None, max_length=30)   # the history topic, for the doctor's overview
 
 
+class Vitals(BaseModel):
+    """What the nurse measured, typed in by hand. The limits only keep out typing slips; they are wide enough for
+    a very sick patient, because a value the form refuses is a sick patient the model never sees."""
+    SBP: float = Field(ge=40, le=260)           # blood pressure, upper number
+    DBP: float = Field(ge=20, le=160)           # blood pressure, lower number
+    HR: float = Field(ge=20, le=250)            # pulse
+    RR: float = Field(ge=4, le=70)              # breaths a minute
+    BT: float = Field(ge=30, le=43)             # temperature, degrees Celsius
+    Saturation: float = Field(ge=50, le=100)    # oxygen, percent
+
+
 class Assessment(BaseModel):
     # Every choice is spelled out. An unknown value is refused rather than quietly read as "normal" or "alert":
     # a silent default here would make a sick patient look well.
@@ -99,7 +123,8 @@ class Assessment(BaseModel):
     injury: bool = False
     alert: Literal["Alert", "Responds to voice", "Responds to pain", "Unresponsive"] = "Alert"
     pain: int = Field(default=0, ge=0, le=10)
-    vitals: Literal["normal", "feverish", "unstable"] = "normal"       # one of core.VITAL_PRESETS
+    # One of core.VITAL_PRESETS, or the nurse's own measurements.
+    vitals: Literal["normal", "feverish", "unstable"] | Vitals = "normal"
     answers: list[Answer] = Field(default=[], max_length=20)
 
 
@@ -122,8 +147,11 @@ class Joining(BaseModel):
     review: Literal["approved", "checked"] | None = None
     # For the doctor's patient summary: her own note, and her word on the AI's two sentences
     # (False: "this is not right, do not pass it on"). Both optional, so older pages keep working.
+    # A request with no note at all keeps the note she wrote before (a re-check); an empty one clears it.
     note: str | None = Field(default=None, max_length=300)
     summary_ok: bool = True
+    # The doctor the nurse chose from the short list, if she chose one: the patient then waits for this doctor.
+    doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
 class Referral(BaseModel):
@@ -135,6 +163,8 @@ class Referral(BaseModel):
     department: str | None = None
     note: str | None = Field(default=None, max_length=300)  # for the doctor's patient summary, like in Joining
     summary_ok: bool = True
+    # The doctor the nurse chose from the short list, if she chose one: the patient then waits for this doctor.
+    doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
 class Duty(BaseModel):
@@ -146,8 +176,20 @@ class Finished(BaseModel):
     reg_no: str
 
 
+class Worse(BaseModel):
+    reg_no: str
+
+
 class Calling(BaseModel):
     doctor_reg: str
+
+
+class Simulation(BaseModel):
+    on: bool
+
+
+class Matching(BaseModel):
+    match: dict[str, float] = Field(max_length=20)
 
 
 def open_visit(reg_no):
@@ -251,10 +293,49 @@ def checkin(body: CheckIn):
     return {"reg_no": body.reg_no, "code": code, "status": "nurse"}
 
 
+@app.post("/api/worse")
+def worse(body: Worse):
+    """The patient pressed "I feel worse" while waiting. Nothing about their level or place changes: the nurse is
+    told, and the patient goes to the top of her list for another look. Refused (409) when they are not waiting."""
+    try:
+        status = db.feel_worse(body.reg_no)
+    except db.NotWaiting:
+        raise HTTPException(409, "This patient is not waiting, so there is nobody to call. Speak to the staff.")
+    if status is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return {"reg_no": body.reg_no, "status": status, "worse": True}
+
+
 @app.get("/api/nurse/patients")
 def nurse_patients():
-    """The nurse's list: patients who finished check-in and wait for her, danger signs first."""
+    """The nurse's list: patients who finished check-in and wait for her (someone who feels worse first, then
+    danger signs), and "recheck": patients in the waiting room who need her again."""
     return db.nurse_patients()
+
+
+@app.get("/api/version")
+def version():
+    return {"version": VERSION}
+
+
+class Typed(BaseModel):
+    text: str = Field(default="", max_length=200)
+
+
+@app.post("/api/spelling")
+def spelling(body: Typed):
+    """The complaint with typing slips put right, for the phone's "Did you mean ...?". Nothing is stored.
+
+    The words travel in the body of the request, never in its address: what a patient types about their health
+    must not end up in the address logs of a proxy standing in front of the hospital."""
+    fixed = core.spelling(body.text)
+    return {"text": fixed, "changed": fixed != body.text}
+
+
+@app.get("/api/spelling")
+def spelling_from_an_older_page(text: str = ""):
+    """The same, for a phone page opened before this version (it reloads itself when it sees the new one)."""
+    return spelling(Typed(text=text[:200]))
 
 
 @app.get("/api/nurse/patient/{reg_no}")
@@ -279,7 +360,7 @@ def nurse_summary(reg_no: str):
 @app.post("/api/triage")
 def triage(body: Assessment):
     visit = open_visit(body.reg_no)
-    vitals = core.VITAL_PRESETS[body.vitals]
+    vitals = core.VITAL_PRESETS[body.vitals] if isinstance(body.vitals, str) else body.vitals.model_dump()
     answers = checked_answers(visit, body.answers, body.injury)
     injury = body.injury or bool(visit["injury"])
     if answers:
@@ -296,14 +377,26 @@ def triage(body: Assessment):
     # Meddy's report for the nurse: can she accept it after a quick look, and who would the doctor be?
     # "asked" is false for a patient the nurse took over before they answered the danger questions on the phone.
     result["asked"] = any(a["kind"] == "danger" and a["answer"] in ("Yes", "No") for a in answers)
-    result["advice"] = core.review_advice(result, result["danger"], result["asked"])
+    # A patient who is already in the waiting room is being re-checked: what stood before, and did they ask for it?
+    said_worse = visit["worse_at"] is not None
+    if visit["status"] == "waiting":
+        # "earlier" is what stood when the nurse last decided, not what an earlier press of "Measure" in this
+        # same re-check has since written over it.
+        then = visit["ai_level_then"] if visit["ai_level_then"] is not None else visit["ai_level"]
+        result["recheck"] = {"earlier_level": visit["level"], "earlier_ai_level": then, "worse": said_worse}
+    result["advice"] = core.review_advice(result, result["danger"], result["asked"], worse=said_worse)
     for option in result["department_options"]:
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
     result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])
+    # The best doctor for this patient and a short list of three more, each with how busy they are now.
+    result["doctors"] = db.doctor_choices(result["department_match"])
     # Keep the AI's suggestion and the measurements: the doctor's screen and the test regime need them later.
-    db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
-                       [result["probabilities"][str(l)] for l in core.LEVELS],
-                       result["department"], result["advice"]["quick"])
+    try:        # the state is checked again inside the database: a doctor may have called the patient meanwhile
+        db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
+                           [result["probabilities"][str(l)] for l in core.LEVELS],
+                           result["department"], result["advice"]["quick"])
+    except db.AlreadySent:
+        raise HTTPException(409, "This patient has already been sent to a doctor.")
     return result
 
 
@@ -317,9 +410,12 @@ def join(body: Joining):
         raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
     try:        # the state is checked again inside the database, together with the change (two quick clicks)
         ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review,
-                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
+                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok,
+                                  keep_note=body.note is None, doctor_reg=body.doctor_reg)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
+    except db.UnknownDoctor:
+        raise HTTPException(422, "No such doctor to choose. Choose one from the list.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"ticket": ticket, "called": called, **db.line()}
@@ -364,9 +460,12 @@ def refer(body: Referral):
     known_department(body.department)
     try:
         return db.refer(body.reg_no, body.level, body.reason, body.department,
-                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
+                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok, keep_note=body.note is None,
+                        doctor_reg=body.doctor_reg)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
+    except db.UnknownDoctor:
+        raise HTTPException(422, "No such doctor to choose. Choose one from the list.")
 
 
 @app.get("/api/doctor/{doctor_reg}/patients")
@@ -375,6 +474,7 @@ def doctor_patients(doctor_reg: str):
     screen = db.doctor_patients(doctor_reg)
     if screen is None:
         raise HTTPException(404, "No doctor with this registration number.")
+    db.watching(doctor_reg)         # a person plays this doctor now: the simulation leaves them alone
     return screen
 
 
@@ -418,6 +518,20 @@ def duty(body: Duty):
     return db.staff()
 
 
+@app.post("/api/doctor-choices")
+def doctor_choices(body: Matching):
+    """The doctors the nurse can choose from, asked for again while she reads the report: who is free now."""
+    match = {name: value for name, value in body.match.items() if name in core.DEPARTMENT_NAMES and 0 <= value <= 1}
+    return db.doctor_choices(match)
+
+
+@app.post("/api/staff/simulation")
+def simulation(body: Simulation):
+    """Switch the simulated rest of the hospital on or off (made-up patients coming to the doctors and leaving)."""
+    db.set_simulation(body.on)
+    return db.staff()
+
+
 @app.post("/api/reset")
 def reset():
     """"Start a new day": open visits are closed and kept, the made-up patients are back. Nothing is deleted and
@@ -457,5 +571,6 @@ if __name__ == "__main__":
     # The database is kept between starts: everything from earlier is still there ("Start a new day" closes the
     # open visits). Online, a copy goes to lasting storage every few seconds (see db.start_keeping).
     db.start_keeping()
+    db.start_simulation()
     online = LAN or PUBLIC_URL
     uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning")

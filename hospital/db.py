@@ -5,7 +5,7 @@ It holds:
 - doctors     : every doctor's registration number, department, room and shift, whether they are on duty,
                 and how many patients they have now (always equal to their open visits)
 - visits      : every patient visit, under its own registration number and the patient's first and last name,
-                from arrival to the doctor.
+                from arrival to the doctor, with the doctor the nurse chose if she chose one.
                 Visits are never deleted: a new day closes the open ones and keeps them
 - answers     : what each patient answered at check-in
 - events      : the log of every step of every visit (registered, checked in, assessed, in line, sent to a
@@ -15,6 +15,10 @@ It holds:
 - meta        : counters (registration numbers, tickets) and the demo clock
 
 Registration numbers are never given twice: the counter keeps going across days and restarts.
+
+The rest of the hospital is simulated (simulate): while somebody has a screen open, made-up patients seen by
+other nurses keep coming to the doctors and leaving again, so doctors are busy or free as in a real department.
+The simulation never touches a real patient, the waiting line, or a doctor whose own screen is open.
 Online, a copy of the file is kept on lasting storage (MEDDY_KEEP_DIR, the Space's bucket) and taken back at
 start, so a restart or a new version of the code loses nothing.
 
@@ -67,7 +71,10 @@ CREATE TABLE IF NOT EXISTS visits (
     summary TEXT, nurse_note TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     arrival TEXT, pain INTEGER, checked_in INTEGER, first_name TEXT, last_name TEXT,
+    seen_at INTEGER, worse_at INTEGER, worse_said INTEGER DEFAULT 0, rechecks INTEGER DEFAULT 0,
+    ai_level_then INTEGER, remeasured INTEGER DEFAULT 0, held_at INTEGER, quick_pending INTEGER,
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
+    wanted_doctor TEXT REFERENCES doctors(reg_no), sim_until REAL, seen_from REAL, seen_to REAL,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
     person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
@@ -272,12 +279,13 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
     reg_no, ticket = f"P-2026-{number:04d}", f"A{_next_number('ticket'):03d}"
     _conn.execute(
         "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, ai_odds, second_check, vitals, arrived, "
-        "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at, first_name, last_name) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at, first_name, last_name, "
+        "seen_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (reg_no, ticket, complaint, age, sex, level, ai_level, json.dumps(odds), core.second_check(odds, level),
          json.dumps({**vitals, "alert": alert, "pain": pain}), arrived, department,
          "made-up patient" if department else None, *MADE_UP_INSURANCE[number % len(MADE_UP_INSURANCE)],
-         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now(), *MADE_UP_NAMES[number % len(MADE_UP_NAMES)]))
+         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now(), *MADE_UP_NAMES[number % len(MADE_UP_NAMES)],
+         time.time() if doctor else None))
     _event(reg_no, "made up", "system", "with " + doctor if doctor else "in the waiting room")
     return reg_no, ticket
 
@@ -392,11 +400,26 @@ def nurse_patients():
         rows = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE status = 'nurse'")]
         for row in rows:
             row["danger"] = _danger_yes(row["reg_no"])
-    rows.sort(key=lambda p: (-p["danger"], p["checked_in"], p["reg_no"]))
+        _, line_now = _waiting()
+    # A patient who says they feel worse comes before everyone, then danger signs, then who has waited longest.
+    rows.sort(key=lambda p: (p["worse_at"] is None, p["worse_at"] or 0, -p["danger"], p["checked_in"], p["reg_no"]))
+    # Patients already in the waiting room who need the nurse again: first those who pressed "I feel worse"
+    # (who asked first comes first), then those who have waited longer than their level allows (the more
+    # urgent level first, then who has gone longest without a look).
+    again = [p for p in line_now if p["worse_at"] is not None or core.recheck_due(p, clock)]
+    again.sort(key=lambda p: (p["worse_at"] is None, p["worse_at"] if p["worse_at"] is not None else 0, p["level"],
+                              p["seen_at"] if p["seen_at"] is not None else p["arrived"]))
     return {"clock": clock, "patients": [
         {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "patient": full_name(p), "complaint": p["complaint"],
-         "age": p["age"], "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"]}
-        for p in rows]}
+         "age": p["age"], "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"],
+         "worse": p["worse_at"] is not None}
+        for p in rows],
+        "recheck": [
+        {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "ticket": p["ticket"], "patient": full_name(p),
+         "complaint": p["complaint"], "age": p["age"], "sex": p["sex"], "level": p["level"],
+         "worse": p["worse_at"] is not None, "recheck_due": core.recheck_due(p, clock),
+         "since_seen": clock - (p["seen_at"] if p["seen_at"] is not None else p["arrived"])}
+        for p in again]}
 
 
 def nurse_card(reg_no):
@@ -408,12 +431,30 @@ def nurse_card(reg_no):
     with _lock:
         clock = _meta("clock")
     return {"reg_no": reg_no, "code": code_for(reg_no), "status": visit["status"], "complaint": visit["complaint"],
+            "complaint_read": core.spelling(visit["complaint"]),     # with typing slips put right, as the models read it
             "first_name": visit["first_name"], "last_name": visit["last_name"], "patient": full_name(visit),
             "age": visit["age"], "sex": visit["sex"], "arrival": visit["arrival"] or "Walked in",
             "injury": bool(visit["injury"]), "pain": visit["pain"] or 0, "pain_word": core.pain_word(visit["pain"]),
             "insurance": visit["insurance"], "card_end": visit["card_end"], "ticket": visit["ticket"],
             "waited": None if visit["checked_in"] is None else clock - visit["checked_in"],
+            # For a re-check of a patient who is already in the waiting room (staff only, like the rest of the card).
+            "level": visit["level"], "ai_level": visit["ai_level"],
+            "worse": visit["worse_at"] is not None and visit["status"] in ("nurse", "waiting"),
+            "recheck_due": visit["status"] == "waiting" and core.recheck_due(visit, clock),
+            "since_seen": (clock - (visit["seen_at"] if visit["seen_at"] is not None else visit["arrived"])
+                           if visit["status"] == "waiting" else None),
+            "rechecks": visit["rechecks"] or 0,
+            # What the nurse wrote and decided before, so that a re-check starts from it and does not wipe it.
+            "note": visit["nurse_note"], "summary_held_back": _held_back(visit["summary"]),
             "answers": answers_for(reg_no)}
+
+
+def _held_back(summary):
+    """Did the nurse say "this summary is not right" the last time she decided? Then the stored summary was
+    written by the template although the language model had written one."""
+    if not summary:
+        return False
+    return json.loads(summary)["patient_said"].get("held_back", False)
 
 
 def _answers(reg_no):
@@ -442,10 +483,14 @@ def _summary_of(visit, note=None, summary_ok=True, with_ai=True):
     return core.patient_summary(visit, answers, ai, summary_ok, note)
 
 
-def _write_summary(reg_no, note, summary_ok):
-    """Write the summary down at the moment the patient leaves the nurse, in the same transaction as her
-    decision. From then on it is read, never rebuilt: a model that answers differently later cannot change it."""
+def _write_summary(reg_no, note, summary_ok, keep_note=False):
+    """Write the summary down at the moment the nurse decides, in the same transaction as her decision. From
+    then on it is read, never rebuilt: a model that answers differently later cannot change it. It is written
+    again only when she decides again (a re-check). keep_note: the request carried no note at all, so the note
+    she wrote before stays (a re-check must not wipe it by accident)."""
     visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    if keep_note:
+        note = visit["nurse_note"]
     summary = _summary_of(visit, note, summary_ok)
     _conn.execute("UPDATE visits SET summary = ?, nurse_note = ? WHERE reg_no = ?", (json.dumps(summary), note, reg_no))
 
@@ -460,16 +505,27 @@ def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department
     now with the nurse: the visit moves on, so it shows on her list and the phone stops asking questions."""
     record = json.dumps({**vitals, "alert": alert, "pain": pain})
     with _lock, _conn:
-        before = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
-        if before and before["status"] == "registered":
+        before = _still_at_the_desk(reg_no)     # raises AlreadySent: a doctor called the patient while Meddy was working
+        if before is None:
+            return
+        if before["status"] == "registered":
             _event(reg_no, "taken by the nurse", "nurse", "check-in on the phone was not finished")
-        _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_advised = ?, "
+        clock = _meta("clock")
+        # A patient who is already in the line is being measured again (a re-check) and the nurse has not decided yet:
+        #   remeasured     says so, for the doctor, should the patient reach one before she decides
+        #   held_at        keeps the patient with the nurse: no doctor calls them for HOLD_FOR minutes
+        #   ai_level_then  keeps what Meddy suggested when she last decided (the right-hand sides see the old row)
+        # Meddy's advice goes to quick_pending and becomes quick_advised when the nurse decides: the test regime
+        # counts what she did against the advice she had at that moment.
+        _conn.execute("UPDATE visits SET ai_level_then = CASE WHEN status = 'waiting' THEN COALESCE(ai_level_then, ai_level) "
+                      "ELSE ai_level_then END, ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_pending = ?, "
+                      "remeasured = CASE WHEN status = 'waiting' THEN 1 ELSE 0 END, "
+                      "held_at = CASE WHEN status = 'waiting' THEN ? ELSE NULL END, "
                       "status = CASE WHEN status = 'registered' THEN 'nurse' ELSE status END, "
                       "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
                       (ai_level, record, json.dumps(odds) if odds else None, department,
-                       None if quick is None else int(quick), _meta("clock"), reg_no))
-        if _conn.execute("SELECT 1 FROM visits WHERE reg_no = ?", (reg_no,)).fetchone():
-            _event(reg_no, "assessed", "nurse", f"Meddy suggested level {ai_level}" + (f", {department}" if department else ""))
+                       None if quick is None else int(quick), clock, clock, reg_no))
+        _event(reg_no, "assessed", "nurse", f"Meddy suggested level {ai_level}" + (f", {department}" if department else ""))
 
 
 def _flag(reg_no, level):
@@ -508,36 +564,95 @@ def _still_at_the_desk(reg_no):
     return visit
 
 
-def _join(reg_no, level, danger, department, department_how, review):
+class UnknownDoctor(Exception):
+    """The nurse chose a doctor who is not in the staff list, or the resuscitation team (it takes levels 1-2 by itself)."""
+
+
+def _choose_doctor(reg_no, doctor_reg):
+    """The nurse chose this doctor for the patient: the patient waits in line for them, and the visit takes the
+    doctor's department. A busy doctor can be chosen; the patient then simply waits longer. The caller holds the
+    lock and the transaction."""
+    doctor = _conn.execute("SELECT * FROM doctors WHERE reg_no = ?", (doctor_reg,)).fetchone()
+    if doctor is None or doctor["department"] == "Resuscitation team":
+        raise UnknownDoctor(doctor_reg)
+    _conn.execute("UPDATE visits SET wanted_doctor = ?, department = ? WHERE reg_no = ?",
+                  (doctor_reg, doctor["department"], reg_no))
+    _event(reg_no, "doctor chosen", "nurse", f"{doctor['name']}, {doctor['department']}")
+
+
+def _join(reg_no, level, danger, department, department_how, review, doctor_reg=None):
     visit = _still_at_the_desk(reg_no)
     ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
-    arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
+    clock = _meta("clock")
+    arrived = visit["arrived"] if visit and visit["arrived"] is not None else clock
+    waiting = bool(visit and visit["status"] == "waiting")
+    # A re-check: the patient is already in the line AND the nurse measured them again. Joining again without
+    # measuring (a second click, a retry, a changed level) is not one: it answers no "I feel worse" and restarts
+    # no re-check time.
+    again = bool(waiting and visit["remeasured"])
+    seen = (visit["seen_at"] if visit else None) if waiting and not again else clock
+    worse = (visit["worse_at"] if visit else None) if waiting and not again else None
+    if again:
+        review = review or "checked"            # a re-check is the nurse looking again, whatever the request says
     # A department that is not given is left as it was: joining again must not wipe the nurse's choice.
     _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = COALESCE(?, department), "
                   "department_how = COALESCE(?, department_how), second_check = ?, review = COALESCE(?, review), "
-                  "status = 'waiting' WHERE reg_no = ?",
-                  (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review, reg_no))
-    if visit:
+                  "status = 'waiting', seen_at = ?, worse_at = ?, rechecks = COALESCE(rechecks, 0) + ?, "
+                  "ai_level_then = ai_level, remeasured = 0, held_at = NULL, "
+                  "quick_advised = COALESCE(quick_pending, quick_advised) WHERE reg_no = ?",
+                  (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review,
+                   seen, worse, int(again), reg_no))
+    if doctor_reg:
+        _choose_doctor(reg_no, doctor_reg)
+    if visit and again:
+        _event(reg_no, "re-checked", "nurse", f"level {visit['level']} to level {level}"
+               + (", after the patient said they felt worse" if visit["worse_at"] is not None else ""))
+    elif visit:
         _event(reg_no, "in line", "nurse", f"level {level}, ticket {ticket}" + (f", {review}" if review else ""))
     return ticket
 
 
-def join_line(reg_no, level, danger, department=None, department_how=None, review=None):
-    """The nurse's decision puts the patient in the line.
+class NotWaiting(Exception):
+    """The patient is not waiting (for the nurse or in the waiting room), so there is nobody to call back to them."""
+
+
+def feel_worse(reg_no):
+    """The patient pressed "I feel worse" on their phone while waiting.
+
+    It does not change the level or the place in line: only a nurse can do that. It puts the patient on top of
+    the nurse's list so that she looks at them again. Pressing twice asks once. Returns the visit's status,
+    None for an unknown visit, or raises NotWaiting."""
+    with _lock, _conn:
+        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        if visit["status"] not in ("nurse", "waiting"):
+            raise NotWaiting(reg_no)
+        if visit["worse_at"] is None:
+            _conn.execute("UPDATE visits SET worse_at = ?, worse_said = COALESCE(worse_said, 0) + 1 WHERE reg_no = ?",
+                          (_meta("clock"), reg_no))
+            _event(reg_no, "said they feel worse", "patient's phone",
+                   "waiting for the nurse" if visit["status"] == "nurse" else "in the waiting room")
+        return visit["status"]
+
+
+def join_line(reg_no, level, danger, department=None, department_how=None, review=None, doctor_reg=None):
+    """The nurse's decision puts the patient in the line, for the doctor she chose if she chose one.
 
     Joining a second time (the nurse changed the level) keeps the same ticket and the same arrival time,
     so nobody gets two tickets or loses the minutes they have already waited."""
     with _lock, _conn:
-        return _join(reg_no, level, danger, department, department_how, review)
+        return _join(reg_no, level, danger, department, department_how, review, doctor_reg)
 
 
-def admit(reg_no, level, danger, department=None, department_how=None, review=None, note=None, summary_ok=True):
+def admit(reg_no, level, danger, department=None, department_how=None, review=None, note=None, summary_ok=True,
+          keep_note=False, doctor_reg=None):
     """What the nurse station does through the web: join the line, write the patient summary for the doctor,
     and for level 1 or 2 go to the resuscitation team in the same breath. One lock for all of it, so nobody
     else can call the patient in between. Returns (ticket, where the patient was sent, or None when they wait)."""
     with _lock, _conn:
-        ticket = _join(reg_no, level, danger, department, department_how, review)
-        _write_summary(reg_no, note, summary_ok)
+        ticket = _join(reg_no, level, danger, department, department_how, review, doctor_reg)
+        _write_summary(reg_no, note, summary_ok, keep_note)
         if level > 2:
             return ticket, None
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
@@ -556,6 +671,16 @@ def _called(patient, clock):
 
 # ---------------------------------------------------------------- the line
 
+HOLD_FOR = 15       # minutes a patient the nurse is re-checking stays with her, out of every doctor's call
+
+
+def _with_nurse(patient, clock):
+    """Is this waiting patient with the nurse for a re-check right now? She measured them again and has not
+    decided yet. Calling them away would lose her decision, so no doctor's call takes them, for HOLD_FOR minutes
+    at most: a re-check nobody finishes must not keep a patient out of the line for ever."""
+    return patient["held_at"] is not None and clock - patient["held_at"] < HOLD_FOR
+
+
 def _waiting():
     clock = _meta("clock")
     rows = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE status = 'waiting'")]
@@ -569,7 +694,11 @@ def line():
     return {"clock": clock, "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "who": p["complaint"], "patient": full_name(p), "level": p["level"],
          "name": core.LEVEL_NAMES[p["level"]], "danger": bool(p["danger"]), "you": bool(p["you"]),
-         "waited": clock - p["arrived"], "position": i}
+         "waited": clock - p["arrived"], "position": i,
+         # For the nurse: the patient pressed "I feel worse", or has waited longer than their level allows
+         # without a nurse looking at them again (core.RECHECK_AFTER).
+         "worse": p["worse_at"] is not None, "recheck_due": core.recheck_due(p, clock),
+         "with_nurse": _with_nurse(p, clock)}
         for i, p in enumerate(rows, 1)]}
 
 
@@ -587,12 +716,13 @@ def where_is(reg_no):
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
-          "day": today, "code": code_for(reg_no)}
+          "day": today, "code": code_for(reg_no), "worse": False}
     if visit["status"] == "nurse":
-        me.update(status="nurse")          # check-in done: the phone shows the code for the nurse
+        # check-in done: the phone shows the code for the nurse. "worse": the nurse has been told they feel worse.
+        me.update(status="nurse", worse=visit["worse_at"] is not None)
     elif visit["status"] == "waiting":
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
-        me.update(status="waiting", position=position, ahead=position - 1)
+        me.update(status="waiting", position=position, ahead=position - 1, worse=visit["worse_at"] is not None)
     elif visit["status"] == "with doctor":
         me.update(status="called", doctor=doctor["name"], room=doctor["room"])
     elif visit["status"] == "done":
@@ -627,6 +757,8 @@ def call_next(reg_no=None):
         clock, rows = _waiting()
         if reg_no is not None:
             rows = [p for p in rows if p["reg_no"] == reg_no]
+        else:
+            rows = [p for p in rows if not _with_nurse(p, clock)]      # the nurse is re-checking them: not now
         if not rows:
             return None
         return _called(rows[0], clock)
@@ -651,16 +783,21 @@ def call_for_doctor(doctor_reg):
         if not doctor["on_duty"]:
             raise OffDuty(doctor_reg)
         clock, rows = _waiting()
+        rows = [p for p in rows if not _with_nurse(p, clock)]          # the nurse is re-checking them: not now
         department = doctor["department"]
-        mine = [p for p in rows if (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]
+        # A patient the nurse gave to one doctor waits for that doctor, as long as that doctor is on duty.
+        on_duty = {r["reg_no"] for r in _conn.execute("SELECT reg_no FROM doctors WHERE on_duty = 1")}
+        free = [p for p in rows if p["wanted_doctor"] not in on_duty or p["wanted_doctor"] == doctor_reg]
+        mine = [p for p in free if p["wanted_doctor"] == doctor_reg
+                or (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]
         if not mine and department == core.DEFAULT_DEPARTMENT:
-            mine = rows
+            mine = free
         if not mine:
             return None
         patient = mine[0]
         _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor_reg,))
-        _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
-                      (doctor_reg, patient["reg_no"]))
+        _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ?, seen_from = ? WHERE reg_no = ?",
+                      (doctor_reg, time.time(), patient["reg_no"]))
         _event(patient["reg_no"], "called by the doctor", doctor_reg, f"{doctor['name']}, {doctor['room']}")
     return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
             "patient": full_name(patient),
@@ -669,25 +806,33 @@ def call_for_doctor(doctor_reg):
             "reason": f"Called by {doctor['name']}: first in line for {department.lower()}."}
 
 
-def refer(reg_no, level, reason, department=None, note=None, summary_ok=True):
+def refer(reg_no, level, reason, department=None, note=None, summary_ok=True, keep_note=False, doctor_reg=None):
     """The nurse sends a critical patient straight to a doctor, past the line.
 
-    Her reason is stored so the doctor can read it. The doctor is chosen by the same rules as
-    call_next (levels 1-2 always go to the resuscitation team), inside one locked transaction."""
+    Her reason is stored so the doctor can read it. The doctor is the one she chose, or one chosen by the same
+    rules as call_next (levels 1-2 always go to the resuscitation team), inside one locked transaction."""
     with _lock, _conn:
         visit = _still_at_the_desk(reg_no)             # raises AlreadySent for a second click on "send"
         if visit is None:
             return None
         ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
-        # Sending a patient straight in is always the nurse's own check, never a quick acceptance.
+        clock = _meta("clock")
+        again = visit["status"] == "waiting"           # sent in from the waiting room: that is a re-check too
+        # Sending a patient straight in is always the nurse's own check, never a quick acceptance. She has seen
+        # the patient now, so an "I feel worse" is answered.
         _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, second_check = ?, "
-                      "review = 'checked', arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
-                      (ticket, level, reason, _flag(reg_no, level), _meta("clock"), reg_no))
+                      "review = 'checked', arrived = COALESCE(arrived, ?), seen_at = ?, worse_at = NULL, "
+                      "rechecks = COALESCE(rechecks, 0) + ?, ai_level_then = ai_level, remeasured = 0, held_at = NULL, "
+                      "quick_advised = COALESCE(quick_pending, quick_advised) WHERE reg_no = ?",
+                      (ticket, level, reason, _flag(reg_no, level), clock, clock, int(again), reg_no))
         if department:
             _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
                           (department, reg_no))
-        _event(reg_no, "sent straight in", "nurse", f"level {level}: {reason}")
-        _write_summary(reg_no, note, summary_ok)
+        if doctor_reg:
+            _choose_doctor(reg_no, doctor_reg)
+        _event(reg_no, "sent straight in", "nurse", f"level {level}: {reason}"
+               + (" (after the patient said they felt worse)" if visit["worse_at"] is not None else ""))
+        _write_summary(reg_no, note, summary_ok, keep_note)
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
         doctor, match_reason = _send_to_doctor(patient)
     return {"ticket": ticket, "department": doctor["department"], "doctor": doctor["name"],
@@ -709,8 +854,8 @@ def _send_to_doctor(patient):
     changes are saved together or not at all."""
     doctor, reason = _pick_doctor(patient)
     _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
-    _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
-                  (doctor["reg_no"], patient["reg_no"]))
+    _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ?, seen_from = ? WHERE reg_no = ?",
+                  (doctor["reg_no"], time.time(), patient["reg_no"]))
     _event(patient["reg_no"], "sent to a doctor", "system", f"{doctor['name']}, {doctor['room']}: {reason}")
     return doctor, reason
 
@@ -723,6 +868,71 @@ def likely_doctor(level, department, complaint="", injury=False):
                                        "complaint": complaint, "injury": injury})
     return {"doctor": doctor["name"], "doctor_reg": doctor["reg_no"], "room": doctor["room"],
             "department": doctor["department"], "waiting": doctor["waiting"]}
+
+
+VISIT_MINUTES = 10      # how long a visit is taken to last until a doctor has finished a few
+
+
+def _doctor_times(now=None):
+    """For each doctor with patients: since when the patient they see now is with them, and how long a visit
+    with this doctor usually takes (the average of their finished visits, or of all doctors while they have
+    fewer than three). From these, about when they will be free. The caller holds the lock."""
+    now = time.time() if now is None else now
+    done = [dict(r) for r in _conn.execute(
+        "SELECT doctor_reg, AVG(seen_to - seen_from) AS took, COUNT(*) AS n FROM visits "
+        "WHERE seen_to > seen_from AND seen_from IS NOT NULL GROUP BY doctor_reg")]
+    everyone = sum(d["took"] * d["n"] for d in done) / max(1, sum(d["n"] for d in done)) if done else VISIT_MINUTES * 60
+    usual = {d["doctor_reg"]: d["took"] if d["n"] >= 3 else everyone for d in done}
+    times = {}
+    for r in _conn.execute("SELECT doctor_reg, MIN(seen_from) AS since, COUNT(*) AS n FROM visits "
+                           "WHERE status = 'with doctor' GROUP BY doctor_reg"):
+        took = usual.get(r["doctor_reg"], everyone)
+        left = None if r["since"] is None else max(1, round((took * r["n"] - (now - r["since"])) / 60))
+        times[r["doctor_reg"]] = {"since": r["since"], "usual_minutes": max(1, round(took / 60)), "free_in_minutes": left}
+    return times
+
+
+def _queues():
+    """How many patients in the line wait for each doctor the nurse chose for them."""
+    return {r["wanted_doctor"]: r["n"] for r in _conn.execute(
+        "SELECT wanted_doctor, COUNT(*) AS n FROM visits WHERE status = 'waiting' AND wanted_doctor IS NOT NULL "
+        "GROUP BY wanted_doctor")}
+
+
+def _times_of(times, doctor):
+    if doctor["waiting"] == 0:
+        return {"since": None, "usual_minutes": None, "free_in_minutes": None}
+    return times.get(doctor["reg_no"], {"since": None, "usual_minutes": None, "free_in_minutes": None})
+
+
+def doctor_choices(match, others=3):
+    """The doctors the nurse can choose from for one patient: the best one, and a short list of three more.
+
+    match says how well each department fits the complaint (core.department_match). The best one is the least
+    busy doctor on duty in the best-matching department, even when that doctor is busy: the nurse sees it and can
+    still choose them, and the patient then waits in line for them. The short list holds the next doctor of the
+    same department, then the least busy doctor of each next-best department. Departments with nobody on duty
+    are left out."""
+    with _lock:
+        queue = _queues()
+        times = _doctor_times()
+        doctors = [dict(r) for r in _conn.execute(
+            "SELECT * FROM doctors WHERE on_duty = 1 AND department != 'Resuscitation team'")]
+    teams = {}
+    for d in sorted(doctors, key=lambda d: (d["waiting"] + queue.get(d["reg_no"], 0), d["reg_no"])):
+        teams.setdefault(d["department"], []).append(d)
+    ranked = [name for name in sorted(match, key=match.get, reverse=True) if name in teams]
+    if not ranked:
+        return {"suggested": None, "others": []}
+
+    def card(d):
+        return {"doctor_reg": d["reg_no"], "doctor": d["name"], "room": d["room"], "department": d["department"],
+                "match": round(match.get(d["department"], 0), 3), "with_now": d["waiting"],
+                "queue": queue.get(d["reg_no"], 0), "busy": d["waiting"] > 0, **_times_of(times, d)}
+
+    best = teams[ranked[0]]
+    short = best[1:2] + [teams[name][0] for name in ranked[1:]]
+    return {"suggested": card(best[0]), "others": [card(d) for d in short[:others]]}
 
 
 def review_stats():
@@ -747,6 +957,11 @@ def _pick_doctor(patient):
     If nobody is on duty there, general medicine covers; if nobody is there either, any doctor on duty."""
     if patient["level"] <= 2:
         return _on_duty("Resuscitation team")[0], "Level 1 or 2: straight to the resuscitation team."
+    wanted = patient.get("wanted_doctor") and _conn.execute(
+        "SELECT * FROM doctors WHERE reg_no = ? AND on_duty = 1", (patient["wanted_doctor"],)).fetchone()
+    if wanted:
+        return dict(wanted), (f"The nurse chose {wanted['name']} ({wanted['department'].lower()}), "
+                              f"who has {wanted['waiting']} other patient{'' if wanted['waiting'] == 1 else 's'} now.")
     # The department was decided at the nurse station. Sample patients have none, so the rule decides.
     department = patient["department"] or core.department_for(patient["complaint"], bool(patient["injury"]))
     how = patient["department_how"] or "key-word rule"
@@ -792,6 +1007,12 @@ def doctor_patients(doctor_reg):
             # A visit that never passed the nurse's screen (the made-up patients) has no stored summary:
             # it is put together here from what is stored, by the template, without the language model.
             row["summary"] = json.loads(row["summary"]) if row["summary"] else _summary_of(row, with_ai=False)
+            # The summary was written when the nurse last decided. What happened in the waiting room after that
+            # is added here, as it stands now: a press of "I feel worse" she did not get to, or new measurements
+            # she had not decided on when the doctor called.
+            row["summary"]["nurse_found"].update(
+                said_worse=row["worse_said"] or 0, rechecks=row["rechecks"] or 0,
+                worse_unanswered=row["worse_at"] is not None, remeasured=bool(row["remeasured"]))
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
@@ -811,8 +1032,8 @@ def finish_visit(reg_no):
         visit = _conn.execute("SELECT status, doctor_reg FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None or visit["status"] != "with doctor":
             return None
-        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'finished by the doctor' "
-                      "WHERE reg_no = ?", (_now(), reg_no))
+        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'finished by the doctor', seen_to = ? "
+                      "WHERE reg_no = ?", (_now(), time.time(), reg_no))
         _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
         _event(reg_no, "finished", visit["doctor_reg"])
     return {"reg_no": reg_no, "doctor_reg": visit["doctor_reg"], "status": "done"}
@@ -827,8 +1048,13 @@ def staff():
         people = _conn.execute("SELECT COUNT(*) AS n FROM people").fetchone()["n"]
         ever = _conn.execute("SELECT COUNT(*) AS n FROM visits").fetchone()["n"]
         logged = _conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+        queue = _queues()
+        times = _doctor_times()
+        simulation = bool(_setting("simulation", 1))
     regular = [d for d in doctors if d["department"] != "Resuscitation team"]
-    return {"doctors": [{**d, "on_duty": bool(d["on_duty"])} for d in doctors],
+    return {"doctors": [{**d, "on_duty": bool(d["on_duty"]), "busy": d["waiting"] > 0,
+                         "queue": queue.get(d["reg_no"], 0), **_times_of(times, d)} for d in doctors],
+            "simulation": simulation,
             "on_duty": sum(d["on_duty"] for d in regular), "total": len(regular),
             "visits": {"registered": sum(counts.values()), "with nurse": counts.get("nurse", 0),
                        "waiting": counts.get("waiting", 0),
@@ -932,6 +1158,122 @@ def start_keeping(every=10):
                 print(f"Could not copy the database to {KEPT}: {error}", flush=True)
     threading.Thread(target=loop, daemon=True, name="keep-database").start()
     atexit.register(keep_copy)
+
+
+# ---------------------------------------------------------------- the rest of the hospital, simulated
+# A real emergency department does not stand still while one nurse works: other nurses send patients to the
+# doctors and the doctors finish with them. The simulation plays that part with made-up patients, so a doctor
+# the nurse is about to choose may really be busy, and free again a few minutes later.
+# It never touches a real patient, the waiting line, or a doctor whose own screen is open (a person is playing
+# that doctor). It runs only while somebody has a Meddy screen open, so an empty Space does not fill its
+# database. "Behind the scenes" can switch it off.
+SIM_PATIENTS = {
+    "Cardiology": [("chest tightness", 64, "Male", 3, "normal", 4), ("palpitations", 51, "Female", 3, "normal", 0),
+                   ("chest pain on exertion", 70, "Male", 3, "normal", 5)],
+    "Respiratory medicine": [("cough and fever", 45, "Female", 3, "feverish", 0), ("dyspnea", 72, "Male", 3, "normal", 0),
+                             ("asthma, wheezing", 28, "Female", 3, "normal", 0)],
+    "Neurology": [("headache", 39, "Female", 4, "normal", 5), ("dizziness", 67, "Male", 3, "normal", 0),
+                  ("numbness in the left hand", 58, "Male", 3, "normal", 0)],
+    "Trauma and orthopaedics": [("ankle sprain", 24, "Male", 4, "normal", 4), ("wrist pain after a fall", 33, "Female", 4, "normal", 5),
+                                ("finger laceration", 41, "Male", 4, "normal", 3)],
+    "Gastroenterology and surgery": [("abd pain", 47, "Female", 3, "normal", 5), ("vomiting and diarrhea", 30, "Male", 4, "feverish", 3),
+                                     ("epigastric pain", 55, "Male", 3, "normal", 4)],
+    "Eye, ear, nose and throat": [("ear pain", 19, "Female", 5, "normal", 4), ("sore throat", 26, "Male", 5, "feverish", 3),
+                                  ("epistaxis", 61, "Male", 4, "normal", 0)],
+    "General medicine": [("fever", 36, "Female", 4, "feverish", 0), ("general weakness", 79, "Male", 3, "normal", 0),
+                         ("skin rash", 22, "Female", 5, "normal", 0)],
+    "Urology and kidney": [("flank pain", 43, "Male", 3, "normal", 6), ("dysuria", 31, "Female", 4, "normal", 3),
+                           ("hematuria", 66, "Male", 3, "normal", 0)],
+    "Obstetrics and gynaecology": [("vaginal bleeding", 29, "Female", 3, "normal", 3), ("pelvic pain", 34, "Female", 4, "normal", 5),
+                                   ("period pain", 22, "Female", 5, "normal", 5)],
+}
+SIM_EVERY = 15                  # seconds between two steps
+SIM_SEEN = (120, 420)           # a simulated visit lasts 2 to 7 minutes
+SIM_NEW_PATIENT = 0.12          # at each step, the chance that a free doctor gets a patient from another nurse
+SIM_WATCHED = 90                # a doctor whose screen asked for their list in the last 90 seconds is left alone
+SIM_AWAKE = 600                 # the simulation sleeps when no screen asked for anything in the last 10 minutes
+_watched = {}                   # doctor -> when their screen last asked for their list
+_last_seen = 0.0
+
+
+def seen():
+    """A Meddy screen asked the server for something: the hospital is being watched, so it keeps moving."""
+    global _last_seen
+    _last_seen = time.monotonic()
+
+
+def watching(doctor_reg):
+    """A doctor's own screen is open: a person plays this doctor, so the simulation leaves them alone."""
+    _watched[doctor_reg] = time.monotonic()
+
+
+def _setting(key, default):
+    row = _conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return default if row is None else row["value"]
+
+
+def simulation_on():
+    with _lock:
+        return bool(_setting("simulation", 1))
+
+
+def set_simulation(on):
+    with _lock, _conn:
+        _meta("simulation", int(on))
+
+
+def simulate(rng=None, now=None):
+    """One step of the rest of the hospital. Made-up patients whose time is up leave their doctor, and a free
+    doctor may get a new made-up patient from another nurse. Returns how many left and how many came."""
+    rng = rng or secrets.SystemRandom()
+    now = time.time() if now is None else now
+    watched = {reg for reg, at in _watched.items() if time.monotonic() - at < SIM_WATCHED}
+    left = came = 0
+    with _lock, _conn:
+        if not _setting("simulation", 1):
+            return {"left": 0, "came": 0}
+        for visit in _conn.execute("SELECT reg_no, doctor_reg, sim_until, seen_from FROM visits "
+                                   "WHERE status = 'with doctor' AND you = 0").fetchall():
+            if visit["doctor_reg"] in watched:
+                continue
+            if visit["sim_until"] is None:          # a made-up patient of the morning: give them a time to leave
+                _conn.execute("UPDATE visits SET sim_until = ?, seen_from = ? WHERE reg_no = ?",
+                              (now + rng.uniform(30, SIM_SEEN[1]), now, visit["reg_no"]))
+            elif visit["sim_until"] <= now:
+                _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'seen (simulated)', "
+                              "seen_to = ? WHERE reg_no = ?", (_now(), now, visit["reg_no"]))
+                _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
+                _event(visit["reg_no"], "finished", visit["doctor_reg"], "simulated")
+                left += 1
+        free = _conn.execute("SELECT reg_no, department FROM doctors WHERE on_duty = 1 AND waiting = 0 "
+                             "AND department != 'Resuscitation team' ORDER BY reg_no").fetchall()
+        for doctor in free:
+            if doctor["reg_no"] in watched or rng.random() >= SIM_NEW_PATIENT:
+                continue
+            complaint, age, sex, level, preset, pain = rng.choice(SIM_PATIENTS[doctor["department"]])
+            reg_no, _ = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _meta("clock"),
+                                       doctor["department"], doctor["reg_no"])
+            _conn.execute("UPDATE visits SET sim_until = ?, seen_from = ? WHERE reg_no = ?",
+                          (now + rng.uniform(*SIM_SEEN), now, reg_no))
+            _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
+            came += 1
+    return {"left": left, "came": came}
+
+
+def start_simulation(every=SIM_EVERY):
+    """Run the rest of the hospital in the background while somebody is watching. MEDDY_SIMULATION=0 turns it off."""
+    if os.environ.get("MEDDY_SIMULATION", "1") == "0":
+        return
+    def loop():
+        while True:
+            time.sleep(every)
+            if time.monotonic() - _last_seen > SIM_AWAKE:
+                continue
+            try:
+                simulate()
+            except Exception as error:             # never take the hospital down: say it and try again
+                print(f"The simulation stumbled: {error}", flush=True)
+    threading.Thread(target=loop, daemon=True, name="simulate-hospital").start()
 
 
 _upgrade()

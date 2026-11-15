@@ -6,7 +6,7 @@ Two models, trained on all 1,267 patients in `data/ktas_data.csv` and saved here
 |---|---|---|
 | `urgency_model.joblib` | The urgency level, 1 (most urgent) to 5 | Exact level right for 68% (nurses: 85%) |
 | `department_model.joblib` | One of nine hospital departments | Right for 70%; among its top three for 88% |
-| `model_info.json` | The details: date, library versions, inputs, answers, data fingerprints | |
+| `model_info.json` | The details: date, library versions, inputs, answers, data fingerprints, and the cut for Meddy's range of levels | Experts' level inside the range for 90.6% |
 
 The percentages come from the same recipe tested with 5-fold cross-validation, where every patient is scored by
 a model that never saw them (see `triage.ipynb`). The files here were then trained on **all** patients for the

@@ -231,11 +231,7 @@
 <footer class="bottom">
   <div class="wrap">
     <img class="foot-logo" src="/static/meddy-logo.webp" alt="Meddy" width="91" height="30">
-    <span class="disclaimer">This project is a prototype and is not medical advice.</span>
-    <span>Meddy suggests, the nurse decides.</span>
-    <span>Meddy never gives a diagnosis: that is yours.</span>
-    <a href="/">Patient walk-through</a>
-    <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
+    <span class="disclaimer">Prototype, not medical advice. Meddy never gives a diagnosis.</span>
   </div>
 </footer>
 
@@ -407,6 +403,18 @@ function meddyLine(p) {
   return `<p class="meddy">Meddy suggested the same level.</p>`;
 }
 
+// What happened in the waiting room: a press of "I feel worse", a second look by the nurse, or neither finished.
+function waitingLine(nurse) {
+  const said = nurse.said_worse || 0, again = nurse.rechecks || 0, parts = [];
+  const times = (n) => n === 1 ? "once" : n + " times";
+  if (nurse.worse_unanswered) parts.push(`<b>The patient pressed “I feel worse” and was called before the nurse could look again.</b>`);
+  else if (said && again) parts.push(`The patient said they felt worse while waiting. The nurse checked them again (${times(again)}); the level above is from her last check.`);
+  else if (said) parts.push(`The patient said they felt worse before the nurse saw them. Her check above came after that.`);
+  else if (again) parts.push(`The nurse checked the patient again while they waited (${times(again)}); the level above is from her last check.`);
+  if (nurse.remeasured) parts.push(`The nurse measured again after her last decision and had not decided when the patient was called: the measurements below are the newest, the level above is the earlier one.`);
+  return parts.length ? `<p>${parts.join(" ")}</p>` : "";
+}
+
 function vitalsBlock(v) {
   if (!v) return `<p class="hint">No measurements were saved for this visit.</p>`;
   const tile = (label, value, unit) => `<div><dt>${label}</dt><dd>${esc(value)}<small>${unit || "&nbsp;"}</small></dd></div>`;
@@ -472,12 +480,17 @@ function summaryBlock(p) {
       <p class="main">${nurse.level ? esc(levelText(nurse.level)) + "." : "No level yet."}${review}</p>
       <p>${esc(measured)}</p>
       ${nurse.referral_reason ? `<p><b>Sent straight in.</b> Her reason: ${esc(nurse.referral_reason)}</p>` : ""}
+      ${waitingLine(nurse)}
       ${nurse.note ? `<blockquote>“${esc(nurse.note)}”<span class="hint">the nurse's note</span></blockquote>` : ""}
     </div>
     <div class="part meddy">
       <span class="src">Meddy suggested</span>
       ${meddy ? `<p class="main">${esc(levelText(meddy.level))}${meddy.sure === null ? "" : ", " + Math.round(meddy.sure * 100) + "% sure"}.${
           meddy.unsure ? " It was not sure of the level." : ""}${meddy.unread ? " It could not read the complaint." : ""}</p>
+        ${meddy.range ? `<p>Meddy's likely range: ${meddy.range.low === meddy.range.high ? `level ${meddy.range.low} only`
+            : `level ${meddy.range.low} to level ${meddy.range.high}`}. In our tests the experts' level was inside a range
+            this wide for ${meddy.range.inside ? Math.round(meddy.range.inside * 100) + "%" : "9 in 10"} of patients (8 in 10
+            of the most urgent). Not a guarantee for this patient.</p>` : ""}
         ${flag ? `<p>${flag}</p>` : ""}
         ${meddy.department ? `<p>Department: ${esc(meddy.department)}${meddy.how ? ", chosen by the " + esc(meddy.how) : ""}.</p>` : ""}`
         : `<p class="main">Nothing: the patient was sent on before Meddy was asked.</p>`}
