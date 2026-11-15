@@ -32,6 +32,15 @@
              background:var(--blue); color:#fff; font-size:2.2rem; font-weight:800; font-variant-numeric:tabular-nums; vertical-align:middle; }
   .summary { margin-top:18px; padding:18px 20px; border-radius:var(--round); background:var(--violet-tint); color:#2f2466; font-size:1.12rem; }
   .summary .hint { display:block; margin-top:6px; color:#46358f; font-size:.95rem; }
+  /* what the nurse adds for the doctor: her word on the AI sentences, and a note */
+  .for-doctor { margin-top:14px; }
+  .for-doctor label { margin:14px 0 8px; font-size:1.05rem; }
+  .for-doctor .tick { display:flex; align-items:flex-start; gap:12px; font-weight:700; cursor:pointer; }
+  .for-doctor .tick[hidden] { display:none; }
+  .for-doctor .tick input { flex:none; width:24px; height:24px; margin:2px 0 0; accent-color:var(--violet); }
+  .for-doctor textarea { width:100%; padding:12px 16px; border:2px solid #aab8b0; border-radius:16px; background:var(--card);
+                         font:inherit; font-size:1.05rem; color:var(--ink); resize:vertical; }
+  .for-doctor textarea:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 5px rgba(33,82,196,.18); }
   .words { margin:14px 0 0; padding:16px 20px; border-left:5px solid var(--violet); border-radius:14px; background:var(--violet-tint);
            color:#2f2466; font-size:1.18rem; font-weight:600; }
   .words .hint { display:block; margin-top:6px; font-weight:400; color:#46358f; font-size:.95rem; }
@@ -260,6 +269,13 @@ async function openPatient(reg) {
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
       Waiting for the nurse ${card.waited} min.</p>
     <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
+    <div class="for-doctor">
+      <label class="tick" id="summary-wrong-row" hidden><input type="checkbox" id="summary-wrong">
+        <span>This summary is not right: do not pass it on to the doctor</span></label>
+      <label for="note">Your note for the doctor <span class="count" id="note-count">0 / 300</span></label>
+      <textarea id="note" maxlength="300" rows="2" placeholder="Optional. For example: lives alone, daughter is on her way"></textarea>
+      <p class="hint" style="margin:6px 0 0">The doctor reads this in the patient summary. Do not write a name.</p>
+    </div>
     ${said(card)}
     <h3 class="sub">At a glance</h3>
     ${facts(card)}
@@ -274,6 +290,8 @@ async function openPatient(reg) {
     <p class="error" id="error" role="alert"></p>
     <div id="result"></div>`;
   summarise(run, reg);
+  document.getElementById("note").addEventListener("input", (event) => {
+    document.getElementById("note-count").textContent = event.target.value.length + " / 300"; });
   bindChoice("vitals", (v) => cur.vitals = v.toLowerCase());
   document.getElementById("go").addEventListener("click", async (event) => {
     cur.alert = document.getElementById("alert").value;
@@ -289,15 +307,24 @@ async function openPatient(reg) {
   });
 }
 
+// What the nurse adds to the patient summary the doctor will read: her note, and whether the AI's two
+// sentences may be passed on. The summary itself is written on the server at the moment she sends the patient.
+function forDoctor() {
+  const note = document.getElementById("note"), wrong = document.getElementById("summary-wrong");
+  return { note: note && note.value.trim() ? note.value.trim() : null, summary_ok: !(wrong && wrong.checked) };
+}
+
 // The summary comes from the language model and can take a few seconds, so it is fetched apart from the card.
 async function summarise(run, reg) {
   let data = { source: "none" };
   try { data = await api("/api/nurse/summary/" + encodeURIComponent(reg)); } catch (e) {}
   const box = document.getElementById("summary");
   if (run !== shown || !box) return;
+  const wrong = document.getElementById("summary-wrong-row");
+  if (wrong) wrong.hidden = data.source !== "ai";        // only AI sentences can be held back; the plain ones are the patient's own words
   box.innerHTML = data.source === "ai"
     ? `<b>AI summary.</b> ${esc(data.text)}<span class="hint">Written by a language model from the patient's answers below. It never
-       gives a diagnosis and does not change the level. Check it against the answers.</span>`
+       gives a diagnosis and does not change the level. Check it against the answers: it goes to the doctor as part of the patient summary unless you tick the box below.</span>`
     : `<b>No AI summary this time.</b> <span class="hint" style="display:inline">The language model is off or was too slow. Everything the patient
        reported is below.</span>`;
 }
@@ -363,7 +390,7 @@ function showLevel() {
     busy(button, urgent ? "Calling the resuscitation team…" : "Finding a place in line…");
     try {
       const data = await api("/api/line/join", { reg_no: cur.reg, level: r.level, danger: r.danger,
-        department: r.department, department_how: r.department_how, review: "approved" });
+        department: r.department, department_how: r.department_how, review: "approved", ...forDoctor() });
       finished(data.ticket, data.called, r.level);
     } catch (e) { idle(button); document.getElementById("approve-error").textContent = trouble(e); }
   });
@@ -417,7 +444,7 @@ function afterLevel() {
     busy(button, urgent ? "Calling the resuscitation team…" : "Finding a place in line…");
     try {
       const data = await api("/api/line/join", { reg_no: cur.reg, level: mine, danger: r.danger,
-        department: r.department, department_how: r.department_how, review: "checked" });
+        department: r.department, department_how: r.department_how, review: "checked", ...forDoctor() });
       finished(data.ticket, data.called, mine);
     } catch (e) { idle(button); document.getElementById("send-error").textContent = trouble(e); }
   });
@@ -432,7 +459,7 @@ function afterLevel() {
     const button = event.currentTarget;
     busy(button, "Sending to the doctor…");
     try {
-      const sent = await api("/api/refer", { reg_no: cur.reg, level: mine, department: r.department, reason: why });
+      const sent = await api("/api/refer", { reg_no: cur.reg, level: mine, department: r.department, reason: why, ...forDoctor() });
       finished(sent.ticket, sent, mine);
     } catch (e) { idle(button); document.getElementById("send-error").textContent = trouble(e); }
   });

@@ -116,6 +116,10 @@ class Joining(BaseModel):
     department_how: str | None = Field(default=None, max_length=120)
     # What the nurse did with Meddy's report: accepted it as it was, or checked the patient in person.
     review: Literal["approved", "checked"] | None = None
+    # For the doctor's patient summary: her own note, and her word on the AI's two sentences
+    # (False: "this is not right, do not pass it on"). Both optional, so older pages keep working.
+    note: str | None = Field(default=None, max_length=300)
+    summary_ok: bool = True
 
 
 class Referral(BaseModel):
@@ -125,6 +129,8 @@ class Referral(BaseModel):
     level: int = Field(ge=1, le=5)
     reason: str = Field(min_length=3, max_length=300)       # required: the doctor must know why
     department: str | None = None
+    note: str | None = Field(default=None, max_length=300)  # for the doctor's patient summary, like in Joining
+    summary_ok: bool = True
 
 
 class Duty(BaseModel):
@@ -249,8 +255,14 @@ def triage(body: Assessment):
     visit = open_visit(body.reg_no)
     vitals = core.VITAL_PRESETS[body.vitals]
     answers = [a.model_dump() for a in body.answers]
-    db.save_answers(body.reg_no, answers, body.injury)
-    result = core.assess(visit["complaint"], visit["age"], visit["sex"], body.arrival, body.injury, body.alert,
+    injury = body.injury or bool(visit["injury"])
+    if answers:
+        db.save_answers(body.reg_no, answers, injury)
+    else:
+        # No answers in the request: the ones the patient gave at check-in stand. (Saving an empty list here
+        # used to wipe them, and the doctor's summary then had nothing the patient said.)
+        answers = db.answers_for(body.reg_no)
+    result = core.assess(visit["complaint"], visit["age"], visit["sex"], body.arrival, injury, body.alert,
                          body.pain, vitals)
     # Only the hand-written danger questions can mark a patient; AI-written ones are information only.
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
@@ -276,7 +288,8 @@ def join(body: Joining):
     if visit["ai_level"] is None:
         raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
     try:        # the state is checked again inside the database, together with the change (two quick clicks)
-        ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review)
+        ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review,
+                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
     if called:
@@ -322,7 +335,8 @@ def refer(body: Referral):
     open_visit(body.reg_no)
     known_department(body.department)
     try:
-        return db.refer(body.reg_no, body.level, body.reason, body.department)
+        return db.refer(body.reg_no, body.level, body.reason, body.department,
+                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
 

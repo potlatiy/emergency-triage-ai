@@ -580,6 +580,76 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
     return result
 
 
+# ---------------------------------------------------------------- the patient summary for the doctor
+# One summary per visit, written once when the nurse sends the patient on, and stored with the visit. The doctor
+# reads exactly what the nurse saw. It has three parts and every line belongs to exactly one of them:
+#   the patient said   - what the patient tapped and wrote, summed up in one or two sentences
+#   the nurse found    - what she measured and decided, and her note
+#   Meddy suggested    - the model's level, how sure it was, its flag and its department
+# It only repeats what was reported, measured or computed. It never names a condition, guesses a cause, gives
+# advice or says how serious something is, and it never changes the level, the department or the line.
+
+def plain_summary(complaint, age, sex, answers, injury=False):
+    """The patient's report in one or two sentences made by a template, for when there are no AI sentences
+    (the language model is off or too slow, its text broke a rule, or the nurse said it was not right).
+    Apart from the template's own words it uses only the patient's: the complaint is quoted as typed."""
+    who = "The patient"
+    if age is not None and sex in ("Female", "Male"):
+        who += f", a {age:g}-year-old {'woman' if sex == 'Female' else 'man'},"
+    said = " ".join(str(complaint or "").split()).rstrip(".!?,;: ")
+    first = f'{who} reports "{said}".' if said else f"{who} gave no complaint in words."
+    parts = []
+    danger = [a for a in answers if a.get("kind") == "danger"]
+    yes = sum(a.get("answer") == "Yes" for a in danger)
+    if danger:
+        parts.append(f"answered yes to {yes} of {len(danger)} danger signs" if yes else "answered no to every danger sign")
+    feel = next((a["answer"] for a in answers if a.get("topic") == PAIN_FEEL["topic"] and a.get("answer")), None)
+    if feel:
+        parts.append("reports no pain" if feel == PAIN_NONE else f"describes the pain as {feel.lower()}")
+    if injury:
+        parts.append("says it was caused by an injury")
+    if not parts:
+        return first
+    second = "They " + (parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]) + "."
+    return first + " " + second
+
+
+def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
+    """The summary the doctor reads, built from one visit as it is stored, its answers and the two AI sentences
+    the nurse saw (or None). `summary_ok` is the nurse's word on those sentences: False means "this is not
+    right, do not pass it on", and the template's sentences are used instead."""
+    use_ai = bool(ai and ai.get("source") == "ai" and ai.get("text") and summary_ok)
+    story = next((a["answer"] for a in answers if a.get("topic") == OWN_WORDS["topic"] and a.get("answer")), None)
+    patient_said = {
+        "text": ai["text"] if use_ai else plain_summary(visit["complaint"], visit["age"], visit["sex"], answers,
+                                                        bool(visit.get("injury"))),
+        "written_by": "ai" if use_ai else "code",
+        "own_words": story,
+        "danger_yes": [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"],
+        "facts": [{"label": topic_label(a.get("topic")), "value": a["answer"]} for a in answers
+                  if a.get("kind") == "extra" and a.get("answer") and a.get("topic") != OWN_WORDS["topic"]
+                  and topic_label(a.get("topic"))],
+    }
+    saved = json.loads(visit["vitals"]) if visit.get("vitals") else None
+    measured, warnings = None, []
+    if saved:
+        six = {name: saved.get(name) for name in VITAL_PRESETS["normal"]}
+        warnings = vital_warnings(six, saved.get("alert", "Alert"), saved.get("pain") or 0)
+        measured = {**six, "alert": saved.get("alert"), "pain_word": pain_word(saved.get("pain"))}
+    nurse_found = {"measured": measured, "warnings": warnings, "level": visit.get("level"), "review": visit.get("review"),
+                   "referral_reason": visit.get("referral_reason"), "note": note}
+    meddy = None
+    if visit.get("ai_level") is not None:
+        odds = json.loads(visit["ai_odds"]) if visit.get("ai_odds") else None
+        sure = max(odds) if odds else None
+        how = visit.get("department_how")
+        meddy = {"level": visit["ai_level"], "sure": sure, "unsure": bool(sure is not None and sure < SURE_ENOUGH),
+                 "unread": not known_words(visit["complaint"]), "flag": visit.get("second_check"),
+                 "department": visit.get("ai_department"),
+                 "how": how if how and not how.startswith(("nurse", "made-up")) else None}
+    return {"patient_said": patient_said, "nurse_found": nurse_found, "meddy_suggested": meddy}
+
+
 # ---------------------------------------------------------------- the electronic line (plain rules)
 
 def place(patient, clock):
