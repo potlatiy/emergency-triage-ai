@@ -9,6 +9,7 @@ What is here, and what uses AI:
 The doctors, the registration numbers and the line itself live in the database (db.py).
 """
 
+import difflib
 import json
 import os
 import re
@@ -107,7 +108,7 @@ _FILLER = re.compile(r"\b(i|my|me|a|an|the|have|has|had|got|am|is|are|was|it|its
 def nurse_words(complaint):
     """The complaint as the models read it: everyday words in the nurses' words, filler words left out.
     "My heart hurts since this morning" becomes "chest pain"."""
-    text = f" {(complaint or '').lower()} "
+    text = f" {spelling(complaint).lower()} "
     for pattern, nurse in EVERYDAY_TO_NURSE:
         text = re.sub(pattern, nurse, text)
     text = _FILLER.sub(" ", text)
@@ -159,11 +160,52 @@ def known_words(complaint):
             forms.add(word.removesuffix("ing") + "e")          # "breathing" -> "breathe"
         forms = {form for form in forms if len(form) >= 3}     # "died" must not become the shorthand "di"
         return bool(forms & _NURSE_WORDS or forms & _EVERYDAY or _SYMPTOM_RULES.search(word))
-    words = [w for w in _words(complaint) if w not in _NOT_A_SYMPTOM]
+    words = [w for w in _words(spelling(complaint)) if w not in _NOT_A_SYMPTOM]
     found = [w for w in words if len(w) >= 3 and known(w)]
     if not found and words and all(w in _NURSE_WORDS for w in words):
         return words
     return found
+
+
+# ---------------------------------------------------------------- typing slips
+# Patients type in a hurry: "breating", "stomache", "headake", "hurt pain". A word that is not a word we know is
+# replaced by the symptom or body word it is closest to, and only when it is very close (80% of the letters line
+# up). The phone shows the correction to the patient before they register ("Did you mean ...?"), and the models
+# and the summary read the corrected words. Staff still see what the patient typed.
+SYMPTOM_WORDS = sorted(_EVERYDAY | set("""
+abdomen abdominal ache aching allergic ankle anxiety arm asthma attack back bladder bleeding blister blood blurry
+breathe breathing breathless broken bruise burning burns chest chills choking collapse confused constipation cough
+coughing cramps diarrhea diarrhoea dizziness dizzy drowsy dysuria ear earache elbow epistaxis eye eyes face fainted
+fainting fever finger fingers flank foot fracture groin hand head headache hearing heart heartburn heel hip itchy jaw
+kidney knee leg legs lip lump migraine mouth muscle nausea nauseous neck nose nosebleed numbness pain painful pelvis
+period pregnant pressure pulse rash ribs seizure shaking shortness shoulder sick skin sneezing sore spine sprain
+stomach stomachache sweating swallow swallowing swelling swollen temperature testicle thigh throat throbbing thumb
+tingling toe tongue tooth toothache twisted unconscious urinate urine vagina vaginal vision vomit vomiting weakness
+wheezing wound wrist""".split()))
+_FINE_WORDS = _NOT_A_SYMPTOM | set("""cant dont wont isnt also every other since until while then into onto over under
+around about again always never often sometimes really very much many little lot lots after before during walking
+running eating drinking sleeping working moving lying sitting standing lifting playing warm cold hot cool wet dry hard soft red blue white black yellow green
+weird strange funny tight loose high low fast slow""".split())
+_HEART_SLIPS = re.compile(r"\b(hurt|hart|heat|hearth)(?= (pain|attack|rate|beat|beating|racing|problem|ache)\b)", re.I)
+
+
+def spelling(complaint):
+    """The complaint with typing slips put right: "hurt pain for one hour" becomes "heart pain for one hour",
+    "breating problems" becomes "breathing problems". Words Meddy knows, and short words, are left alone."""
+    text = _HEART_SLIPS.sub("heart", complaint or "")
+
+    def fix(found):
+        word = found.group(0)
+        low = word.lower()
+        forms = {low, low.removesuffix("s"), low.removesuffix("es"), low.removesuffix("ed"), low.removesuffix("d"),
+                 low.removesuffix("ing"), low.removesuffix("ing") + "e", low.removesuffix("ly"), low.removesuffix("y")}
+        if len(low) < 4 or forms & (_FINE_WORDS | _NURSE_WORDS | set(SYMPTOM_WORDS)):
+            return word
+        # A slip rarely hits the first letter or changes the length much: "warm" must not become "arm".
+        close = [w for w in difflib.get_close_matches(low, SYMPTOM_WORDS, n=3, cutoff=0.8)
+                 if w[0] == low[0] and abs(len(w) - len(low)) <= 2]
+        return close[0] if close else word
+    return re.sub(r"[^\W\d_]+", fix, text)
 
 
 def vital_warnings(vitals, alert="Alert", pain=0):
@@ -331,7 +373,7 @@ DEPARTMENT_NAMES = [name for name, _ in DEPARTMENTS] + [DEFAULT_DEPARTMENT]
 _SYMPTOM_RULES = re.compile("|".join(pattern for _, pattern in DEPARTMENTS))
 
 def department_for(complaint, injury=False):
-    text = f" {(complaint or '').lower()} "
+    text = f" {spelling(complaint).lower()} "          # "breating problems" is a breathing problem
     for name, pattern in DEPARTMENTS:
         if re.search(pattern, text):
             return name
@@ -655,7 +697,7 @@ def _without_guess(sentence):
 
 
 # The same thing in other words counts as said: "stomach pain" summed up as "abdominal pain" is not invented.
-_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
+_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"ches", "hear"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
                {"blee", "bloo"}, {"swel", "swol"}, {"dizz", "ligh"}, {"numb", "ting"}]
 
 
@@ -720,6 +762,8 @@ def with_complaint(text, complaint):
 def _report_for_summary(complaint, age, sex, answers, injury=False):
     """What the patient reported, as plain lines for the model. Only answers the patient actually gave."""
     lines = [f'Complaint, in the patient\'s words: "{complaint}"', f"Age {age:g}, {str(sex).lower()}"]
+    if spelling(complaint) != complaint:          # "hurt pain" was meant as "heart pain": the model gets both
+        lines.insert(1, f'The same complaint with typing slips corrected: "{spelling(complaint)}"')
     if injury:
         lines.append("Caused by an injury: yes")
     danger = [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"]

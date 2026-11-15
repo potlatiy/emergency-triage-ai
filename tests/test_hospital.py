@@ -2108,3 +2108,29 @@ def test_a_busy_doctor_says_since_when_and_about_when_they_are_free():
     assert marlow["free_in_minutes"] == 8                        # two visits of 5 minutes, 2 minutes gone
     doctors = {d["reg_no"]: d for d in db.staff()["doctors"]}
     assert doctors["DR-1001"]["since"] == 1000 and doctors["DR-1014"]["since"] is None     # Dr. Kowalski is free
+
+
+@pytest.mark.parametrize("typed, meant", [
+    ("hurt pain for one hour", "heart pain for one hour"), ("breating problems", "breathing problems"),
+    ("headake since morning", "headache since morning"), ("i have diarea", "i have diarrhea"),
+    ("pain in my chets", "pain in my chest"), ("feaver and cough", "fever and cough"),
+    ("it hurts when i swallow", "it hurts when i swallow"),        # real words and their endings are left alone
+    ("burned my hand", "burned my hand"), ("abd pain", "abd pain"), ("i was walking and fell", "i was walking and fell"),
+])
+def test_typing_slips_are_put_right(typed, meant):
+    assert core.spelling(typed) == meant
+    assert client.get("/api/spelling", params={"text": typed}).json() == {"text": meant, "changed": typed != meant}
+
+
+def test_a_typing_slip_still_finds_the_right_questions_and_department():
+    assert core.questionnaire("breating problems", use_model=False)["topic"] == "Respiratory medicine"
+    assert core.assess("hurt pain for one hour", 30)["department"] == "Cardiology"
+    assert core.known_words("breating problems")
+    reg = new_visit("hurt pain for one hour", age=30)
+    assert client.get(f"/api/nurse/patient/{reg}").json()["complaint_read"] == "heart pain for one hour"
+    report = core._report_for_summary("hurt pain for one hour", 30, "Female", [])
+    assert 'typing slips corrected: "heart pain for one hour"' in report
+
+
+def test_an_open_page_can_tell_a_new_version_is_online():
+    assert re.fullmatch(r"[0-9a-f]{12}", client.get("/api/version").json()["version"])

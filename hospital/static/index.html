@@ -494,7 +494,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=4"></script>
+<script src="/static/meddy-site.js?v=5"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -768,6 +768,7 @@ function entrance() {
       never given to the AI.</p>
     <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
     <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
+    <p class="hint" id="spell" hidden>Did you mean: <b id="spell-text"></b>? <button type="button" class="mini" id="spell-use">Yes, use this</button></p>
     <div class="row">
       <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" inputmode="numeric" value="${me.age}"></div>
       <div><span class="label" id="sex-label">Sex</span>${choice("sex", ["Female", "Male"], me.sex, "sex-label")}</div>
@@ -808,6 +809,22 @@ function entrance() {
     cardBox.dispatchEvent(new Event("input")); });
   const complaintBox = document.getElementById("complaint");
   complaintBox.focus({ preventScroll: true });
+  // A typing slip ("hurt pain", "breating") is offered back corrected; the patient decides.
+  let spellTimer = null;
+  const checkSpelling = () => { clearTimeout(spellTimer); spellTimer = setTimeout(async () => {
+    const typed = complaintBox.value.trim(), box = document.getElementById("spell");
+    if (typed.length < 3) { box.hidden = true; return; }
+    try {
+      const answer = await (await fetch("/api/spelling?text=" + encodeURIComponent(typed))).json();
+      if (complaintBox.value.trim() !== typed) return;
+      document.getElementById("spell-text").textContent = answer.text; box.hidden = !answer.changed;
+    } catch (e) { box.hidden = true; }
+  }, 500); };
+  complaintBox.addEventListener("input", checkSpelling);
+  checkSpelling();
+  document.getElementById("spell-use").addEventListener("click", () => {
+    complaintBox.value = document.getElementById("spell-text").textContent; document.getElementById("spell").hidden = true;
+    complaintBox.dispatchEvent(new Event("input")); complaintBox.dispatchEvent(new Event("change")); });
   // Whatever is typed is kept, so a reload before registering does not empty the form.
   const keepDraft = () => { me.complaint = complaintBox.value; me.arrival = document.getElementById("arrival").value;
     me.firstName = document.getElementById("first-name").value; me.lastName = document.getElementById("last-name").value;

@@ -9,6 +9,7 @@ and a small API the pages talk to.
 Everything is kept in the internal database, hospital.db (see db.py).
 """
 
+import hashlib
 import os
 import socket
 from pathlib import Path
@@ -25,6 +26,10 @@ import core
 import db
 
 STATIC = Path(__file__).parent / "static"
+# A fingerprint of the pages and the code this server started with. An open page compares it from time to time
+# and offers a reload when a new version is online: otherwise an old tab keeps showing the old screens.
+VERSION = hashlib.sha256(b"".join(f.read_bytes() for f in sorted([*STATIC.iterdir(), *Path(__file__).parent.glob("*.py")])
+                                  if f.is_file())).hexdigest()[:12]
 PORT = int(os.environ.get("MEDDY_PORT", 8000))
 # Off by default: the demo stays on this computer unless someone starts it with MEDDY_LAN=1.
 LAN = os.environ.get("MEDDY_LAN") == "1"
@@ -306,6 +311,19 @@ def nurse_patients():
     """The nurse's list: patients who finished check-in and wait for her (someone who feels worse first, then
     danger signs), and "recheck": patients in the waiting room who need her again."""
     return db.nurse_patients()
+
+
+@app.get("/api/version")
+def version():
+    return {"version": VERSION}
+
+
+@app.get("/api/spelling")
+def spelling(text: str = ""):
+    """The complaint with typing slips put right, for the phone's "Did you mean ...?". Nothing is stored."""
+    text = text[:200]
+    fixed = core.spelling(text)
+    return {"text": fixed, "changed": fixed != text}
 
 
 @app.get("/api/nurse/patient/{reg_no}")

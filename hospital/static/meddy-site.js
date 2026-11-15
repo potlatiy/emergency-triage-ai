@@ -108,4 +108,25 @@
   });
 
   window.MeddyCurtain = { play, go };
+
+  // A new version online: an open tab keeps its old screens until it is reloaded, so it says so.
+  let first = null;
+  const checkVersion = async () => {
+    try {
+      const { version } = await (await fetch("/api/version", { cache: "no-store" })).json();
+      if (first === null) { first = version; return; }
+      if (version === first || document.getElementById("new-version")) return;
+      const bar = document.createElement("div");
+      bar.id = "new-version"; bar.setAttribute("role", "status");
+      bar.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;display:flex;gap:12px;" +
+        "align-items:center;padding:12px 18px;border-radius:999px;background:#173f9c;color:#fff;font-weight:700;" +
+        "box-shadow:0 8px 24px rgba(0,0,0,.2)";
+      bar.innerHTML = 'Meddy was updated. <button type="button" style="font:inherit;border:0;border-radius:999px;' +
+        'padding:6px 14px;background:#fff;color:#173f9c;font-weight:800;cursor:pointer">Reload</button>';
+      bar.querySelector("button").addEventListener("click", () => location.reload());
+      document.body.appendChild(bar);
+    } catch (e) {}
+  };
+  checkVersion();
+  setInterval(checkVersion, 60000);
 })();

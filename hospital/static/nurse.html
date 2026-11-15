@@ -162,7 +162,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=4"></script>
+<script src="/static/meddy-site.js?v=5"></script>
 <script>
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
@@ -363,6 +363,7 @@ async function openPatient(reg, takeOver) {
     ${ids(card)}
     <h2><span class="bigcode">${esc(card.status === "waiting" && card.ticket ? card.ticket : card.code)}</span>${card.patient ? esc(card.patient) : esc(card.complaint)}</h2>
     ${card.patient ? `<p class="lede" style="font-weight:700;color:var(--ink)">“${esc(card.complaint)}”</p>` : ""}
+    ${card.complaint_read && card.complaint_read !== card.complaint ? `<p class="hint" style="margin:4px 0 0">Meddy read it as: <b>${esc(card.complaint_read)}</b></p>` : ""}
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
       ${card.status === "waiting" ? `In the waiting room with ticket ${esc(card.ticket)}, level ${card.level}. Last seen by the nurse ${card.since_seen} min ago.`
         : card.waited === null ? "Did not finish check-in on the phone." : `Waiting for the nurse ${card.waited} min.`}</p>
@@ -509,13 +510,14 @@ function showLevel() {
       <div class="bars">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
         <div class="bar ${l === r.level ? "on" : ""} ${r.range && l >= r.range.low && l <= r.range.high ? "in" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
         <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
-      ${rangeNote(r.range)}
-      ${similarBlock(r.similar)}
       <h3 class="sub">Suggested doctor</h3>
       ${urgent ? `<div class="note" style="margin-top:12px"><b>Resuscitation team, Resus bay</b>
         <span class="hint">Levels 1 and 2 go in at once. For level 3 to 5, the doctor below.</span></div>` : ""}
       <div class="docs" id="docs"></div>
       ${verdict}
+      ${r.range || (r.similar && r.similar.patients.length) ? `<details class="staffbox" style="margin-top:18px">
+        <summary><span class="summary-text">More from Meddy: likely range and similar patients</span></summary>
+        ${rangeNote(r.range)}${similarBlock(r.similar)}</details>` : ""}
     </div>
     <div id="verdict-buttons">
       <button class="go ${advice.quick ? "" : "light"}" id="approve">Everything is correct: send ${esc(where)}</button>
