@@ -4,9 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meddy · Digital hospital</title>
+<script>/* a reload of an open visit: hide the half-built page until the visit is restored (see start()) */
+try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me && v.me.reg) document.documentElement.classList.add("restoring"); } catch (e) {}</script>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=5">
+<link rel="stylesheet" href="/static/meddy-site.css?v=10">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -494,7 +496,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=5"></script>
+<script src="/static/meddy-site.js?v=10"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -574,7 +576,30 @@ function startOver(message) {
 // True when the hospital's answer is about the visit this page remembers, and not about another patient who
 // got the same registration number on a later day.
 const sameVisit = (now) => now.day === undefined || me.day === undefined || me.day === null || now.day === me.day;
+// A reload restores the visit under the white curtain ("Welcome back"), so the page never shows half-built,
+// and a bar at the top of the step says why the patient is not at the entrance, with a way to start again.
 async function start() {
+  const saved = kept(sessionStorage);
+  const restoring = !!(saved && saved.me && saved.me.reg) && !!window.MeddyCurtain;
+  if (restoring) MeddyCurtain.hold("Welcome back");
+  try { await restoreVisit(); }
+  finally {
+    document.documentElement.classList.remove("restoring");
+    if (restoring) {
+      MeddyCurtain.release();
+      if (me.reg && step !== "entrance") welcomeBack();
+    }
+  }
+}
+function welcomeBack() {
+  const bar = document.createElement("div");
+  bar.className = "welcome-back";
+  bar.innerHTML = `<span><b>Welcome back.</b> Your visit was kept, so you are where you left off.</span>
+    <button type="button" class="textlink" id="start-new">Start a new visit</button>`;
+  panel.prepend(bar);
+  document.getElementById("start-new").addEventListener("click", () => startOver());
+}
+async function restoreVisit() {
   const saved = kept(sessionStorage), elsewhere = saved ? null : kept(localStorage);
   if (elsewhere && elsewhere.me && elsewhere.me.reg) { entrance(); offerToContinue(elsewhere); return; }
   if (!(saved && saved.me && saved.me.reg)) {
@@ -696,7 +721,7 @@ function walkTo(stop, room) {
   };
   // the same step drawn again (the waiting room when the line moves) stays still: see .panel.quiet
   panel.classList.toggle("quiet", shownStop !== 0 && stop === shownStop);
-  const moved = shownStop !== 0 && stop !== shownStop && window.MeddyCurtain;
+  const moved = shownStop !== 0 && stop !== shownStop && window.MeddyCurtain && !MeddyCurtain.covering();
   shownStop = stop;
   if (!moved) { setUp(); walk(); return; }
   holdOldStep();
