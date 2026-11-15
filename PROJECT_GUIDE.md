@@ -202,6 +202,8 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
       (`/doctor`). The phone shows a code for the nurse and never the level; the doctor calls the next patient
 - [x] Online on a Hugging Face Space that rebuilds itself when `main` changes (`deploy/huggingface/`):
       https://darkshdws-meddy.hf.space
+- [x] A database that keeps everything: 37 doctors in day and night shifts, a log of every step of every visit,
+      registration numbers never given twice, and a copy in the Space's storage bucket so restarts lose nothing
 - [x] The chain checked end to end for weak links: a patient who is with a doctor cannot be assessed or queued again, joining the line needs an assessment, unknown values
       are refused, emergencies never sit in the line, a reload keeps the patient's place, and every doctor's
       list is made of real visits
