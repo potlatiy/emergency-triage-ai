@@ -736,7 +736,7 @@ def where_is(reg_no):
         wanted = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["wanted_doctor"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
-          "day": today, "code": code_for(reg_no), "worse": False}
+          "day": today, "code": code_for(reg_no), "worse": False, "closed": None}
     if visit["status"] == "nurse":
         # check-in done: the phone shows the code for the nurse. "worse": the nurse has been told they feel worse.
         me.update(status="nurse", worse=visit["worse_at"] is not None)
@@ -748,7 +748,9 @@ def where_is(reg_no):
     elif visit["status"] == "with doctor":
         me.update(status="called", doctor=doctor["name"], room=doctor["room"])
     elif visit["status"] == "done":
-        me.update(status="finished")
+        why = visit["closed_why"] or ""
+        me.update(status="finished", closed="seen" if why in ("finished by the doctor", "seen (simulated)")
+                  else "removed" if why in REMOVED_BECAUSE else "closed")
     return me
 
 
@@ -856,30 +858,50 @@ class OffDuty(Exception):
     """A doctor who is off duty cannot call a patient: nobody would be in the room."""
 
 
-def call_for_doctor(doctor_reg):
+def _waiting_for(doctor):
+    """The patients in line this doctor may call, in the line's order: those the nurse chose this doctor for, and
+    those of the doctor's department whom she gave to nobody (or to a doctor now off duty). General medicine covers
+    everyone when nobody of its own waits. Patients the nurse is re-checking right now are left out. The caller
+    holds the lock."""
+    clock, rows = _waiting()
+    rows = [p for p in rows if not _with_nurse(p, clock)]          # the nurse is re-checking them: not now
+    department = doctor["department"]
+    on_duty = {r["reg_no"] for r in _conn.execute("SELECT reg_no FROM doctors WHERE on_duty = 1")}
+    free = [p for p in rows if p["wanted_doctor"] not in on_duty or p["wanted_doctor"] == doctor["reg_no"]]
+    mine = [p for p in free if p["wanted_doctor"] == doctor["reg_no"]
+            or (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]
+    if not mine and department == core.DEFAULT_DEPARTMENT:
+        mine = free
+    return clock, mine
+
+
+class NotForYou(Exception):
+    """The doctor asked for a patient who is not (or no longer) waiting for them."""
+
+
+def call_for_doctor(doctor_reg, reg_no=None):
     """The doctor presses "Call my next patient": the first patient in line for this doctor's department comes
     to this doctor. Their phone then says which room to go to.
 
     The line's order is kept: the patient called is the first of this department, so a more urgent patient of
     the department is never overtaken. General medicine covers everyone, so it takes the first in line when
     nobody of its own is waiting. Returns the call, None when nobody is waiting for this doctor, or raises
-    LookupError for an unknown doctor and OffDuty for one who is not on duty."""
+    LookupError for an unknown doctor and OffDuty for one who is not on duty.
+
+    With a registration number the doctor accepts that patient ("Accept" on their screen), who must be one of the
+    patients waiting for them; NotForYou otherwise."""
     with _lock, _conn:
         doctor = _conn.execute("SELECT * FROM doctors WHERE reg_no = ?", (doctor_reg,)).fetchone()
         if doctor is None:
             raise LookupError(doctor_reg)
         if not doctor["on_duty"]:
             raise OffDuty(doctor_reg)
-        clock, rows = _waiting()
-        rows = [p for p in rows if not _with_nurse(p, clock)]          # the nurse is re-checking them: not now
+        clock, mine = _waiting_for(doctor)
         department = doctor["department"]
-        # A patient the nurse gave to one doctor waits for that doctor, as long as that doctor is on duty.
-        on_duty = {r["reg_no"] for r in _conn.execute("SELECT reg_no FROM doctors WHERE on_duty = 1")}
-        free = [p for p in rows if p["wanted_doctor"] not in on_duty or p["wanted_doctor"] == doctor_reg]
-        mine = [p for p in free if p["wanted_doctor"] == doctor_reg
-                or (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]
-        if not mine and department == core.DEFAULT_DEPARTMENT:
-            mine = free
+        if reg_no is not None:
+            mine = [p for p in mine if p["reg_no"] == reg_no]
+            if not mine:
+                raise NotForYou(reg_no)
         if not mine:
             return None
         patient = mine[0]
@@ -891,7 +913,7 @@ def call_for_doctor(doctor_reg):
             "patient": full_name(patient),
             "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
             "department": department, "doctor": doctor["name"], "doctor_reg": doctor_reg, "room": doctor["room"],
-            "reason": f"Called by {doctor['name']}: first in line for {department.lower()}."}
+            "reason": f"Accepted by {doctor['name']}." if reg_no else f"Called by {doctor['name']}: first in line for {department.lower()}."}
 
 
 def refer(reg_no, level, reason, department=None, note=None, summary_ok=True, keep_note=False, doctor_reg=None):
@@ -1084,10 +1106,11 @@ def doctor_patients(doctor_reg):
     Unlike the patient's phone, the doctor sees everything: the nurse's level, the AI's level, the vital
     signs and the answers. Patients the nurse sent straight in come first, then the most urgent."""
     with _lock:
-        doctor = _conn.execute("SELECT reg_no, name, department, room FROM doctors WHERE reg_no = ?",
-                               (doctor_reg,)).fetchone()
+        doctor = _conn.execute("SELECT * FROM doctors WHERE reg_no = ?", (doctor_reg,)).fetchone()
         if doctor is None:
             return None
+        _, queue = _waiting_for(doctor)
+        doctor = {k: doctor[k] for k in ("reg_no", "name", "department", "room")}
         clock = _clock()
         rows = [dict(r) for r in _conn.execute(
             "SELECT * FROM visits WHERE status = 'with doctor' AND doctor_reg = ?", (doctor_reg,))]
@@ -1102,7 +1125,21 @@ def doctor_patients(doctor_reg):
                 said_worse=row["worse_said"] or 0, rechecks=row["rechecks"] or 0,
                 worse_unanswered=row["worse_at"] is not None, remeasured=bool(row["remeasured"]))
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
-    return {"doctor": dict(doctor), "patients": [
+
+    def said(p):            # one line about the patient: what the nurse's summary says the patient said
+        try:
+            return json.loads(p["summary"])["patient_said"]["text"] if p["summary"] else None
+        except (ValueError, KeyError, TypeError):
+            return None
+    return {"doctor": dict(doctor),
+            # Waiting in line for this doctor: the ones the nurse chose this doctor for are marked "chosen". The
+            # doctor's screen shows them with an "Accept" button, and asks about a newly chosen one at once.
+            "waiting_for_you": [
+                {"reg_no": p["reg_no"], "ticket": p["ticket"], "patient": full_name(p), "complaint": p["complaint"],
+                 "age": p["age"], "sex": p["sex"], "level": p["level"], "waited": clock - p["arrived"],
+                 "chosen": p["wanted_doctor"] == doctor["reg_no"], "said": said(p), "you": bool(p["you"])}
+                for p in queue],
+            "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
          "first_name": p["first_name"], "last_name": p["last_name"], "patient": full_name(p),
          "level": p["level"], "ai_level": p["ai_level"], "second_check": p["second_check"], "review": p["review"],

@@ -312,7 +312,7 @@ def test_the_patient_phone_never_shows_the_level():
     reg = assessed_visit("headache", 30, "Female")
     client.post("/api/line/join", json={"reg_no": reg, "level": 4})
     me = client.get(f"/api/me/{reg}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed"}
     assert not all_keys(me) & HIDDEN_FROM_PATIENT
     in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
     assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
@@ -1284,7 +1284,7 @@ def test_the_summary_never_reaches_the_patients_phone_and_is_never_called_a_diag
     client.post("/api/triage", json={"reg_no": reg_no})
     refer(reg_no, department="Cardiology", reason="Looks unwell")
     me = client.get(f"/api/me/{reg_no}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed"}
     summary = summary_on_the_doctors_card(reg_no)
     assert not any("diagnos" in key.lower() for key in all_keys(summary))
     assert "diagnos" not in json.dumps(summary).lower()
@@ -2309,3 +2309,37 @@ def test_todays_patients_say_where_each_one_went_and_the_phone_knows_its_doctor(
     assert all(not r.startswith("P-") or r in where for r in where)                 # made-up patients are left out
     assert client.get(f"/api/me/{waiting}").json()["doctor"] == "Dr. Okafor"
     assert [p for p in db.line()["patients"] if p["reg_no"] == waiting][0]["doctor"] == "Dr. Okafor"
+
+
+# ---------------------------------------------------------------- the doctor accepts, the phone says thank you
+
+def test_the_doctor_sees_who_waits_for_them_and_accepts_one():
+    chosen = assessed_visit("dizziness", age=60)
+    client.post("/api/line/join", json={"reg_no": chosen, "level": 4, "doctor_reg": "DR-1004"})     # Dr. Haddad
+    screen = client.get("/api/doctor/DR-1004/patients").json()
+    waiting = {p["reg_no"]: p for p in screen["waiting_for_you"]}
+    assert waiting[chosen]["chosen"] is True and waiting[chosen]["level"] == 4
+    assert any(not p["chosen"] for p in screen["waiting_for_you"])        # the made-up neurology patient of the line
+    assert chosen not in {p["reg_no"] for p in client.get("/api/doctor/DR-1005/patients").json()["waiting_for_you"]}
+    # Another neurologist cannot accept a patient the nurse gave to Dr. Haddad.
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-1005", "reg_no": chosen}).status_code == 409
+    called = client.post("/api/doctor/call", json={"doctor_reg": "DR-1004", "reg_no": chosen}).json()["called"]
+    assert called["reg_no"] == chosen and called["room"] == "Room 4" and called["reason"] == "Accepted by Dr. Haddad."
+    assert client.get(f"/api/me/{chosen}").json()["status"] == "called"
+    assert chosen not in {p["reg_no"] for p in client.get("/api/doctor/DR-1004/patients").json()["waiting_for_you"]}
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-1004", "reg_no": chosen}).status_code == 409
+
+
+def test_the_phone_knows_how_the_visit_ended():
+    seen = assessed_visit("cough", age=40)
+    db.refer(seen, 3, "Looks unwell", doctor_reg="DR-1016")
+    assert client.get(f"/api/me/{seen}").json()["closed"] is None
+    client.post("/api/doctor/finish", json={"reg_no": seen})
+    me = client.get(f"/api/me/{seen}").json()
+    assert me["status"] == "finished" and me["closed"] == "seen"
+    removed = new_visit("cough", age=40)
+    db.remove_visit(removed, "left without being seen")
+    assert client.get(f"/api/me/{removed}").json()["closed"] == "removed"
+    closed = new_visit("cough", age=40)
+    db.new_day()
+    assert db.where_is(closed)["closed"] == "closed"
