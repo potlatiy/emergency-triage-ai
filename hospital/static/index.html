@@ -261,10 +261,6 @@
   .mini { display:inline-flex; align-items:center; min-height:46px; padding:8px 18px; border:2px solid #aab8b0; border-radius:999px;
           background:var(--card); color:var(--ink); font-size:1rem; font-weight:700; text-decoration:none; cursor:pointer; }
   .mini:hover { border-color:var(--blue); background:var(--blue-tint); }
-  .scanner { margin-top:14px; padding:16px; border-radius:var(--round); background:var(--page); }
-  .scanner video { display:block; width:100%; max-height:260px; border-radius:14px; background:#16252a; object-fit:cover; }
-  .scanner video[hidden] { display:none; }
-  .scanner .hint { margin:10px 0; }
   #card-row > .hint, #no-insurance { margin:12px 0 0; }
 
   /* ---------- check-in: tap what is true ---------- */
@@ -616,7 +612,7 @@ const sectionHead = (kind, title, note) => `<div class="section-head"><span clas
 
 // ---------------------------------------------------------------- floor plan and database card
 function walkTo(stop, room) {
-  clearInterval(watching); stopScan(); tick++;
+  clearInterval(watching); tick++;
   if (stop !== 5) document.getElementById("doctor-line").textContent = "";       // no doctor of the visit before
   const [x, y] = SPOT[room || stop];
   document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
@@ -655,94 +651,6 @@ const role = (who, label) => `<span class="role ${who}">${who === "patient" ? "P
 const head = (who, label) => `<div class="ids">${me.reg ? regTag() : ""}${role(who, label)}</div>`;
 const regTag = () => `<span class="regno">Registration no. ${esc(me.reg)}${me.ticket ? ", ticket " + esc(me.ticket) : ""}</span>`;
 
-// ---------------------------------------------------------------- scanning the insurance card
-// The camera reads a barcode or QR code on the card. Chrome on Android and Mac has a reader built in
-// (BarcodeDetector); everywhere else (Chrome on Windows, Safari on iPhone) a small open-source reader, ZXing, is
-// loaded once from a CDN and reads the camera's pictures in the browser. Nothing is uploaded either way: the
-// picture stays in the browser and only the number that was read goes into the field. Without a camera, the
-// patient types the number or makes one up.
-let scanTimer = null;
-let zxing = null;
-function loadZxing() {
-  if (!zxing) zxing = new Promise((ready, failed) => {
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
-    script.onload = () => window.ZXing ? ready(window.ZXing) : failed(new Error("no reader"));
-    script.onerror = () => { zxing = null; failed(new Error("no reader")); };      // offline: try again next time
-    document.head.appendChild(script);
-  });
-  return zxing;
-}
-// A reader for the barcodes on cards: the one built into the browser if it knows them, otherwise ZXing.
-// Either way it is a function that looks at the video once and gives back the text it read, or null.
-async function cardReader(video) {
-  const wanted = ["code_39", "code_128", "qr_code", "ean_13"];
-  if ("BarcodeDetector" in window) {
-    try {
-      const known = (await BarcodeDetector.getSupportedFormats()).filter((f) => wanted.includes(f));
-      if (known.length) {
-        const detector = new BarcodeDetector({ formats: known });
-        return async () => { const codes = await detector.detect(video); return codes.length ? codes[0].rawValue : null; };
-      }
-    } catch (e) {}
-  }
-  const ZX = await loadZxing();
-  const hints = new Map([[ZX.DecodeHintType.POSSIBLE_FORMATS,
-    [ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.QR_CODE, ZX.BarcodeFormat.EAN_13]],
-    [ZX.DecodeHintType.TRY_HARDER, true]]);
-  // Each look copies one picture of the video onto a canvas at full size and reads it there.
-  const reader = new ZX.MultiFormatReader(), canvas = document.createElement("canvas");
-  reader.setHints(hints);
-  return async () => {
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    try { return reader.decodeWithState(new ZX.BinaryBitmap(new ZX.HybridBinarizer(new ZX.HTMLCanvasElementLuminanceSource(canvas)))).getText(); }
-    catch (e) { return null; }                       // nothing readable in this picture yet
-  };
-}
-function stopScan() {
-  clearInterval(scanTimer); scanTimer = null;
-  const video = document.getElementById("scan-video");
-  if (video && video.srcObject) { video.srcObject.getTracks().forEach((track) => track.stop()); video.srcObject = null; }
-  const box = document.getElementById("scanner"); if (box) box.hidden = true;
-}
-async function scanCard(field) {
-  stopScan();
-  const box = document.getElementById("scanner"), hint = document.getElementById("scan-hint"), video = document.getElementById("scan-video");
-  box.hidden = false; video.hidden = true;
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    hint.textContent = "This browser cannot use the camera. Type the number, or tap “Make up a number”."; return; }
-  let read;
-  try { hint.textContent = "Getting the scanner ready…"; read = await cardReader(video); }
-  catch (e) { hint.textContent = "Meddy could not load the scanner (no internet?). Type the number instead."; return; }
-  if (box.hidden) return;                                            // the patient closed it in the meantime
-  try {
-    hint.textContent = "Starting the camera…";
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } } });
-    if (video.srcObject || !video.isConnected || box.hidden) {      // the patient moved on while the camera was asked for
-      stream.getTracks().forEach((track) => track.stop()); return; }
-    video.srcObject = stream;
-    video.hidden = false; await video.play();
-    hint.textContent = "Hold the barcode or QR code of the card in front of the camera, filling most of the picture.";
-    let busy = false;
-    scanTimer = setInterval(async () => {
-      if (busy || !video.videoWidth) return;
-      busy = true;
-      try {
-        const text = await read();
-        if (text && video.srcObject) {
-          field.value = text.trim().slice(0, 24);
-          field.dispatchEvent(new Event("input"));
-          stopScan();
-        }
-      } catch (e) {} finally { busy = false; }
-    }, 250);
-  } catch (e) {
-    video.hidden = true;
-    hint.textContent = "Meddy could not use the camera. Allow the camera for this page, or type the number.";
-  }
-}
-
 // ---------------------------------------------------------------- 1. entrance
 function entrance() {
   walkTo(1);
@@ -768,14 +676,7 @@ function entrance() {
       <input type="text" id="card" maxlength="24" autocomplete="off" autocapitalize="characters" spellcheck="false"
              placeholder="For example: MD-4829-1375">
       <div class="card-tools">
-        <button type="button" class="mini" id="scan">Scan the card</button>
         <button type="button" class="mini" id="made-up">Make up a number</button>
-        <a class="mini" href="/static/card.html" target="_blank" rel="noopener">Sample card to scan</a>
-      </div>
-      <div class="scanner" id="scanner" hidden>
-        <video id="scan-video" playsinline muted></video>
-        <p class="hint" id="scan-hint" role="status"></p>
-        <button type="button" class="mini" id="scan-stop">Stop scanning</button>
       </div>
       <p class="hint">This is a demonstration, so never type a real card number. Meddy keeps a one-way fingerprint of the
         number and its last four characters, never the number itself. One card, one visit at a time.</p>
@@ -790,15 +691,13 @@ function entrance() {
     document.getElementById("card-row").hidden = me.insurance === "none";
     document.getElementById("no-insurance").hidden = me.insurance !== "none";
     document.getElementById("error").textContent = "";
-    if (me.insurance === "none") stopScan(); else cardBox.focus({ preventScroll: true });
+    if (me.insurance !== "none") cardBox.focus({ preventScroll: true });
     remember("entrance"); });
   cardBox.addEventListener("input", () => { cardBox.removeAttribute("aria-invalid"); document.getElementById("error").textContent = ""; });
   cardBox.addEventListener("keydown", (event) => { if (event.key === "Enter") document.getElementById("go").click(); });
   document.getElementById("made-up").addEventListener("click", () => {
     cardBox.value = "DEMO-" + String(Math.floor(1000 + Math.random() * 9000)) + "-" + String(Math.floor(1000 + Math.random() * 9000));
     cardBox.dispatchEvent(new Event("input")); });
-  document.getElementById("scan").addEventListener("click", () => scanCard(cardBox));
-  document.getElementById("scan-stop").addEventListener("click", stopScan);
   const complaintBox = document.getElementById("complaint");
   complaintBox.focus({ preventScroll: true });
   // Whatever is typed is kept, so a reload before registering does not empty the form.
@@ -825,9 +724,8 @@ function entrance() {
     if (!me.insurance) { error.textContent = "Choose your insurance. If you have none, tap “No insurance”.";
       document.getElementById("insurance").firstElementChild.focus(); return; }
     if (me.insurance !== "none" && !/^[A-Za-z0-9]{6,20}$/.test(card)) {
-      error.textContent = "Enter the card number (6 to 20 letters and digits), scan the card, or tap “No insurance”.";
+      error.textContent = "Enter the card number (6 to 20 letters and digits), or tap “No insurance”.";
       cardBox.setAttribute("aria-invalid", "true"); cardBox.focus(); return; }
-    stopScan();
     const go = document.getElementById("go");
     busy(go, "Registering…");
     try {

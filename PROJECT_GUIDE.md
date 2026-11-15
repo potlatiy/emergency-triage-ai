@@ -65,7 +65,7 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 
 ### The patient's path in our system
 
-1. **Entrance.** The patient says what is wrong and shows their insurance: scan the card, type the number, or
+1. **Entrance.** The patient says what is wrong and gives their insurance card number, or
    "no insurance". The visit gets a registration number, and the registry allows one open visit per card.
    Insurance is only an identity check: it never reaches either model and never changes the level or the line.
 2. **Check-in, on the patient's phone.** A quick check built for the complaint: three danger signs to tap, what
