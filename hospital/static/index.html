@@ -8,7 +8,7 @@
 try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me && v.me.reg) document.documentElement.classList.add("restoring"); } catch (e) {}</script>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=10">
+<link rel="stylesheet" href="/static/meddy-site.css?v=27">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -93,6 +93,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   #you text { font:800 10.5px var(--font); fill:#fff; text-anchor:middle; }
   #you .pulse { fill:var(--blue); transform-origin:center; transform-box:fill-box; animation:pulse 2.2s ease-out infinite; }
   @keyframes pulse { from { transform:scale(1); opacity:.35; } to { transform:scale(2.1); opacity:0; } }
+
 
   /* ---------- the step card ---------- */
   .panel { position:relative; padding:36px; box-shadow:0 2px 4px rgba(22,37,42,.04), 0 18px 40px -18px rgba(22,37,42,.22); }
@@ -228,6 +229,8 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   .tips .section-head h3 { color:#155c3d; }
   .tips ul { margin:14px 0 0; padding-left:26px; font-size:1.12rem; line-height:1.5; }
   .tips li { margin:8px 0; }
+  details.resume { margin-top:18px; } details.resume summary { cursor:pointer; color:var(--blue); font-weight:700; }
+  details.resume .row-inline { display:flex; gap:10px; } details.resume input { flex:1; min-width:0; }
   details.tips > summary { cursor:pointer; list-style:none; } details.tips > summary::-webkit-details-marker { display:none; }
   details.tips > summary::after { content:"Show"; margin-left:auto; font-weight:700; color:#155c3d; }
   details.tips[open] > summary::after { content:"Hide"; }
@@ -294,6 +297,14 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   .ticks .none.on { background:var(--mint); border-color:var(--mint); }
   .choice.chips button { flex:0 1 auto; white-space:normal; min-height:54px; font-size:1.08rem; }
   .sec-doctor .q input { margin-top:12px; }
+  /* two short looping pictures of what happens at the nurse's desk: the picture on one side, the words beside it */
+  .shows { display:grid; gap:12px; margin:22px 0 0; }
+  .show { display:grid; grid-template-columns:176px minmax(0, 1fr); gap:16px; align-items:center; margin:0; }
+  .show[hidden] { display:none; }
+  .show video { display:block; width:100%; height:auto; aspect-ratio:640 / 358; border:1px solid var(--line); border-radius:14px;
+                background:#fff; }
+  .show figcaption { font-size:1.05rem; font-weight:700; line-height:1.35; }
+  .shows-note { margin:10px 0 0; font-size:.9rem; }
   .writing { display:flex; align-items:center; gap:12px; margin:24px 4px 0; color:var(--soft); font-size:1.02rem; }
   .writing i { flex:none; width:18px; height:18px; border:3px solid rgba(90,69,184,.25); border-top-color:var(--violet);
                border-radius:50%; animation:spin .7s linear infinite; }
@@ -392,6 +403,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
     .card, .panel { padding:22px; }
     .panel h2 { font-size:1.75rem; }
     .steps { gap:4px; padding:6px; }
+    .show { grid-template-columns:132px minmax(0, 1fr); gap:12px; } .show figcaption { font-size:.95rem; }
     .steps span { font-size:.78rem; min-height:64px; }
     .row { grid-template-columns:1fr; gap:0; }
     .panel { order:-1; }        /* on a phone the step comes first; the floor plan is below it */
@@ -498,7 +510,8 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=14"></script>
+<script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-plan.js?v=18"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -554,6 +567,8 @@ const fresh = () => ({ reg:null, firstName:"", lastName:"", complaint:"", age:30
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null,
                        noDanger:false, followUp:"none", nurseLevel:null, review:null, showLine:false, day:null });
 let me = fresh();
+// What the floor plan may say about the patient when they tap themself on it: their own visit and nothing else.
+window.MeddyVisit = () => ({ reg: me.reg, ticket: me.ticket, name: [me.firstName, me.lastName].filter(Boolean).join(" ") });
 let watching = null;                    // the timer of the patient's phone in the waiting room
 let tick = 0;                           // counts the changes of step; an answer that arrives for an older step is dropped
 
@@ -603,7 +618,12 @@ function welcomeBack() {
 }
 async function restoreVisit() {
   const saved = kept(sessionStorage), elsewhere = saved ? null : kept(localStorage);
-  if (elsewhere && elsewhere.me && elsewhere.me.reg) { entrance(); offerToContinue(elsewhere); return; }
+  // A visit kept on this device (the link opened again, or the phone dropped the tab) carries on by itself. The
+  // entrance with a "Continue my visit" button looked as if the visit was lost.
+  if (elsewhere && elsewhere.me && elsewhere.me.reg) {
+    try { sessionStorage.setItem(KEPT, JSON.stringify(elsewhere)); } catch (e) {}
+    return restoreVisit();
+  }
   if (!(saved && saved.me && saved.me.reg)) {
     if (saved && saved.me) me = { ...fresh(), ...saved.me };     // what was typed at the entrance before a reload
     entrance(); return;
@@ -627,10 +647,25 @@ async function restoreVisit() {
     if (writing) askFollowUp();
     return;
   }
-  if (now.status === "finished") return thanks(now.closed);      // the visit is over: say goodbye
+  if (now.status === "finished") return thanks(now.closed, now.note);      // the visit is over: say goodbye
   startOver();
 }
 
+// The visit's code (the last digits of its number) brings it back on any phone. The phone shows only what any
+// phone may show (ticket, place, room): no name, complaint or level.
+async function resumeWithCode() {
+  const typed = document.getElementById("resume-code").value.replace(/\D/g, ""), error = document.getElementById("resume-error");
+  if (!typed) { error.textContent = "Type the code your phone showed, for example 0123."; return; }
+  const reg = "P-2026-" + typed.padStart(4, "0");
+  let now;
+  try { now = await api("/api/me/" + encodeURIComponent(reg)); }
+  catch (e) { error.textContent = e.status === 404 ? "No visit with this code today." : "Meddy can't reach the hospital. Try again."; return; }
+  if (now.status === "finished") { error.textContent = "This visit is already finished."; return; }
+  if (now.status === "registered") { error.textContent = "This check-in was not finished. Please register again, or ask at the desk."; return; }
+  me = { ...fresh(), reg, code: now.code, day: now.day };
+  try { sessionStorage.setItem(KEPT, JSON.stringify({ me, step: "resumed", called: null })); } catch (e) {}
+  restoreVisit();
+}
 function offerToContinue(other) {
   const box = document.createElement("div");
   box.className = "note"; box.style.margin = "0 0 18px";
@@ -677,6 +712,18 @@ function idle(button) {
 // each step has its own icon and colour, next to "Step 2 of 5"
 const STEP_ICON = { 1: '<path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3M13 20h9M10 12v.01"/><path d="M13 4.56v16.88a.5.5 0 0 1-.63.48L5 20V5.24a2 2 0 0 1 1.47-1.93l5.9-1.48a.5.5 0 0 1 .63.48z"/>', 2: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6M9 16h4"/>', 3: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', 4: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', 5: '<path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/>' };
 const stepNo = (n) => `<span class="stepno"><i class="step-ic s${n}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STEP_ICON[n]}</svg></i>Step ${n} of 5</span>`;
+// Two short animations of what happens at the nurse's desk (static/media: drawn by an AI video tool in the
+// style of the site's pictures, see static/media/README.md). They loop silently; anyone who asks for reduced
+// motion gets the still pictures, and a clip that cannot be loaded is simply left out.
+const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const show = (name, text) => `<figure class="show"><video src="/static/media/${name}.mp4?v=2" poster="/static/media/${name}.jpg?v=2"
+    width="640" height="358" muted loop playsinline preload="metadata" aria-hidden="true"${still ? "" : " autoplay"}
+    onerror="this.closest('figure').hidden = true"></video><figcaption>${text}</figcaption></figure>`;
+const shows = () => `<div class="shows">
+    ${show("nurse-scan", "The nurse scans your code")}
+    ${show("nurse-check", "She checks your blood pressure, pulse and temperature")}
+  </div>
+  <p class="hint shows-note">Pictures drawn by an AI video tool to show what happens. Not a real hospital.</p>`;
 const sectionHead = (kind, title, note) => `<div class="section-head"><span class="icon">${ICON[kind]}</span>
   <div><h3>${title}</h3>${note ? `<p>${note}</p>` : ""}</div></div>`;
 
@@ -823,7 +870,13 @@ function entrance() {
     </div>
     <p class="hint" id="no-insurance" ${me.insurance === "none" ? "" : "hidden"}>You will be seen all the same.</p>
     <p class="error" id="error" role="alert"></p>
-    <button class="go" id="go">Register and go to check-in</button>`;
+    <button class="go" id="go">Register and go to check-in</button>
+    <details class="resume"><summary>Already checked in on another phone or browser?</summary>
+      <form id="resume" autocomplete="off"><label for="resume-code">Your code</label>
+        <div class="row-inline"><input type="text" id="resume-code" inputmode="numeric" maxlength="4" placeholder="0123">
+          <button type="submit" class="mini">Continue</button></div>
+        <p class="error" id="resume-error" role="alert"></p></form></details>`;
+  document.getElementById("resume").addEventListener("submit", (event) => { event.preventDefault(); resumeWithCode(); });
   bindChoice("sex", (v) => {
     me.sex = v;
     // A made-up name follows the sex: "Anna Keller" becomes a man's made-up name when "Male" is tapped after it.
@@ -1090,6 +1143,7 @@ function atNurse() {
     </div>
     <p class="lede">The nurse will call your code. This screen moves on by itself.</p>
     <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
+    ${shows()}
     <div id="worse-box"></div>
     <p class="error" id="error" role="alert"></p>`;
   drawQr(document.getElementById("nurse-qr"), nurseLink, 112);
@@ -1110,7 +1164,7 @@ function atNurse() {
     if (now.status === "nurse" && Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) drawWorse(now.worse);
     if (now.status === "waiting") waiting("The nurse is done. You are in the waiting room now.");
     else if (now.status === "called") doctor({ doctor: now.doctor, room: now.room, ticket: now.ticket });
-    else if (now.status === "finished") thanks(now.closed);
+    else if (now.status === "finished") thanks(now.closed, now.note);
   }, 3000);
 }
 // ---------------------------------------------------------------- 4. waiting room
@@ -1124,6 +1178,14 @@ function tipsCard() {
     <ul class="safety">${SAFETY.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
     <p class="source">General first-aid comfort tips, not checked by a clinician. Not medical advice.</p>
   </details>`;
+}
+// What to do now, in one sentence: a patient who is "next" for a busy doctor did not know whether to go in.
+function nowWhat(mine) {
+  if (mine.ahead === 0 && mine.doctor && mine.doctor_busy)
+    return `You are next for ${mine.doctor}, who is with another patient right now. Please wait here: when they are free, this screen shows your room.`;
+  if (mine.ahead === 0 && mine.doctor) return `You are next. ${mine.doctor} will call you in a moment: this screen will show your room.`;
+  if (mine.ahead === 0) return "You are next. When a doctor is free, this screen shows your room.";
+  return "Please wait here. When it is your turn, this screen shows the room to go to. You do not need to do anything until then.";
 }
 // The patient's phone shows only what GET /api/me sends: the ticket and the place in line. Never the level,
 // a colour or a promised time. The whole line with levels is the nurse's screen, kept in a closed drawer.
@@ -1143,7 +1205,7 @@ async function waiting(message) {
   if (run !== tick) return;                                             // a newer screen is already being drawn
   if (!sameVisit(mine)) { startOver(); return; }
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
-  if (mine.status === "finished") { thanks(mine.closed); return; }     // the nurse closed the visit
+  if (mine.status === "finished") { thanks(mine.closed, mine.note); return; }     // the nurse closed the visit
   if (mine.status !== "waiting") { startOver(); return; }
   remember("waiting");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
@@ -1157,7 +1219,10 @@ async function waiting(message) {
       <div class="clock">Your ticket<b>${esc(mine.ticket)}</b></div>
     </div>
     ${mine.doctor ? `<p class="lede" style="font-weight:700;color:var(--ink)">Your doctor: ${esc(mine.doctor)}, ${esc(mine.room)}</p>` : ""}
-    <p class="lede">Please wait until your ticket is called. This screen updates by itself.</p>
+    ${mine.estimate ? `<div class="note estimate"><b>Estimated wait: ${mine.estimate.low === 0 ? `under ${mine.estimate.high} min`
+      : `about ${mine.estimate.low}–${mine.estimate.high} min`}</b>
+      <span class="hint">An estimate from how busy the doctors are right now, not a promise: a more urgent patient may go first.</span></div>` : ""}
+    <div class="note now-what" role="status"><b>${esc(nowWhat(mine))}</b></div>
     <div id="worse-box"></div>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
@@ -1173,6 +1238,16 @@ async function waiting(message) {
         waiting(now.status === "called" ? "" : checked ? "The nurse has checked you again." : "The line moved.");
       else if (Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) {
         mine.worse = now.worse; drawWorse(now.worse, checked ? "The nurse has checked you again." : "");
+      }
+      else if (now.doctor_busy !== mine.doctor_busy) {          // the chosen doctor became free, or busy again
+        mine.doctor_busy = now.doctor_busy;
+        const box = document.querySelector(".now-what b"); if (box) box.textContent = nowWhat(mine);
+      }
+      else if (JSON.stringify(now.estimate) !== JSON.stringify(mine.estimate)) {      // the doctors got busier or freer
+        const box = document.querySelector(".estimate b");
+        mine.estimate = now.estimate;
+        if (box && now.estimate) box.textContent = "Estimated wait: " + (now.estimate.low === 0 ? `under ${now.estimate.high} min`
+          : `about ${now.estimate.low}–${now.estimate.high} min`);
       }
     } catch (e) { if (run === tick && e.status === 404) startOver(); }     // a new day was started on another screen
   }, 5000);
@@ -1237,13 +1312,13 @@ function doctor(called) {
     try {
       const now = await api("/api/me/" + encodeURIComponent(me.reg));
       if (run !== tick) return;
-      if (now.status === "finished") thanks(now.closed);
+      if (now.status === "finished") thanks(now.closed, now.note);
     } catch (e) { if (run === tick && e.status === 404) startOver(); }
   }, 5000);
 }
 
 // The end of the visit. After the doctor: thank you and get well. Closed by the nurse: say so plainly.
-function thanks(closed) {
+function thanks(closed, note) {
   const seen = closed === "seen";
   walkTo(5);
   forget();                                       // a reload starts a new visit; this one is over
@@ -1254,6 +1329,7 @@ function thanks(closed) {
       ? "<b>Your visit is finished.</b> We hope you feel better soon. Follow what your doctor told you."
       : closed === "removed" ? "The nurse closed your visit. If you still need help, talk to the staff or register again."
       : "The hospital closed your visit. If you still need help, please register again."}</div>
+    ${seen && note ? `<div class="note" style="margin-top:14px"><b>From your doctor</b><blockquote style="margin:8px 0 0;padding:10px 14px;border-left:4px solid #5a45b8;border-radius:10px;background:#f1eefc;font-size:1.1rem">${esc(note)}</blockquote></div>` : ""}
     ${seen ? `<p class="lede">If you feel worse, come back straight away or call your emergency number.</p>` : ""}
     <button class="go" id="again">Start a new visit</button>`;
   document.getElementById("again").addEventListener("click", () => startOver());

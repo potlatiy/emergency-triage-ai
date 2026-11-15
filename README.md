@@ -24,11 +24,13 @@
 **Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
 
 **Try it online:** [the patient's phone](https://darkshdws-meddy.hf.space) ·
-[the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor).
+[the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor) ·
+[the waiting room's board](https://darkshdws-meddy.hf.space/board) · [the chief doctor's panel](https://darkshdws-meddy.hf.space/chief).
+**Judges: the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md).**
 Open the three side by side: check in as a patient, open your code on the nurse's screen and choose a doctor, then
 accept yourself on that doctor's screen ("New patient for you: are you free now?"). The phone follows by itself, to
-the room and to a thank-you when the doctor finishes. **The nurse's and the doctor's screens ask for a staff PIN: for
-the judges it is `0070`** (the lock is part of what we built, see the limits). A free server: the first visit after a
+the room and to a thank-you when the doctor finishes. The nurse's and the doctor's screens ask for a staff PIN (see
+[JUDGES.md](JUDGES.md); the lock is part of what we built, see the limits). A free server: the first visit after a
 quiet day takes about a minute.
 
 ## The problem
@@ -102,6 +104,22 @@ which rebuilds itself when `main` changes.
 | Nurse station (nurse's screen) | The nurse's list of patients who finished check-in, danger signs first. She opens one by tapping it, typing the code or scanning the QR code on the phone, and reads what the patient said with a two-sentence summary by the language model. Then Meddy's report: the patient at a glance, a suggested level, and the likely department and doctor. The nurse presses "Everything is correct" or "I want to check the patient myself". In a personal check she gives her own level, sees a "look again" flag when Meddy rates the patient more urgent, and can change the department or send a critical patient straight to a doctor, with a reason. Next to the level Meddy shows a likely range of levels and five real patients from the data who look most like this one | The two models tested in this project. The range and the similar patients are tested in [section 6](#6-a-range-of-levels-and-patients-like-this-one). Meddy says when a quick review is reasonable and when it advises a personal check. Every verdict is counted ("test regime") |
 | Waiting room (phone) | Your place in line, updated by itself, and an "I feel worse" button. One press puts the patient on top of the nurse's list for another look; it changes neither the level nor the place in line. The nurse measures again, Meddy writes a new report, and her new decision keeps the ticket and the minutes already waited. The nurse's screen also marks patients who have waited longer than their level allows without a second look | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level. Re-check times: level 3 every 30 minutes, 4 every 60, 5 every 120, the reassessment times of the Canadian triage scale that the Korean scale of our data was built from |
 | Doctor (doctor's screen, phone) | Department and doctor. The doctor calls the next patient; the phone shows the room | The patient's everyday words are first put in the nurses' words ("my heart hurts" becomes "chest pain"). A model trained on real diagnoses and a key-word rule on the complaint then rate every department together. The database suggests the least busy doctor on duty in the best one, and three more to choose from, each marked free or busy. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
+
+Around the three main screens:
+
+- **The waiting room's board** (`/board`): the tickets called and to which room, how many wait, and the usual wait
+  now. No names, complaints or levels, so it can hang on the wall; "Find your ticket" shows where one ticket stands.
+  It is our own, unofficial board: in a hospital it would take its calls from, or feed, the hospital's official
+  board, and the estimate would sit next to the official display.
+- **An estimated wait on the patient's phone**, as a range ("about 15–25 min"), worked out from the load right now:
+  the patients ahead for the same doctors are handed out to whichever doctor is free first, each taking that
+  doctor's usual visit. The phone says plainly that it is an estimate and not a promise, because a more urgent
+  patient goes first.
+- **The doctor's note for the patient.** On "Visit finished" the doctor may write a short note; "Tidy with Meddy"
+  asks the language model to fix spelling and punctuation only (plain code throws its answer away if it added,
+  dropped or changed words or numbers), the doctor chooses, and the patient's phone shows the confirmed note.
+- **The chief doctor's panel** (`/chief`, its own PIN): today's patients and where they are, the door-to-doctor wait
+  by level, each department's load, and how often the nurses kept Meddy's level.
 
 The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
 visits, the questionnaire answers, a log of every step of every visit (with its time and who did it), a registry
@@ -372,6 +390,9 @@ not as a second opinion.
 - **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering; the kind-first step adds one point, which could be chance. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike mostly in age and measurements; the screen marks them.
 - **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: in the waiting room it only calls the nurse and never moves them up the line. A patient who is still waiting for the nurse's first look goes to the top of her list, ahead of danger signs. Like every screen in the demonstration it has no sign-in, so anyone who knows a registration number could press for that patient. While the nurse is re-checking a patient no doctor can call them, for 15 minutes at most; that number is our choice.
 - **The staff PIN is a lock on the door, not a sign-in.** One PIN is shared by all staff. It keeps a passer-by out of the patients' names and away from "Start a new day"; it does not say who did what. A real department would give every nurse and doctor their own account. A patient without insurance can still register more than once: there is nothing to recognise them by.
+- **The estimated wait, the board and the chief doctor's panel are not tested against a real department.** The estimate
+  uses the doctors' visit times in the demo, most of them from the simulated patients; with real patients it should be
+  checked against the waits that follow. The board is our own and not connected to any hospital's system.
 - **Waiting time is real time.** The clock moves by itself, so "waited 30 min" means 30 minutes; "15 minutes pass" on the nurse's screen jumps it ahead for a demonstration.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.

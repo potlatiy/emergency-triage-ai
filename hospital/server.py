@@ -48,7 +48,9 @@ app = FastAPI(title="Digital hospital")
 STAFF_PIN = os.environ.get("MEDDY_STAFF_PIN") or None
 STAFF_COOKIE = "meddy_staff"
 FOR_PATIENTS = ("/api/register", "/api/follow-up/", "/api/checkin", "/api/worse", "/api/me/", "/api/version",
-                "/api/spelling", "/api/address", "/api/waiting-room", "/api/staff/login", "/api/staff/session")
+                "/api/spelling", "/api/address", "/api/waiting-room", "/api/staff/login", "/api/staff/session",
+                "/api/staff/logout",
+                "/api/board")
 _wrong_pins = {}            # address -> (wrong tries, refused until)
 
 
@@ -60,6 +62,22 @@ def is_staff(request):
     return STAFF_PIN is None or hmac.compare_digest(request.cookies.get(STAFF_COOKIE, ""), _staff_token())
 
 
+# The chief doctor's panel has a PIN of its own (Space secret MEDDY_CHIEF_PIN): it shows the whole department at
+# once. Without that secret the staff PIN opens it too.
+CHIEF_PIN = os.environ.get("MEDDY_CHIEF_PIN") or None
+CHIEF_COOKIE = "meddy_chief"
+
+
+def _chief_token():
+    return hmac.new(CHIEF_PIN.encode(), b"meddy chief doctor's panel", hashlib.sha256).hexdigest()
+
+
+def is_chief(request):
+    if CHIEF_PIN is None:
+        return is_staff(request)
+    return hmac.compare_digest(request.cookies.get(CHIEF_COOKIE, ""), _chief_token())
+
+
 @app.middleware("http")
 async def watched(request, call_next):
     """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching.
@@ -67,7 +85,10 @@ async def watched(request, call_next):
     path = request.url.path
     if path.startswith("/api/"):
         db.seen()
-        if not path.startswith(FOR_PATIENTS) and not is_staff(request):
+        if path.startswith("/api/chief/"):
+            if not is_chief(request):
+                return JSONResponse({"detail": "Chief doctor only: enter the chief doctor's PIN."}, status_code=401)
+        elif not path.startswith(FOR_PATIENTS) and not is_staff(request):
             return JSONResponse({"detail": "Staff only: enter the staff PIN."}, status_code=401)
     return await call_next(request)
 
@@ -199,7 +220,14 @@ class Duty(BaseModel):
 
 
 class Finished(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     reg_no: str
+    note: str | None = Field(default=None, max_length=300)      # the doctor's note for the patient, confirmed
+
+
+class Tidying(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=300)
 
 
 class Worse(BaseModel):
@@ -222,6 +250,7 @@ class Managing(BaseModel):
 
 class Login(BaseModel):
     pin: str = Field(min_length=1, max_length=40)
+    role: Literal["staff", "chief"] = "staff"
 
 
 class Matching(BaseModel):
@@ -382,36 +411,41 @@ def todays_patients():
 
 
 @app.get("/api/staff/session")
-def staff_session(request: Request):
-    """Does this browser still need the staff PIN?"""
-    return {"locked": not is_staff(request)}
+def staff_session(request: Request, role: Literal["staff", "chief"] = "staff"):
+    """Does this browser still need the staff PIN (or, for the chief doctor's panel, the chief's)? "pin": whether
+    there is a PIN at all, so the page knows whether to offer "Lock this screen"."""
+    return {"locked": not (is_chief(request) if role == "chief" else is_staff(request)),
+            "pin": (CHIEF_PIN or STAFF_PIN if role == "chief" else STAFF_PIN) is not None}
 
 
 @app.post("/api/staff/login")
 def staff_login(body: Login, request: Request):
     """The staff PIN opens the nurse's and the doctor's screens on this browser for 12 hours. After five wrong
     tries from one address, it waits a minute before trying again."""
-    if STAFF_PIN is None:
+    chief = body.role == "chief" and CHIEF_PIN is not None
+    pin, cookie, token = (CHIEF_PIN, CHIEF_COOKIE, _chief_token) if chief else (STAFF_PIN, STAFF_COOKIE, _staff_token)
+    if pin is None:
         return {"locked": False}
     who = request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip()
     tries, until = _wrong_pins.get(who, (0, 0))
     if until > time.time():
         raise HTTPException(429, "Too many wrong tries. Wait a minute.")
     # Compared as bytes: as text, a PIN typed with letters outside English made the comparison itself fail.
-    if not hmac.compare_digest(body.pin.strip().encode(), STAFF_PIN.encode()):
+    if not hmac.compare_digest(body.pin.strip().encode(), pin.encode()):
         _wrong_pins[who] = (0, time.time() + 60) if tries + 1 >= 5 else (tries + 1, 0)
         raise HTTPException(401, "That is not the staff PIN.")
     _wrong_pins.pop(who, None)
     answer = JSONResponse({"locked": False})
-    answer.set_cookie(STAFF_COOKIE, _staff_token(), max_age=12 * 3600, httponly=True, samesite="lax",
+    answer.set_cookie(cookie, token(), max_age=12 * 3600, httponly=True, samesite="lax",
                       secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
     return answer
 
 
-@app.post("/api/staff/logout")
+@app.post("/api/staff/logout")       # open to anyone: locking a screen needs no PIN
 def staff_logout():
     answer = JSONResponse({"locked": STAFF_PIN is not None})
     answer.delete_cookie(STAFF_COOKIE)
+    answer.delete_cookie(CHIEF_COOKIE)
     return answer
 
 
@@ -419,6 +453,31 @@ def staff_logout():
 def waiting_room():
     """How many people wait, for the seats on the phone's floor plan. Nothing else: the staff list is staff only."""
     return {"waiting": db.staff()["visits"]["waiting"]}
+
+
+@app.get("/api/board")
+def waiting_room_board(ticket: str | None = None):
+    """The waiting room's board (public): tickets called and to which room, how many wait, the usual wait now,
+    and with ?ticket=A004 where that ticket stands. No names, complaints or levels."""
+    return db.board(ticket[:10] if ticket else None)
+
+
+@app.get("/board")
+def board_page():
+    """The board on the waiting room's wall (static/board.html)."""
+    return FileResponse(STATIC / "board.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/chief")
+def chief_page():
+    """The chief doctor's panel (static/chief.html): the whole department at a glance."""
+    return FileResponse(STATIC / "chief.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/chief/report")
+def chief_report():
+    """Everything the chief doctor's panel shows, worked out from the database (db.chief_report)."""
+    return db.chief_report()
 
 
 @app.get("/api/version")
@@ -610,10 +669,21 @@ def finish(body: Finished):
     """The doctor closes a visit. The patient leaves the doctor's list, which gets one shorter."""
     if db.visit_for(body.reg_no) is None:
         raise HTTPException(404, "No visit with this registration number.")
-    closed = db.finish_visit(body.reg_no)
+    closed = db.finish_visit(body.reg_no, body.note or None)
     if closed is None:
         raise HTTPException(409, "This patient is not with a doctor.")
     return closed
+
+
+@app.post("/api/doctor/tidy")
+def tidy(body: Tidying):
+    """Meddy puts spelling and punctuation right in the doctor's note, and nothing else. Nothing is stored: the
+    doctor chooses the tidied note or their own, and confirms it when closing the visit."""
+    try:
+        tidied = core.tidy_note(body.text)
+    except ValueError:
+        raise HTTPException(503, "Meddy could not tidy the note just now. Your own words are fine.")
+    return {"text": tidied, "changed": tidied != body.text}
 
 
 @app.get("/api/staff")

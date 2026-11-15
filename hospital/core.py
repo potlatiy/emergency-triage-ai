@@ -391,8 +391,18 @@ DEFAULT_DEPARTMENT = "General medicine"
 DEPARTMENT_NAMES = [name for name, _ in DEPARTMENTS] + [DEFAULT_DEPARTMENT]
 _SYMPTOM_RULES = re.compile("|".join(pattern for _, pattern in DEPARTMENTS))
 
+# The bottom end of the gut belongs to gastroenterology and surgery (the surgeons who treat the anus and rectum).
+# The rule above knew none of these words: "anal pain" went to general medicine and "rectal bleeding" to trauma,
+# because of "bleed". This check comes first. It lives here and not in DEPARTMENTS, which the notebook copies for
+# its own figures.
+_ANORECTAL = re.compile(r"\b(anal|anus|rect(al|um)|perianal|ha?emorrhoids?|piles|fissure|fistula)\b")
+GUT = "Gastroenterology and surgery"
+
+
 def department_for(complaint, injury=False):
     text = f" {spelling(complaint).lower()} "          # "breating problems" is a breathing problem
+    if _ANORECTAL.search(text):
+        return GUT
     for name, pattern in DEPARTMENTS:
         if re.search(pattern, text):
             return name
@@ -413,6 +423,8 @@ def department_match(complaint, injury, odds):
         model.setdefault(name, 0.0)
     texts = [f" {(complaint or '').lower()} ", f" {nurse_words(complaint)} "]
     named = [name for name, pattern in DEPARTMENTS if any(re.search(pattern, t) for t in texts)]
+    if any(_ANORECTAL.search(t) for t in texts):          # first, and "bleeding" here is not an injury
+        named = [GUT] + [name for name in named if name not in (GUT, "Trauma and orthopaedics")]
     if not named and (injury or max(model.values()) < ASSIGN_SURE_ENOUGH):
         named = ["Trauma and orthopaedics" if injury else DEFAULT_DEPARTMENT]
     best_model = max(model, key=model.get)
@@ -825,6 +837,57 @@ def _report_for_summary(complaint, age, sex, answers, injury=False):
     lines += [f"{a['question']} {a['answer']}" for a in answers
               if a.get("kind") == "extra" and a.get("answer") and a.get("topic") != OWN_WORDS["topic"]]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- the doctor's note for the patient
+# When the doctor closes a visit they may write a short note for the patient ("Rest, drink water, come back if the
+# pain gets worse"). Meddy only tidies it: spelling, punctuation and capitals. The doctor sees the tidied note and
+# chooses it or keeps their own; the patient's phone shows what the doctor confirmed.
+TIDY_SYSTEM_PROMPT = """You correct a short note a doctor wrote for a patient.
+Fix spelling, punctuation and capital letters only. Do not add, remove or change any information, advice, number or
+medicine. Keep the doctor's words and order. Reply with the corrected note only, nothing else."""
+
+
+# Small words a tidy-up may add or drop without changing what the note says. "no" and "not" are not among them.
+_TIDY_SMALL = set("a an the and or to of is it its be for in on at your you i we as so".split())
+
+
+def checked_tidy(written, original):
+    """The tidied note as it may be offered, or ValueError when the model did more than tidy.
+
+    Every word that matters must still be there, spelled right or wrong ("taka" and "take" are the same word),
+    no new word may appear, and every number must be the same. Only small words like "a" or "the" may come or go.
+    (The first check compared whole word lists and refused "taka a rest" -> "Take a rest.", the very slip it is for.
+    Gemma 3 1B once turned "no fracture. ice the ankle and keep it up" into "Ice the ankle": that is still refused.)"""
+    tidy = " ".join(str(written or "").split()).strip().strip('"')
+    if not tidy or len(tidy) > 2 * len(original) + 20:
+        raise ValueError("not a tidied note")
+    if re.findall(r"\d+", tidy) != re.findall(r"\d+", original):
+        raise ValueError("a number changed")
+    before, after = _words(original), _words(tidy)
+
+    def matched(word, others):
+        return word in _TIDY_SMALL or any(difflib.SequenceMatcher(None, word, other).ratio() >= 0.6 for other in others)
+    if not all(matched(w, after) for w in before):
+        raise ValueError("a word was dropped")
+    if not all(matched(w, before) for w in after):
+        raise ValueError("a word was added")
+    return tidy
+
+
+def tidy_note(text, timeout=OLLAMA_TIMEOUT):
+    """The doctor's note with spelling and punctuation put right by the language model (checked_tidy), or
+    ValueError when the model is off, too slow or did more than tidy."""
+    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "12h",
+            "messages": [{"role": "system", "content": TIDY_SYSTEM_PROMPT}, {"role": "user", "content": text}],
+            "options": {"temperature": 0, "num_ctx": 1024, "num_predict": 160}}
+    request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            written = json.loads(response.read())["message"]["content"]
+    except Exception as error:
+        raise ValueError("the language model did not answer") from error
+    return checked_tidy(written, text)
 
 
 def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=True, timeout=OLLAMA_TIMEOUT):

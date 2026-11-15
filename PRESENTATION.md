@@ -27,8 +27,8 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 
 1. Open the three windows: https://darkshdws-meddy.hf.space, `/nurse` and `/doctor`. (Or locally:
    `python hospital/server.py` and http://localhost:8000.) A free Space that has been quiet for two days takes
-   about a minute to wake up. The nurse's and the doctor's windows ask for the staff PIN once (`0070`, the same
-   one the judges get): type it before the recording starts. On the doctor's window choose your name.
+   about a minute to wake up. The nurse's and the doctor's windows ask for the staff PIN once (it is in
+   [JUDGES.md](JUDGES.md)): type it before the recording starts. On the doctor's window choose your name.
 2. Add the Space variable `MEDDY_AUTO_UPDATE` = `0` (Space → Settings → Variables), so a teammate's merge cannot
    restart the site during the recording. Delete it afterwards.
 3. Run both patients of the script through once first. The AI model needs a few seconds to load the first time
@@ -161,8 +161,8 @@ put together (the only AI text in it is the two checked sentences, and the nurse
 - **Code:** https://github.com/potlatiy/emergency-triage-ai
 - **Write-up:** the same link (the README is the write-up)
 - **What we added:** "Our own idea."
-- **Live demo:** https://darkshdws-meddy.hf.space (the patient's phone), `/nurse` and `/doctor`. Staff PIN for the
-  judges: `0070`.
+- **Live demo:** https://darkshdws-meddy.hf.space (the patient's phone), `/nurse`, `/doctor`, `/board` and `/chief`.
+  The PINs and a three-minute tour for the judges: https://github.com/potlatiy/emergency-triage-ai/blob/main/JUDGES.md
 - **Disclaimer line (already in the README):** "This project is a prototype and is not medical advice."
 - **Credits:** copy the Sources section at the end of the README. It lists the dataset, the libraries, the
   language model and the AI tools used.

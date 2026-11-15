@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meddy · Waiting room board</title>
+<link rel="icon" type="image/png" href="/static/meddy-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
+<style>
+  /* The board on the waiting room's wall: big, calm and readable from across the room. It moves only when a
+     ticket is called, and then gently. No names, complaints or levels: only tickets and rooms. */
+  :root { --page:#f3f6f2; --card:#fff; --line:#dce3dd; --ink:#16252a; --soft:#45555b; --blue:#2152c4; --blue-tint:#e8eefc;
+          --mint:#1d7a52; --mint-tint:#e8f6ee; --round:24px;
+          --font:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",ui-sans-serif,system-ui,sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:linear-gradient(160deg,#eef4f1 0%,#e9eef8 100%); color:var(--ink);
+         font-family:var(--font); font-size:clamp(16px,1.3vw,22px); }
+  .wrap { max-width:1500px; margin:0 auto; padding:clamp(16px,2.5vw,40px); }
+  header { display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+  header img { height:clamp(36px,4vw,56px); width:auto; }
+  header h1 { margin:0; font-size:clamp(1.4rem,2.4vw,2.4rem); font-weight:800; }
+  header .clock { margin-left:auto; text-align:right; font-variant-numeric:tabular-nums; }
+  header .clock b { display:block; font-size:clamp(1.8rem,3.4vw,3.4rem); line-height:1; }
+  header .clock span { color:var(--soft); }
+  main { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:clamp(16px,2vw,32px); margin-top:clamp(16px,2.5vw,36px); }
+  @media (max-width: 900px) { main { grid-template-columns:minmax(0,1fr); } }
+  .side { min-width:0; grid-template-columns:minmax(0,1fr); } form button { flex:none; } input { width:100%; }
+  .card { background:var(--card); border-radius:var(--round); padding:clamp(18px,2vw,32px); box-shadow:0 10px 30px rgba(22,37,42,.06); }
+  h2 { margin:0 0 14px; font-size:clamp(1.1rem,1.6vw,1.6rem); color:var(--soft); font-weight:700; letter-spacing:.01em; }
+  .calls { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+  .calls li { display:grid; grid-template-columns:auto auto 1fr; align-items:center; gap:clamp(12px,1.6vw,26px);
+              padding:clamp(12px,1.4vw,22px) clamp(14px,1.8vw,28px); border-radius:20px; background:var(--page); }
+  .calls .ticket { font-size:clamp(2rem,4.2vw,4.4rem); font-weight:800; font-variant-numeric:tabular-nums; color:var(--blue); line-height:1; }
+  .calls .arrow { font-size:clamp(1.4rem,2.6vw,2.6rem); color:var(--soft); }
+  .calls .room b { display:block; font-size:clamp(1.4rem,2.6vw,2.6rem); line-height:1.1; }
+  .calls .room span { color:var(--soft); }
+  .calls li.new { background:var(--blue-tint); animation:called 2.4s ease-in-out 3; }
+  @keyframes called { 0%,100% { box-shadow:0 0 0 0 rgba(33,82,196,0); } 50% { box-shadow:0 0 0 8px rgba(33,82,196,.18); } }
+  .calls li.enter { animation:enter .6s ease-out; }
+  @keyframes enter { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
+  .empty { color:var(--soft); margin:6px 0 0; font-size:1.1em; }
+  .side { display:grid; gap:clamp(16px,2vw,32px); align-content:start; }
+  .big { font-size:clamp(2.4rem,5vw,5rem); font-weight:800; line-height:1; font-variant-numeric:tabular-nums; }
+  .note { margin:10px 0 0; color:var(--soft); font-size:.95em; }
+  form { display:flex; gap:10px; margin-top:8px; }
+  input { flex:1; min-width:0; min-height:56px; padding:10px 18px; border:2px solid #aab8b0; border-radius:16px; font:inherit;
+          font-size:1.2em; text-transform:uppercase; }
+  input:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 5px rgba(33,82,196,.18); }
+  button { min-height:56px; padding:0 22px; border:0; border-radius:999px; background:var(--blue); color:#fff; font:inherit;
+           font-weight:800; cursor:pointer; }
+  #found { margin:14px 0 0; padding:14px 18px; border-radius:16px; background:var(--mint-tint); color:#12432e; }
+  #found[hidden] { display:none; }
+  footer { margin-top:clamp(16px,2.5vw,36px); color:var(--soft); font-size:.9em; display:flex; gap:16px; flex-wrap:wrap; }
+  footer a { color:var(--blue); }
+  @media (prefers-reduced-motion: reduce) { .calls li.new, .calls li.enter { animation:none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="/static/meddy-logo.webp" alt="Meddy" width="152" height="50">
+    <h1>Waiting room</h1>
+    <div class="clock" aria-live="off"><b id="time">--:--</b><span id="date"></span></div>
+  </header>
+  <main>
+    <section class="card" aria-labelledby="calls-title">
+      <h2 id="calls-title">Now called</h2>
+      <ul class="calls" id="calls" aria-live="polite"></ul>
+    </section>
+    <div class="side">
+      <section class="card" aria-labelledby="wait-title">
+        <h2 id="wait-title">In the waiting room</h2>
+        <div class="big" id="waiting">–</div>
+        <p class="note" id="typical"></p>
+      </section>
+      <section class="card" aria-labelledby="find-title">
+        <h2 id="find-title">Find your ticket</h2>
+        <form id="find" autocomplete="off">
+          <input id="ticket" maxlength="6" placeholder="A004" aria-label="Your ticket">
+          <button type="submit">Show</button>
+        </form>
+        <p id="found" role="status" hidden></p>
+      </section>
+    </div>
+  </main>
+  <footer>
+    <span>Waiting times are estimates from how busy the doctors are right now, not promises. The most urgent patients go first.</span>
+    <span>An unofficial board shown by Meddy: in a hospital it would take the calls from the official board.</span>
+    <a href="/">Check in on your phone</a>
+  </footer>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const range = (e) => e.low === 0 ? `under ${e.high} min` : `about ${e.low}–${e.high} min`;
+let shown = new Set(), first = true, asked = null;
+
+function tick() {
+  const now = new Date();
+  $("time").textContent = now.toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" });
+  $("date").textContent = now.toLocaleDateString("en-GB", { weekday:"long", day:"numeric", month:"long" });
+}
+async function load() {
+  let data;
+  try { data = await (await fetch("/api/board" + (asked ? "?ticket=" + encodeURIComponent(asked) : ""), { cache:"no-store" })).json(); }
+  catch (e) { return; }
+  // A ticket called in the last minute is new: it glows gently three times, then calms down.
+  $("calls").innerHTML = data.called.length ? data.called.map((c) => {
+    const isNew = c.minutes_ago < 1, entering = !first && !shown.has(c.ticket);
+    return `<li class="${isNew ? "new" : ""} ${entering ? "enter" : ""}"><span class="ticket">${esc(c.ticket)}</span><span class="arrow" aria-hidden="true">→</span>
+      <span class="room"><b>${esc(c.room)}</b><span>${esc(c.doctor)}${c.minutes_ago ? ` · ${c.minutes_ago} min ago` : " · now"}</span></span></li>`;
+  }).join("") : `<li class="empty" style="background:none">No ticket called in the last 15 minutes.</li>`;
+  shown = new Set(data.called.map((c) => c.ticket)); first = false;
+  $("waiting").textContent = data.waiting;
+  $("typical").textContent = data.typical ? `Usual wait right now: ${range(data.typical)} (estimate)` : "";
+  if (asked) {
+    const t = data.ticket, box = $("found");
+    box.hidden = false;
+    box.textContent = !t ? `No ticket ${asked} today.`
+      : t.status === "called" ? `${t.ticket}: please go to ${t.room}.`
+      : t.status === "waiting" ? `${t.ticket}: number ${t.position} in line${t.estimate ? `, estimated wait ${range(t.estimate)}` : ""}.`
+      : t.status === "done" ? `${t.ticket}: this visit is finished.` : `${t.ticket}: with the nurse.`;
+  }
+}
+$("find").addEventListener("submit", (event) => { event.preventDefault(); asked = $("ticket").value.trim().toUpperCase() || null;
+  if (!asked) $("found").hidden = true; load(); });
+tick(); load();
+setInterval(tick, 10000);
+setInterval(load, 5000);
+</script>
+</body>
+</html>
