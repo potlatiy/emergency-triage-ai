@@ -1,12 +1,16 @@
 // Meddy: the white curtain with the logo, shared by every screen (styles in meddy-site.css).
 //
-//   MeddyCurtain.play(caption, swap, reveal)  rolls the curtain up over the screen, calls swap() once the screen is
-//                                             covered, holds the logo, then calls reveal() and rolls the curtain away.
-//   MeddyCurtain.go(url, caption)              covers the screen and opens another one; it opens covered and rolls
-//                                              the curtain away, so moving between screens feels like one website.
+//   MeddyCurtain.play(caption, swap, reveal, until)  rolls the curtain up over the screen, calls swap() once the
+//                                    screen is covered, holds the logo while the bar fills, then calls reveal() and
+//                                    rolls the curtain away. until (optional) is a promise for "the next step is ready".
+//   MeddyCurtain.go(url, caption)    covers the screen, fills the bar, then opens another screen; it opens covered
+//                                    and rolls the curtain away, so moving between screens feels like one website.
+//   MeddyCurtain.hold(caption) / release()   a screen restoring itself after a reload starts covered, then lifts.
 //
-// Nothing waits on an animation event: plain timers drive it, and a second call finishes the first one at once.
-// Anyone who asks for reduced motion gets the change straight away, without the curtain.
+// Plain timers drive it (nothing waits on an animation event), and a second call finishes the first one at once.
+// The bar is driven here, not by CSS, so the curtain always knows how full it is: before the curtain lifts or the
+// page leaves, the bar glides the rest of the way. It never jumps from half to full.
+// Reduced motion: the curtain fades instead of rolling, and the bar is shown full.
 (function () {
   const KEY = "meddy-curtain";
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -22,55 +26,89 @@
   const caption = el.querySelector("p");
   let timers = [], swapLater = null, revealLater = null;
 
+  // ---------- the bar ----------
+  // A soft start and a soft landing (easeInOutQuad, easings.net). topUp() finishes whatever is left, quicker the
+  // less there is, on the strong ease-out, so leaving early still shows the bar completing.
+  const bar = el.querySelector(".bar i");
+  const FILL = "cubic-bezier(0.45, 0, 0.55, 1)", LAND = "cubic-bezier(0.23, 1, 0.32, 1)";
+  let barRun = null;
+  function barAt() {
+    const m = getComputedStyle(bar).transform;
+    if (!m || m === "none") return 1;
+    const v = parseFloat(m.slice(m.indexOf("(") + 1));
+    return isNaN(v) ? 0 : Math.min(1, Math.max(0, v));
+  }
+  function fillBar(ms, delay) {
+    if (barRun) barRun.cancel();
+    if (calm.matches) { barRun = null; return; }
+    barRun = bar.animate([{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }],
+                         { duration: ms, delay: delay || 0, easing: FILL, fill: "both" });
+  }
+  function topUp() {
+    if (!barRun || calm.matches) return Promise.resolve();
+    const at = barAt();
+    if (at >= 0.995) return Promise.resolve();
+    barRun.cancel();
+    barRun = bar.animate([{ transform: `scaleX(${at})` }, { transform: "scaleX(1)" }],
+                         { duration: Math.round(140 + 260 * (1 - at)), easing: LAND, fill: "both" });
+    return barRun.finished.catch(() => {});
+  }
+  function resetBar() { if (barRun) { barRun.cancel(); barRun = null; } }
+
   function run(fn) { if (fn) try { fn(); } catch (e) { console.error(e); } }
   function finish() {                                   // end any curtain that is still running, keeping its changes
     timers.forEach(clearTimeout); timers = [];
     const swap = swapLater, reveal = revealLater; swapLater = revealLater = null;
     run(swap); run(reveal);
-    el.className = base();
+    el.className = base(); resetBar();
   }
   function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
+  function rollAway(mine, before) {                     // the bar completes, then the curtain lifts
+    const { OUT } = timing();
+    topUp().then(() => {
+      if (mine !== playing) return;
+      run(before);
+      el.classList.remove("in", "cover", "loading"); el.classList.add("out");
+      later(OUT, () => { if (mine === playing) { el.className = base(); resetBar(); } });
+    });
+  }
 
-  // until (optional): a promise for "the next step is ready". The curtain stays down until it settles, at most
-  // 5 seconds, so a slow answer from the server never shows the old step again under a lifting curtain.
+  // The curtain stays down until `until` settles, at most 5 seconds, so a slow answer from the server never
+  // shows the old step again under a lifting curtain.
   let playing = 0;
   function play(text, swap, reveal, until) {
     finish();
-    const { IN, HOLD, OUT } = timing();
+    const { IN, HOLD } = timing();
     const mine = ++playing;
     caption.textContent = text || "";
     swapLater = swap; revealLater = reveal;
     void el.offsetWidth;                                // start from below the screen every time
     el.classList.add("in");
+    fillBar(700, 160);                                  // full at about 860 ms; the curtain lifts at 1060
     later(IN, () => { const s = swapLater; swapLater = null; run(s); });
     later(IN + HOLD, () => {
       const wait = new Promise((done) => setTimeout(done, 5000));
       Promise.race([until || Promise.resolve(), wait]).then(() => {
         if (mine !== playing || !el.classList.contains("in")) return;   // a newer change already took over
-        const r = revealLater; revealLater = null; run(r);
-        el.classList.remove("in"); el.classList.add("out");
-        later(OUT, () => { if (mine === playing) el.className = base(); });
+        rollAway(mine, () => { const r = revealLater; revealLater = null; run(r); });
       });
     });
   }
 
   // hold(text): a screen that has just loaded starts covered (no roll-in) while it restores itself, so the
-  // visitor never sees a blank half-built page. release(): rolls the curtain away once the screen is ready,
-  // never before the bar has filled.
+  // visitor never sees a blank half-built page. release(): the bar completes, then the curtain rolls away.
   let heldSince = 0;
   function hold(text) {
     finish();
     caption.textContent = text || "";
     el.className = base() + " cover loading";
+    fillBar(560, 80);
     heldSince = performance.now();
   }
   function release() {
     if (!el.classList.contains("cover")) return;
-    const { OUT } = timing();
-    later(Math.max(0, 720 - (performance.now() - heldSince)), () => {
-      el.classList.remove("cover", "loading"); el.classList.add("out");
-      later(OUT, () => { el.className = base(); });
-    });
+    const mine = ++playing;
+    later(Math.max(0, 640 - (performance.now() - heldSince)), () => rollAway(mine));
   }
 
   // A short note at the bottom of the screen, for when a screen cannot be opened.
@@ -91,39 +129,40 @@
     // the visitor on an error page: the curtain rolls back and the note says what to do.
     const ready = fetch(url, { cache: "no-store" }).then((r) => r.ok).catch(() => false);
     finish();
-    const { OUT } = timing(), mine = ++playing;
+    const mine = ++playing;
     caption.textContent = text || "";
     void el.offsetWidth;
     el.classList.add("in");
-    // Leave only once the bar has filled (it is full at about 860 ms), so the bar always completes on this
-    // screen; the next one opens covered, with the bar full, and rolls the curtain away.
-    later(calm.matches ? 260 : 900, () => ready.then((ok) => {
+    fillBar(700, 160);
+    // Leave only once the bar is full on this screen; the next one opens covered, with the bar full.
+    later(calm.matches ? 260 : 860, () => ready.then((ok) => {
       if (mine !== playing) return;
       if (!ok) {
         notice((text || "That screen") + " isn't available on this server yet. Restart the server, then try again.");
-        el.classList.remove("in"); el.classList.add("out");
-        later(OUT, () => { if (mine === playing) el.className = base(); });
+        rollAway(mine);
         return;
       }
-      try { sessionStorage.setItem(KEY, text || ""); } catch (e) {}
-      window.location.href = url;
+      topUp().then(() => {
+        if (mine !== playing) return;
+        try { sessionStorage.setItem(KEY, text || ""); } catch (e) {}
+        window.location.href = url;
+      });
     }));
   }
 
   // Safari and Firefox can bring a page back from memory (the Back button) with the curtain frozen half-way.
   window.addEventListener("pageshow", (event) => {
-    if (event.persisted) { timers.forEach(clearTimeout); timers = []; swapLater = revealLater = null; el.className = base(); }
+    if (event.persisted) { timers.forEach(clearTimeout); timers = []; swapLater = revealLater = null; el.className = base(); resetBar(); }
   });
 
-  // A screen opened by go(): start covered, then roll the curtain away.
+  // A screen opened by go(): start covered with the bar full, then roll the curtain away.
   let arriving = null;
   try { arriving = sessionStorage.getItem(KEY); sessionStorage.removeItem(KEY); } catch (e) {}
   if (arriving !== null) {
-    const { OUT } = timing();
+    const mine = ++playing;
     caption.textContent = arriving;
     el.classList.add("cover");
-    later(360, () => { el.classList.remove("cover"); el.classList.add("out"); });
-    later(360 + OUT, () => { el.className = base(); });
+    later(360, () => rollAway(mine));
   }
 
   // The switcher between the three screens uses the curtain; a click with a modifier key still opens a new tab.

@@ -143,7 +143,7 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 /* rolling up over the screen */
 .curtain.in { visibility:visible; transform:none; pointer-events:auto; transition:transform 460ms var(--ease-drawer); }
 .curtain.in img { animation:meddy-logo 520ms 160ms var(--ease-out) forwards; }
-.curtain.in .bar i { animation:meddy-bar 700ms 160ms linear forwards; }   /* full at 860 ms, lifts at 1060 */
+/* the bar is driven by meddy-site.js (fillBar / topUp), so it can always finish smoothly before the curtain lifts */
 .curtain.in p { animation:meddy-fade 300ms 320ms var(--ease-out) forwards; }
 /* already covering (a new screen opening after the curtain) */
 .curtain.cover { visibility:visible; transform:none; pointer-events:auto; }
@@ -219,8 +219,6 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 }
 
 /* a screen restoring itself after a reload: the curtain starts covered, the bar fills, then it rolls away */
-.curtain.cover.loading .bar i { animation:meddy-bar 560ms 80ms linear forwards; transform:scaleX(0); }
-.curtain.calm.cover.loading .bar i { animation:none; transform:none; }
 html.restoring .welcome { display:none; }                     /* never flash the welcome on a returning visit */
 html.restoring main, html.restoring .steps { visibility:hidden; }
 /* the very first frame, before the curtain script runs: plain white, so the curtain then appears over white */
