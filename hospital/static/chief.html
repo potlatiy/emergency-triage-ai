@@ -54,11 +54,23 @@
   .danger-zone { margin-top:18px; border:2px dashed #e3b3b2; }
   .danger-zone input { min-height:48px; padding:8px 14px; border:2px solid #aab8b0; border-radius:14px; font:inherit; width:140px; }
   .print-only { display:none; }
+  /* The day's summary as a PDF (the browser's print, "Save as PDF"): one column on an A4 page, nothing cut off,
+     the level colours and the busy bars printed, and no buttons. */
+  @page { size:A4; margin:12mm; }
   @media print {
-    body { background:#fff; font-size:12px; } .wrap { padding:0; max-width:none; }
-    header nav, .actions, .danger-zone, #staff-lock, button { display:none !important; }
-    .print-only { display:block; } .card, .tile { box-shadow:none; border:1px solid #ccc; break-inside:avoid; }
-    .grid { grid-template-columns:1fr 1fr; } .scroll { overflow:visible; }
+    * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    html, body { background:#fff !important; background-image:none !important; } body { font-size:10.5px; }
+    body::before, body::after, html::before, html::after { display:none !important; } .wrap { padding:0; max-width:none; }
+    header { gap:10px; } header img { height:30px; } header h1 { font-size:1.3rem; }
+    header nav, header .when, .actions, .danger-zone, #staff-lock, #new-version, button { display:none !important; }
+    .print-only { display:block; margin:4px 0 8px; font-weight:700; }
+    .tiles { grid-template-columns:repeat(7,minmax(0,1fr)); gap:6px; margin-top:6px; }
+    .tile { padding:8px; box-shadow:none; border:1px solid #ccc; } .tile b { font-size:1.3rem; } .tile span { font-size:.8rem; }
+    .grid { grid-template-columns:minmax(0,1fr); gap:10px; margin-top:10px; }
+    .card { box-shadow:none; border:1px solid #ccc; padding:10px 12px; break-inside:avoid; margin-top:10px; }
+    .scroll { overflow:visible; } table { font-size:10px; } th, td { padding:4px 6px; } .lv { width:20px; height:20px; }
+    .facts { grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; } .fact { padding:8px 10px; } .fact b { font-size:1.2rem; }
+    .foot { font-size:.85rem; }
   }
   @media (max-width: 520px) { .wrap { padding:14px; } .tile b { font-size:1.8rem; } th, td { padding:7px 5px; } }
 </style>
