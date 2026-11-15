@@ -1,9 +1,13 @@
-# Triage Queue Assistant: the nurse decides, the app double-checks her and puts the most urgent patients first
+# Meddy, a triage queue assistant: the nurse decides, the app double-checks her and puts the most urgent patients first
 
 **Track:** Health
-**Team:** Yegor (backend), Denys (project decisions), Ostap (front end)
+**Team:** Yegor ([potlatiy](https://github.com/potlatiy), backend), Denys ([darkshdwss](https://github.com/darkshdwss), project decisions), Ostap ([ken2ki1](https://github.com/ken2ki1), front end)
 
 *This project is a prototype and is not medical advice.*
+
+**Who it is for:** the triage nurse in a busy emergency department first. Around her: the patient (a phone that
+guides the visit and shows the place in line), the doctor (who gets the right patients with a summary), the waiting
+room (a board of ticket numbers) and the chief doctor (the day at a glance).
 
 > **In one sentence:** our model is worse than nurses at rating emergency patients (68% right against 85%), so the
 > nurse always decides and the app never gives a diagnosis. But about 1 patient in 10 is rated too low by the nurse,
