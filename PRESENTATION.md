@@ -1,7 +1,8 @@
 # Presentation notes
 
 Everything needed to record the video, answer the judges and fill in the submission form.
-All numbers here come from `triage.ipynb` and `assignment.py`. If you change the code, re-check them.
+All our own numbers here come from `triage.ipynb` and `assignment.py`. If you change the code, re-check them.
+The figures in "The problem in other people's numbers" are not ours: they come from the published sources listed there.
 
 ## The one sentence
 
@@ -16,12 +17,15 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 
 | Time | What is on screen | What to say |
 |---|---|---|
-| 0:00–0:15 | The three windows, the phone at the entrance | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
+| 0:00–0:15 | The three windows, the phone at the entrance | "In England alone, long emergency waits were linked to almost sixteen thousand deaths last year. In a crowded department, chest pain can wait behind five sprained ankles, and under pressure about one patient in ten is rated less urgent than they are." |
 | 0:15–0:35 | Phone: type "crushing chest pain and sweating", age 67, male, "No insurance", register. Tap the first danger sign and "Pressure or tightness", type "I was carrying shopping upstairs when my chest went tight" in "In your own words", press "Go to the nurse". The phone shows a code | "This is the patient's phone. You say what is wrong and get a quick check built for your complaint: danger signs to tap, questions an AI model chose for you, and room to say it in your own words. Then the phone shows a code for the nurse." |
 | 0:35–0:55 | Nurse: tap the code in her list. Show what the patient said and the AI summary. Choose Unstable, press "Measure and get Meddy's report", then "Everything is correct: send straight to the resuscitation bay". The phone switches by itself | "The nurse opens the patient by that code and reads what they said, summed up by the AI in two sentences. She measures the vital signs, and Meddy, trained on 1,267 real emergency patients, suggests level 2, an emergency. One button, and the patient's phone says: go to the resuscitation bay. It never shows the level." |
 | 0:55–1:15 | Phone: "Start again as a new patient", "bad stomach pain and vomiting", age 40, "No insurance", "No, none of these", "Cramping". Nurse: Feverish, "I want to check the patient myself", level 3; under "Suggested doctor" choose Dr. Baptiste (open "Choose another doctor" if he is not first), to the waiting room. Phone: place in line and "Your doctor: Dr. Baptiste". Doctor: the window "New patient for you: are you free now?", press "Yes, let them come in"; the phone shows the room. Show the patient summary, then "Visit finished" twice: the phone says thank you | "Here Meddy is less sure, so it advises a personal check. The nurse gives her own level and chooses the doctor: Meddy suggests the best match and shows who is free or busy. The doctor's screen asks at once: a new patient for you, are you free now? Yes, and the patient's phone shows the room. The doctor already has a patient summary: what the patient said, what the nurse found, and what Meddy suggested, each under its own label. When the visit is finished, the phone says thank you." |
 | 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
-| 1:45–2:00 | The limits section of the README | "The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
+| 1:45–2:00 | The limits section of the README | "Meddy adds no beds or doctors. The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
+
+The opening figure is England's estimate for 2025, so "last year" is right in a video recorded in 2026. It is an
+outside figure: read "The problem in other people's numbers" below before you say it, and keep the words "linked to".
 
 ## Demo checklist before recording
 
@@ -68,7 +72,57 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 | Five similar patients: their most common level was the experts' / at least one had it | 61% / 89% (five random patients: 33% / 79%; the model alone: 68%) |
 | Re-check while waiting: level 3 / 4 / 5 | every 30 / 60 / 120 minutes (the Canadian scale's times) |
 
+## The problem in other people's numbers
+
+These figures are not ours. They come from published reports and studies, checked on 15 November 2026, and they
+show that waiting harms patients. None of them says what Meddy would change. Say "linked to" or "associated with",
+never "caused by" and never "died waiting": the studies show a link, not proof. Every figure is from one country.
+
+There is no reliable count of people who died while waiting in an emergency department, for the world or for any
+country. The first row is the closest thing to one.
+
+| What you can say | Figure | Source | Keep in mind |
+|---|---|---|---|
+| Deaths linked to long emergency waits in England in 2025 | 15,860, about 305 a week | Royal College of Emergency Medicine, *State of Emergency Medicine in England*, 8 June 2026 [1] | An estimate, not counted deaths. It is worked out for patients who waited 8 to 12 hours before being admitted: one extra death for every 72 of them. NHS England has said of an earlier version that it should not be taken as fact |
+| The same estimate for 2015 | 1,657, so almost ten times fewer | The same report [1] | The same method |
+| People who waited 12 hours or more in England's major departments in 2025 | About 1.7 million; 489,138 waited 24 hours or more | The same report [1] | |
+| The risk behind the estimate | One extra death for every 82 patients whose admission was delayed 6 to 8 hours | Jones and others, *Emergency Medicine Journal*, 2022 [2] | Admitted patients only. A link, not proof |
+| After 12 hours or more in the department | About 2.1 times the odds of dying within 30 days, compared with 2 hours | UK Office for National Statistics, visits in 2021/22 [3] | A link, not proof. We read news reports of it, not the analysis itself |
+| The wrong urgency level | 32% of 5.3 million visits; 3.3% rated too low | Sax and others, *JAMA Network Open*, 2023 [4] | One health system in the United States, 2016 to 2020 |
+| Patients who leave before anyone sees them (United States) | The typical hospital went from about 1.1% to about 2.1% between 2017 and 2021; the worst twentieth of hospitals reached 10% | *JAMA Network Open*, 2022 [5] | We read the university's summary of it, not the paper |
+| Why minutes matter: stroke | About 1.9 million brain cells lost each minute without treatment | Saver, *Stroke*, 2006 [6] | Worked out from other studies, not counted |
+| Why minutes matter: sepsis | About 4% higher odds of dying for each hour of delay | Seymour and others, *New England Journal of Medicine*, 2017 [7] | A link, not proof |
+
+What Meddy does about each problem, in our own numbers:
+
+| The problem | What Meddy does | Our result |
+|---|---|---|
+| The most urgent patient waits behind less urgent ones | The line is sorted by urgency | In our simulation the most urgent wait 24 minutes instead of 88. Everyone else waits longer for it: about 107 minutes instead of 88 |
+| Under pressure, some patients are rated too low (about 1 in 10 in our data) | A second check on every level; the nurse still decides | It flags 107 of the 131 patients nurses rated too low |
+| A patient gets worse while waiting | The "I feel worse" button, and a mark on the nurse's screen when a patient has waited longer than their level allows | Not tested: our data has one measurement per patient |
+| Patients give up and leave | The phone shows their place in line and an estimated wait; the board shows the tickets called | Not measured |
+
+What Meddy does not do: it adds no beds and no doctors. The 15,860 are patients who waited for a hospital bed, and
+Meddy would not have changed that. Our claim is smaller: the right patients are seen sooner and the nurse is
+double-checked.
+
+Sources:
+
+1. Royal College of Emergency Medicine, press release of 8 June 2026 on *The State of Emergency Medicine in England*: https://rcem.ac.uk/press-release/how-many-deaths-will-it-take-before-we-see-a-meaningful-plan-to-end-the-crisis-deaths-associated-with-long-ed-waits-surge-almost-t/ (we read the press release, not the report)
+2. Jones S and others (2022). Association between delays to patient admission from the emergency department and all-cause 30-day mortality. *Emergency Medicine Journal* 39: 168–173. https://dx.doi.org/10.1136/emermed-2021-211572
+3. Office for National Statistics analysis of time in emergency departments and deaths within 30 days, as reported: https://uk.news.yahoo.com/long-waits-e-departments-increase-183128867.html
+4. Sax DR and others (2023). Evaluation of the Emergency Severity Index in US emergency departments for the rate of mistriage. *JAMA Network Open*. https://pubmed.ncbi.nlm.nih.gov/36930151/
+5. Monthly rates of patients who left before accessing care in US emergency departments, 2017–2021. *JAMA Network Open* (2022) 5(9): e2233708. Summary: https://ihpi.umich.edu/news/emergency-us-emergency-care-two-studies-show-rising-strain
+6. Saver JL (2006). Time is brain, quantified. *Stroke* 37(1): 263–266. https://pubmed.ncbi.nlm.nih.gov/16339467/
+7. Seymour CW and others (2017). Time to treatment and mortality during mandated emergency care for sepsis. *New England Journal of Medicine*. Summary: https://www.thebottomline.org.uk/summaries/icm/seymour/
+
 ## Questions judges may ask
+
+**Would Meddy have saved the people in your opening figure?**
+No, and we do not say so. That figure is an estimate for patients who waited eight hours or more for a hospital bed,
+and Meddy adds no beds. We use it to show that waiting is dangerous. What Meddy changes is who waits: in our
+simulation the most urgent patients are seen after 24 minutes instead of 88, and the second check flags most of the
+patients nurses rated too low.
 
 **Doesn't the "Everything is correct" button let the AI decide?**
 The nurse still decides: she reads the report and can always check the patient herself. Meddy offers a quick review

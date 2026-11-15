@@ -445,3 +445,10 @@ not as a second opinion.
 - **Web server:** FastAPI (https://fastapi.tiangolo.com)
 - **AI tools:** Claude (Claude Code, https://claude.com/claude-code) was used to help write and explain the
   code and to draft this write-up.
+- **Pictures on the patient's page:** the furnished floor plan and the two short clips on the nurse step were made
+  with AI tools (GPT Image 2.6 and Kling 3.0, through Higgsfield). The page says so next to each picture, and
+  `hospital/static/media/README.md` says how each one was made.
+- **The opening figure of the video:** Royal College of Emergency Medicine, press release of 8 June 2026 on *The
+  State of Emergency Medicine in England* (15,860 deaths in 2025 associated with long waits in emergency
+  departments in England; an estimate). We read the press release, not the report. The other outside figures and
+  their sources are in [PRESENTATION.md](PRESENTATION.md).
