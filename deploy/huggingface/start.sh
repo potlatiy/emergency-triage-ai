@@ -27,4 +27,16 @@ else
     export MEDDY_PUBLIC_URL="http://localhost:$MEDDY_PORT/"
 fi
 
-exec python hospital/server.py
+# The hospital runs in a loop, so that a new version of the code can be put in place and started in a few
+# seconds (watch.py) instead of rebuilding the whole Space, which takes the site down for about five minutes.
+# While /tmp/meddy-updating exists, watch.py is copying files: the server waits for it to finish.
+trap 'kill "$(cat /tmp/meddy-server.pid 2>/dev/null)" 2>/dev/null; exit 0' TERM INT
+rm -f /tmp/meddy-updating
+while true; do
+    while [ -e /tmp/meddy-updating ]; do sleep 0.2; done
+    python hospital/server.py &
+    echo $! > /tmp/meddy-server.pid
+    wait $!
+    echo "The hospital server stopped (code $?); starting it again."
+    sleep 1
+done
