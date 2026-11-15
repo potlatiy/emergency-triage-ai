@@ -123,8 +123,9 @@ Around the three main screens:
 
 The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
 visits, the questionnaire answers, a log of every step of every visit (with its time and who did it), a registry
-of people that keeps one open visit per insurance card, and counters. No real patient's visit is ever deleted (finished made-up visits of the simulated hospital are removed after a day,
-so the file does not grow for ever): "Start a new day" closes
+of people that keeps one open visit per insurance card, and counters. A real patient's visit is deleted in one case only: the chief doctor's "Erase everything", which wipes the whole
+database and has to be typed out (finished made-up visits of the simulated hospital are removed after a day, so the
+file does not grow for ever). Otherwise: "Start a new day" closes
 the open visits and keeps them, and registration numbers are never given twice. Online, a copy of the file is kept
 in the Space's storage bucket every few seconds and taken back at start, so a restart or a new version of the code
 loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The rest of the
