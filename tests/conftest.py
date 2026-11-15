@@ -7,5 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 os.environ["HOSPITAL_DB"] = str(Path(tempfile.mkdtemp()) / "test_hospital.db")
+os.environ["MEDDY_LIMITS"] = "off"         # the tests register hundreds of patients a second; the limits have tests of their own
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "hospital"))

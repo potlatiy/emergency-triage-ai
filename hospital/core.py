@@ -22,6 +22,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import similar  # noqa: E402
+import guard  # noqa: E402
 import trained_models  # noqa: E402
 from triage import (LEVELS, NUMBERS, QUICK_SURE, RANGE_COVERAGE, TEXT, flag_strength, level_range, load,  # noqa: E402
                     safety_first, urgency_gap_score, warning_signs)
@@ -619,7 +620,7 @@ def questions_from_model(complaint, skip=(), timeout=OLLAMA_TIMEOUT):
             "options": {"temperature": 0.2, "num_ctx": 2048}}
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with guard.model_seat(), urllib.request.urlopen(request, timeout=timeout) as response:      # busy: standard questions
         answer = json.loads(json.loads(response.read())["message"]["content"])
     return checked_questions(answer.get("questions"), skip, complaint)
 
@@ -941,10 +942,10 @@ def tidy_note(text, timeout=OLLAMA_TIMEOUT):
             "options": {"temperature": 0, "num_ctx": 1024, "num_predict": 160}}
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with guard.model_seat(), urllib.request.urlopen(request, timeout=timeout) as response:
             written = json.loads(response.read())["message"]["content"]
     except Exception:
-        return plain                                          # the model is off or too slow
+        return plain                                          # the model is off, busy or too slow
     tidy = " ".join(str(written or "").split()).strip().strip('"')
     if not tidy or len(tidy) > 2 * len(text) + 20 or re.findall(r"\d+", tidy) != re.findall(r"\d+", text):
         return plain
@@ -971,7 +972,7 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with guard.model_seat(), urllib.request.urlopen(request, timeout=timeout) as response:
             written = json.loads(response.read())["message"]["content"]
         result = {"source": "ai", "text": with_complaint(checked_summary(written, complaint, report), complaint)}
     except Exception:

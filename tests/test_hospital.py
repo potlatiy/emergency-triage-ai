@@ -143,7 +143,18 @@ def test_the_resuscitation_team_cannot_go_off_duty():
 
 # ---------------------------------------------------------------- the web API, end to end
 
-client = TestClient(server.app)
+class OwnPhone(TestClient):
+    """The test client plays the phone that registered each visit: when it finishes check-in or presses "I feel
+    worse", it shows that visit's key, as the real page does. A test that plays a stranger passes its own headers."""
+    def post(self, url, **kwargs):
+        if url in ("/api/checkin", "/api/worse") and "headers" not in kwargs:
+            key = db.phone_key((kwargs.get("json") or {}).get("reg_no", ""))
+            if key:
+                kwargs["headers"] = {"X-Meddy-Visit": key}
+        return super().post(url, **kwargs)
+
+
+client = OwnPhone(server.app)
 
 
 def test_a_full_visit_through_the_api():
