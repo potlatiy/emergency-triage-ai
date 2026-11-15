@@ -80,7 +80,7 @@ probability is at least about 10%. We chose that cut so that the experts' level 
 then checked it on patients the cut had not seen: 90.6%. The method is called conformal prediction. The weak spots:
 for the most urgent patients it is only 8 in 10, a miss on them is nearly always too low, and there the simple "one
 level either side" does better. It also does not travel: with the other hospital's model and cut it is 87%. The
-screen says the first two next to every range.
+nurse's screen shows only how often a range this wide was right; the doctor's summary also gives the 8 in 10.
 
 **What are the "patients like this one"?**
 Five real patients from the 1,267 who look most like the new one: same kind of complaint first, then closest in the
