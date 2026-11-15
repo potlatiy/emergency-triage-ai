@@ -316,7 +316,8 @@ The nurse's screen shows the figure for the width in front of her.
 - **The promise is an average.** Only 8 in 10 of the most urgent patients are inside the 90% range (level 1: 78%,
   level 2: 80%, level 5: 58%), and for them the simple baseline is better.
 - **For urgent patients a miss is nearly always the dangerous way.** 19% of the level 1 and 2 patients got a range
-  that was entirely less urgent than they were. The nurse's screen says this next to every range.
+  that was entirely less urgent than they were. The doctor's summary gives the 8 in 10 next to the range; the
+  nurse's screen was shortened and shows only the figure for the range's width.
 - **It does not travel.** With the model and the cut from one hospital tried at the other, the experts' level was
   inside for 87% of patients and for 64% of the urgent ones. The promise is for patients like those in the data.
 

@@ -120,7 +120,7 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
 - **A range of levels** (`triage.py`, section 9 of its output; notebook section 14). A level is in the range when
   its probability reaches a cut of about 10%. The cut was set so that the experts' level stays in the range for
   90% of patients, and on patients the cut had not seen it did for 90.6%. The range is two levels wide on average.
-  Weak spots, all on the screen or in the README: it holds for only 8 in 10 of the most urgent patients, and when
+  Weak spots, all in the README (the nurse's screen shows only how often a range this wide was right): it holds for only 8 in 10 of the most urgent patients, and when
   it misses one of them it is nearly always too low; a one-level range is right 82% of the time; and with model
   and cut from one hospital tried at the other it drops to 87% (urgent patients 64%).
 - **Patients like this one** (`similar.py`; notebook section 15). The five real patients in the data most like
