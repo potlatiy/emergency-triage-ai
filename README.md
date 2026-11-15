@@ -446,9 +446,10 @@ not as a second opinion.
   every staff action (also "Start a new day" and "15 minutes pass") ask for that PIN. The patient's phone never
   needs it and can only ask about its own visit. The chief doctor's panel uses `MEDDY_CHIEF_PIN` (without it,
   the staff PIN opens it too). Without the settings, as on a laptop, the screens are open.
-- **Spam and abuse:** the server limits how often one address may register or press buttons, refuses oversized
-  requests, lets only a visit's own phone change that visit, and tells the browser which sites a page may talk
-  to. What is protected and what is not is in [SECURITY.md](SECURITY.md). `MEDDY_LIMITS=off` switches the limits off.
+- **Spam and abuse:** the server limits how often one address may register or press buttons, blocks an address
+  that keeps being refused, lets only a visit's own phone change that visit, lets the browser run only Meddy's own
+  scripts, and seals every line of a visit's log so that a later change shows on the chief doctor's panel. What is
+  protected and what is not is in [SECURITY.md](SECURITY.md). `MEDDY_LIMITS=off` switches the limits off.
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000 (the patient's phone),
   http://localhost:8000/nurse, http://localhost:8000/doctor, http://localhost:8000/board and
   http://localhost:8000/chief. For AI-written questions, the nurse's summary and the note tidying,

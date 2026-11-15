@@ -641,8 +641,10 @@ def test_the_registry_never_keeps_the_card_number():
     reg_no = arrive(card="MD-4829 1375").json()["reg_no"]
     # Every piece of text the two tables hold. (Numbers are left out: a clock time such as 1794748291.4 can hold
     # "4829" by chance, which made this test fail for ten seconds now and then.)
+    # The phone's key and the seal of the log are left out too: they are random-looking and can hold any four digits.
     everything = json.dumps([value for table in ("people", "visits") for r in db._conn.execute(f"SELECT * FROM {table}")
-                             for value in dict(r).values() if isinstance(value, str)])
+                             for name, value in dict(r).items()
+                             if isinstance(value, str) and name not in ("phone_key", "log_seal")])
     assert "MD48291375" not in everything and "4829" not in everything
     visit = db.visit_for(reg_no)
     assert visit["insurance"] == "public" and visit["card_end"] == "1375" and len(visit["person"]) == 24

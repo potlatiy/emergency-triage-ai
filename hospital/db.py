@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS visits (
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
     wanted_doctor TEXT REFERENCES doctors(reg_no), sim_until REAL, seen_from REAL, seen_to REAL, doctor_note TEXT,
     phone_key TEXT,
-    status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
+    status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no), log_seal TEXT);
 CREATE TABLE IF NOT EXISTS people (
     person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS answers (
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS answers (
     question TEXT NOT NULL, answer TEXT, kind TEXT NOT NULL, topic TEXT);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT REFERENCES visits(reg_no), day INTEGER, clock INTEGER,
-    at TEXT NOT NULL, what TEXT NOT NULL, who TEXT, detail TEXT);
+    at TEXT NOT NULL, what TEXT NOT NULL, who TEXT, detail TEXT, seal TEXT);
 CREATE INDEX IF NOT EXISTS events_by_visit ON events(visit_reg);
 CREATE INDEX IF NOT EXISTS visits_by_status ON visits(status);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -225,10 +225,67 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# The log is sealed, so that a line cannot be changed or taken out quietly (who set which level, and when, is the
+# record a hospital must be able to trust). Every line carries a seal: a keyed fingerprint (HMAC-SHA256) of the
+# line itself and of the seal of the visit's line before it. Change a line, or remove one from the middle, and the
+# seals after it no longer fit. The visit keeps a seal of its last line (log_seal), so cutting off the end shows
+# too. log_check() goes through all of it; the chief doctor's panel shows the result.
+# The key: MEDDY_LOG_KEY. Without it a key written here is used, which still shows damage and careless changes,
+# but not a forgery by somebody who has read this file. Changing the key makes every older seal look broken.
+LOG_KEY = (os.environ.get("MEDDY_LOG_KEY") or "meddy: the key every copy of this code has").encode()
+OWN_LOG_KEY = bool(os.environ.get("MEDDY_LOG_KEY"))
+
+
+def _seal(*parts):
+    """The keyed fingerprint of some values. Every value is taken as text, as the database gives it back."""
+    text = json.dumps([None if part is None else str(part) for part in parts], ensure_ascii=False)
+    return hmac.new(LOG_KEY, text.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def _event(reg_no, what, who=None, detail=None):
-    """Write one step of a visit into the log. The caller holds the lock and the transaction."""
-    _conn.execute("INSERT INTO events (visit_reg, day, clock, at, what, who, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (reg_no, _meta("day"), _clock(), _now(), what, who, detail))
+    """Write one step of a visit into the log, sealed (see above). The caller holds the lock and the transaction."""
+    before = _conn.execute("SELECT seal FROM events WHERE visit_reg IS ? ORDER BY id DESC LIMIT 1", (reg_no,)).fetchone()
+    line = (reg_no, _meta("day"), _clock(), _now(), what, who, detail)
+    seal = _seal(before["seal"] if before else None, *line)
+    _conn.execute("INSERT INTO events (visit_reg, day, clock, at, what, who, detail, seal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  (*line, seal))
+    if reg_no is not None:
+        _conn.execute("UPDATE visits SET log_seal = ? WHERE reg_no = ?", (_seal("last line", reg_no, seal), reg_no))
+
+
+def log_check():
+    """Go through the whole log and say whether every seal still fits.
+
+    Returns "whole" (nothing changed), "lines" (sealed lines checked), "older" (lines from before sealing, which
+    cannot be checked), "broken" (up to five visits whose log was changed, and how) and "own_key" (is MEDDY_LOG_KEY
+    set). What it cannot see: a visit removed together with all of its lines."""
+    with _lock:
+        rows = _conn.execute("SELECT id, visit_reg, day, clock, at, what, who, detail, seal FROM events "
+                             "ORDER BY visit_reg, id").fetchall()
+        heads = {r["reg_no"]: r["log_seal"] for r in _conn.execute("SELECT reg_no, log_seal FROM visits")}
+        sealed_from = _setting("sealed_from", 1)
+    broken, lines, older, last = {}, 0, 0, {}
+    for row in rows:
+        reg = row["visit_reg"]
+        if row["seal"] is None:
+            if row["id"] >= sealed_from or last.get(reg):
+                broken.setdefault(reg, "a line has lost its seal")
+            else:
+                older += 1
+            continue
+        lines += 1
+        if not hmac.compare_digest(row["seal"], _seal(last.get(reg), reg, row["day"], row["clock"], row["at"],
+                                                      row["what"], row["who"], row["detail"])):
+            broken.setdefault(reg, "a line was changed, or one before it was removed")
+        last[reg] = row["seal"]
+    for reg, head in heads.items():
+        if reg in last and (head is None or not hmac.compare_digest(head, _seal("last line", reg, last[reg]))):
+            broken.setdefault(reg, "the end of the log was cut off or added to")
+        elif reg not in last and head is not None:
+            broken.setdefault(reg, "every line of the log was removed")
+    return {"whole": not broken, "lines": lines, "older": older, "own_key": OWN_LOG_KEY,
+            "broken": [{"visit": reg or "(no visit)", "how": how} for reg, how in list(broken.items())[:5]],
+            "broken_count": len(broken)}
 
 
 def _seed_staff():
@@ -267,6 +324,7 @@ def reset():
                             "DROP TABLE IF EXISTS meta;" + SCHEMA)
         _seed_staff()
         _meta("visit", 0)
+        _meta("sealed_from", 1)                 # the log is sealed from its very first line (see _event)
         _start_day()
 
 
@@ -1500,6 +1558,8 @@ def _upgrade():
         fresh = _conn.execute("SELECT COUNT(*) AS n FROM meta WHERE key = 'clock'").fetchone()["n"] == 0
         if not fresh and _setting("day_started", None) is None:      # a file from before the clock ran in real time
             _meta("day_started", int(time.time()))
+        if not fresh and _setting("sealed_from", None) is None:      # a file from before the log was sealed:
+            _meta("sealed_from", _conn.execute("SELECT COALESCE(MAX(id), 0) + 1 AS n FROM events").fetchone()["n"])
         if not fresh:       # visits from before days were written down belong to the day that is open now
             _conn.execute("UPDATE visits SET day = (SELECT value FROM meta WHERE key = 'day') WHERE day IS NULL")
     model.close()

@@ -722,7 +722,12 @@ const stepNo = (n) => `<span class="stepno"><i class="step-ic s${n}"><svg viewBo
 const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const show = (name, text) => `<figure class="show"><video src="/static/media/${name}.mp4?v=2" poster="/static/media/${name}.jpg?v=2"
     width="640" height="358" muted loop playsinline preload="metadata" aria-hidden="true"${still ? "" : " autoplay"}
-    onerror="this.closest('figure').hidden = true"></video><figcaption>${text}</figcaption></figure>`;
+    ></video><figcaption>${text}</figcaption></figure>`;
+// A clip that cannot be loaded is left out. Listened for here, not in the tag: the site's content policy does not
+// run handlers written inside a tag (that is how a script hidden in a patient's text is kept from running).
+document.addEventListener("error", (e) => {
+  if (e.target && e.target.tagName === "VIDEO" && e.target.closest("figure.show")) e.target.closest("figure.show").hidden = true;
+}, true);
 const shows = () => `<div class="shows">
     ${show("nurse-scan", "The nurse scans your code")}
     ${show("nurse-check", "She checks your blood pressure, pulse and temperature")}
@@ -975,7 +980,12 @@ function entrance() {
         cardBox.setAttribute("aria-invalid", "true"); idle(go); return; }
       if (response.status === 422) { error.textContent = "The hospital did not accept the card number. Use 6 to 20 letters and digits.";
         cardBox.setAttribute("aria-invalid", "true"); idle(go); return; }
-      if (response.status === 429) { error.textContent = "Too many registrations from this connection just now. Please wait a minute, then try again."; idle(go); return; }
+      if (response.status === 429) {                              // the server says how long (a minute, or longer after many refusals)
+        let why = "";
+        try { why = (await response.json()).detail || ""; } catch (e) {}
+        error.textContent = (why || "Too many registrations from this connection just now.") + " You can also register at the desk.";
+        idle(go); return;
+      }
       if (!response.ok) throw new Error();
       const data = await response.json();
       me.cardEnd = me.insurance === "none" ? null : card.slice(-4).toUpperCase();      // the number itself is not kept
