@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS visits (
     seen_at INTEGER, worse_at INTEGER, worse_said INTEGER DEFAULT 0, rechecks INTEGER DEFAULT 0,
     ai_level_then INTEGER, remeasured INTEGER DEFAULT 0, held_at INTEGER, quick_pending INTEGER,
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
-    wanted_doctor TEXT REFERENCES doctors(reg_no), sim_until REAL, seen_from REAL, seen_to REAL,
+    wanted_doctor TEXT REFERENCES doctors(reg_no), sim_until REAL, seen_from REAL, seen_to REAL, doctor_note TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
     person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
@@ -741,23 +741,29 @@ def where_is(reg_no):
 
     On purpose there is no level, no danger mark and no waiting time in here. Patients must never see
     their urgency level (it could frighten them), so the server does not even send it. The answer is
-    built from a short list of allowed keys, never by copying the visit row."""
+    built from a short list of allowed keys, never by copying the visit row.
+
+    In the waiting room it does carry an estimate of the wait, as a range ("about 15 to 25 minutes"), worked out
+    from how busy the doctors are now (wait_estimate). It is labelled on the phone as an estimate, never a promise.
+    After the visit it carries the doctor's note for the patient, if the doctor wrote one."""
     with _lock:
         visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None:
             return None
         _, rows = _waiting()            # the same order as the line the nurse sees
+        estimate = _estimate(dict(visit), rows) if visit["status"] == "waiting" else None
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
         wanted = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["wanted_doctor"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
-          "day": today, "code": code_for(reg_no), "worse": False, "closed": None}
+          "day": today, "code": code_for(reg_no), "worse": False, "closed": None, "estimate": None, "note": None}
     if visit["status"] == "nurse":
         # check-in done: the phone shows the code for the nurse. "worse": the nurse has been told they feel worse.
         me.update(status="nurse", worse=visit["worse_at"] is not None)
     elif visit["status"] == "waiting":
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
-        me.update(status="waiting", position=position, ahead=position - 1, worse=visit["worse_at"] is not None)
+        me.update(status="waiting", position=position, ahead=position - 1, worse=visit["worse_at"] is not None,
+                  estimate=estimate)
         if wanted:          # the nurse chose the doctor: the patient knows whom they wait for
             me.update(doctor=wanted["name"], room=wanted["room"])
     elif visit["status"] == "with doctor":
@@ -765,7 +771,7 @@ def where_is(reg_no):
     elif visit["status"] == "done":
         why = visit["closed_why"] or ""
         me.update(status="finished", closed="seen" if why in ("finished by the doctor", "seen (simulated)")
-                  else "removed" if why in REMOVED_BECAUSE else "closed")
+                  else "removed" if why in REMOVED_BECAUSE else "closed", note=visit["doctor_note"])
     return me
 
 
@@ -832,7 +838,7 @@ def todays_patients(limit=60):
         return f"Closed: {v['closed_why'] or 'finished'}"
     return [{"reg_no": v["reg_no"], "code": code_for(v["reg_no"]), "ticket": v["ticket"], "patient": full_name(v),
              "complaint": v["complaint"], "level": v["level"], "status": v["status"], "where": where(v),
-             "department": v["department"]} for v in rows]
+             "department": v["department"], "note": v["doctor_note"]} for v in rows]
 
 
 def wait(minutes=15):
@@ -1017,6 +1023,178 @@ def _doctor_times(now=None):
     return times
 
 
+ESTIMATE_SLACK = 1.25      # other nurses' patients reach the doctors too: the plain sum is too hopeful
+
+
+def _estimate(patient, rows, now=None):
+    """About how long this waiting patient will still wait, as a range in minutes: {"low", "high", "minutes"}.
+
+    The doctors who may see the patient (the one the nurse chose, or those on duty in the department, or general
+    medicine when nobody is) are each free at a known time (_doctor_times). The patients ahead in the line for the
+    same doctors are handed out to whichever is free first, each taking that doctor's usual visit. Then this
+    patient's turn comes. An estimate from the load right now, not a promise: a more urgent arrival goes first.
+    The caller holds the lock."""
+    now = time.time() if now is None else now
+    doctors = [dict(r) for r in _conn.execute(
+        "SELECT * FROM doctors WHERE on_duty = 1 AND department != 'Resuscitation team'")]
+    on_duty = {d["reg_no"] for d in doctors}
+    department = patient["department"] or core.department_for(patient["complaint"], bool(patient["injury"]))
+
+    def pool_of(p):
+        if p["wanted_doctor"] in on_duty:
+            return [p["wanted_doctor"]]
+        team = [d["reg_no"] for d in doctors if d["department"] == (p["department"] or department)]
+        return team or [d["reg_no"] for d in doctors if d["department"] == core.DEFAULT_DEPARTMENT]
+    pool = pool_of(patient)
+    if not pool:
+        return None
+    times = _doctor_times(now)
+    every = max(1, round(sum(t["usual_minutes"] for t in times.values()) / len(times))) if times else VISIT_MINUTES
+    ready = {reg: (times[reg]["free_in_minutes"] or 0) if reg in times else 0 for reg in pool}
+    usual = {reg: times[reg]["usual_minutes"] if reg in times else every for reg in pool}
+    for p in rows:
+        if p["reg_no"] == patient["reg_no"]:
+            break
+        if set(pool_of(p)) & set(pool):
+            first = min((r for r in pool if r in pool_of(p) or not p["wanted_doctor"]), key=lambda r: ready[r], default=None)
+            if first is not None:
+                ready[first] += usual[first]
+    minutes = min(ready.values()) * ESTIMATE_SLACK
+    low, high = max(0, int(minutes * 0.85 // 5 * 5)), int(minutes * 1.2 // 5 * 5) + 5
+    return {"low": low, "high": max(high, low + 5), "minutes": round(minutes)}
+
+
+BOARD_CALLED_FOR = 15 * 60     # a called ticket stays on the board for 15 minutes
+
+
+def board(ticket=None):
+    """The waiting room's board: the tickets called in the last minutes and to which room, how many wait, and the
+    usual wait now. Nothing else: no name, no complaint, no level. With a ticket, also where that ticket stands
+    ("Find your ticket"). Public, like a board on the wall."""
+    now = time.time()
+    with _lock:
+        called = [dict(r) for r in _conn.execute(
+            "SELECT v.ticket, v.seen_from, d.room, d.name FROM visits v JOIN doctors d ON d.reg_no = v.doctor_reg "
+            "WHERE v.day = ? AND v.ticket LIKE 'A%' AND v.seen_from > ? AND v.status IN ('with doctor', 'done') "
+            "ORDER BY v.seen_from DESC LIMIT 6", (_meta("day"), now - BOARD_CALLED_FOR))]
+        _, rows = _waiting()
+        estimates = [e for e in (_estimate(p, rows, now) for p in rows) if e]
+        mine = None
+        if ticket:
+            visit = _conn.execute("SELECT * FROM visits WHERE day = ? AND ticket = ?",
+                                  (_meta("day"), ticket.strip().upper())).fetchone()
+            if visit is not None:
+                visit = dict(visit)
+                if visit["status"] == "waiting":
+                    position = [p["reg_no"] for p in rows].index(visit["reg_no"]) + 1
+                    mine = {"ticket": visit["ticket"], "status": "waiting", "position": position,
+                            "estimate": _estimate(visit, rows, now)}
+                elif visit["status"] == "with doctor":
+                    room = _conn.execute("SELECT room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
+                    mine = {"ticket": visit["ticket"], "status": "called", "room": room["room"] if room else None}
+                else:
+                    mine = {"ticket": visit["ticket"], "status": visit["status"] if visit["status"] == "done" else "nurse"}
+    minutes = sorted(e["minutes"] for e in estimates)
+    typical = None
+    if minutes:
+        middle = minutes[len(minutes) // 2]
+        typical = {"low": max(0, int(middle * 0.8 // 5 * 5)), "high": int(middle * 1.3 // 5 * 5) + 5}
+    return {"called": [{"ticket": c["ticket"], "room": c["room"], "doctor": c["name"],
+                        "minutes_ago": int((now - c["seen_from"]) // 60)} for c in called],
+            "waiting": len(rows), "typical": typical, "ticket": mine, "at": now}
+
+
+def chief_report():
+    """The chief doctor's panel: the whole department today at a glance. Patients' numbers count real patients only
+    (the simulated ones of other nurses are left out); the doctors' load counts everyone they see.
+
+    - flow: where today's patients are, and how the finished ones left
+    - door to doctor: minutes from registering on the phone to a doctor, by level (median and longest)
+    - waiting now: the line by level, with the longest wait
+    - doctors: by department, how many are on duty, busy, and waited for, and how long a visit takes
+    - Meddy and the nurse: how often the nurse kept Meddy's level, rated more or less urgent, and the second-check flags"""
+    now = time.time()
+    with _lock:
+        day, clock = _meta("day"), _clock()
+        real = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE day = ? AND you = 1", (day,))]
+        _, rows = _waiting()
+        doctors = [dict(r) for r in _conn.execute("SELECT * FROM doctors WHERE department != 'Resuscitation team'")]
+        times = _doctor_times(now)
+        simulation = bool(_setting("simulation", 1))
+    reviews = review_stats()            # takes the lock itself
+
+    def median(values):
+        values = sorted(values)
+        return values[len(values) // 2] if values else None
+
+    flow = {"checking in": 0, "waiting for the nurse": 0, "in the waiting room": 0, "with a doctor": 0,
+            "seen and finished": 0, "removed by the nurse": 0, "closed at a new day": 0}
+    for v in real:
+        if v["status"] == "registered":
+            flow["checking in"] += 1
+        elif v["status"] == "nurse":
+            flow["waiting for the nurse"] += 1
+        elif v["status"] == "waiting":
+            flow["in the waiting room"] += 1
+        elif v["status"] == "with doctor":
+            flow["with a doctor"] += 1
+        elif v["closed_why"] == "finished by the doctor":
+            flow["seen and finished"] += 1
+        elif v["closed_why"] in REMOVED_BECAUSE:
+            flow["removed by the nurse"] += 1
+        else:
+            flow["closed at a new day"] += 1
+
+    door = {}
+    for v in real:
+        if v["seen_from"] and v["registered_at"] and v["level"]:
+            minutes = (v["seen_from"] - datetime.fromisoformat(v["registered_at"]).timestamp()) / 60
+            door.setdefault(v["level"], []).append(max(0, round(minutes)))
+    waiting = {}
+    for p in rows:
+        waiting.setdefault(p["level"], []).append(clock - p["arrived"])
+    by_level = [{"level": level, "name": core.LEVEL_NAMES[level],
+                 "seen": len(door.get(level, [])), "door_median": median(door.get(level, [])),
+                 "door_longest": max(door.get(level, []), default=None),
+                 "waiting": len(waiting.get(level, [])), "waiting_longest": max(waiting.get(level, []), default=None)}
+                for level in core.LEVELS]
+
+    teams = {}
+    for d in doctors:
+        team = teams.setdefault(d["department"], {"department": d["department"], "on_duty": 0, "busy": 0,
+                                                  "in_line": 0, "visit_minutes": []})
+        if d["on_duty"]:
+            team["on_duty"] += 1
+            team["busy"] += d["waiting"] > 0
+        if d["reg_no"] in times:
+            team["visit_minutes"].append(times[d["reg_no"]]["usual_minutes"])
+    for p in rows:
+        department = p["department"] or core.department_for(p["complaint"], bool(p["injury"]))
+        if department in teams:
+            teams[department]["in_line"] += 1
+    for team in teams.values():
+        team["visit_minutes"] = median(team["visit_minutes"])
+
+    assessed = [v for v in real if v["ai_level"] is not None and v["level"] is not None]
+    meddy = {"assessed": len(assessed),
+             "kept": sum(v["level"] == v["ai_level"] for v in assessed),
+             "more_urgent": sum(v["level"] < v["ai_level"] for v in assessed),
+             "less_urgent": sum(v["level"] > v["ai_level"] for v in assessed),
+             "flags": sum(v["second_check"] == "strong" for v in assessed),
+             "reviews": reviews}
+    return {"flow": flow, "registered": len(real), "levels": by_level,
+            "departments": sorted(teams.values(), key=lambda t: (-t["in_line"], t["department"])),
+            "meddy": meddy, "simulation": simulation, "at": now}
+
+
+def wait_estimate(reg_no):
+    """The estimate for one waiting patient, or None (see _estimate)."""
+    with _lock:
+        _, rows = _waiting()
+        patient = next((p for p in rows if p["reg_no"] == reg_no), None)
+        return _estimate(patient, rows) if patient else None
+
+
 def _queues():
     """How many patients in the line wait for each doctor the nurse chose for them."""
     return {r["wanted_doctor"]: r["n"] for r in _conn.execute(
@@ -1173,18 +1351,18 @@ def doctor_patients(doctor_reg):
         for p in rows]}
 
 
-def finish_visit(reg_no):
-    """The doctor has seen the patient: the visit is closed and the doctor's list gets one shorter.
-    Returns None when the visit is unknown or the patient is not with a doctor."""
+def finish_visit(reg_no, note=None):
+    """The doctor has seen the patient: the visit is closed and the doctor's list gets one shorter. A note the
+    doctor confirmed goes to the patient's phone. Returns None when the visit is unknown or not with a doctor."""
     with _lock, _conn:
         visit = _conn.execute("SELECT status, doctor_reg FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None or visit["status"] != "with doctor":
             return None
-        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'finished by the doctor', seen_to = ? "
-                      "WHERE reg_no = ?", (_now(), time.time(), reg_no))
+        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'finished by the doctor', seen_to = ?, "
+                      "doctor_note = ? WHERE reg_no = ?", (_now(), time.time(), note or None, reg_no))
         _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
-        _event(reg_no, "finished", visit["doctor_reg"])
-    return {"reg_no": reg_no, "doctor_reg": visit["doctor_reg"], "status": "done"}
+        _event(reg_no, "finished", visit["doctor_reg"], "with a note for the patient" if note else None)
+    return {"reg_no": reg_no, "doctor_reg": visit["doctor_reg"], "status": "done", "note": note or None}
 
 
 def staff():

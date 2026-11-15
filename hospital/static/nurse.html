@@ -149,6 +149,8 @@
   <details class="card db" aria-live="polite">
     <summary>Behind the scenes: the hospital database <span>doctors on duty and today's visits</span></summary>
     <div class="db-body">
+      <p class="hint" style="margin:0">Also: <a href="/board" target="_blank" rel="noopener">the waiting room's board</a> ·
+        <a href="/chief" target="_blank" rel="noopener">the chief doctor's panel</a></p>
       <div class="db-counts" id="db-counts"></div>
       <p class="regime" id="reviews" role="status"></p>
       <div class="db-actions">
@@ -175,7 +177,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=14"></script>
+<script src="/static/meddy-site.js?v=15"></script>
 <script>
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
@@ -492,7 +494,7 @@ async function loadToday() {
   data.patients.forEach((p) => { todayWhere[p.reg_no] = p.where; });
   box.innerHTML = data.patients.length ? data.patients.map((p) => `<tr data-reg="${esc(p.reg_no)}" tabindex="0" style="cursor:pointer">
       <td class="mono">${esc(p.ticket || p.code)}</td><td><b>${esc(p.patient || "")}</b><br><span class="hint">${esc(p.complaint)}</span></td>
-      <td class="num">${p.level || "–"}</td><td>${esc(p.where)}</td></tr>`).join("")
+      <td class="num">${p.level || "–"}</td><td>${esc(p.where)}${p.note ? `<br><span class="hint">Doctor's note: ${esc(p.note)}</span>` : ""}</td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">No patient yet today.</td></tr>`;
 }
 
