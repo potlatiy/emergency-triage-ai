@@ -1690,3 +1690,11 @@ def test_an_older_database_file_gets_the_new_columns():
     columns = {r["name"] for r in db._conn.execute("PRAGMA table_info(visits)")}
     assert {"seen_at", "worse_at", "worse_said", "rechecks"} <= columns
 
+
+def test_the_patients_phone_never_downloads_the_whole_line():
+    """The line holds every waiting patient's name, complaint and level. The phone page used to fetch it just to
+    read the clock. It may only ask about its own visit."""
+    page = (server.STATIC / "index.html").read_text()
+    assert "/api/line" not in page and "/api/nurse" not in page and "/api/doctor" not in page
+    assert "/api/me/" in page and "/api/worse" in page
+

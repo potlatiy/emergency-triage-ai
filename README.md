@@ -96,8 +96,8 @@ which rebuilds itself when `main` changes.
 |---|---|---|
 | Entrance (phone) | The visit is registered under its own number | Database |
 | Check-in (phone) | A quick check for this complaint: three danger signs to tap, what the pain feels like, three optional history questions with quick answers and room to write, and "in your own words". Then the phone shows a code for the nurse | Danger questions come from a hand-written list chosen by the kind of complaint. The three history questions are chosen from six topics and worded on the spot by a small language model running on the same computer; the answers to tap are fixed lists. Check-in never waits for the model |
-| Nurse station (nurse's screen) | The nurse's list of patients who finished check-in, danger signs first. She opens one by tapping it, typing the code or scanning the QR code on the phone, and reads what the patient said with a two-sentence summary by the language model. Then Meddy's report: the patient at a glance, a suggested level, and the likely department and doctor. The nurse presses "Everything is correct" or "I want to check the patient myself". In a personal check she gives her own level, sees a "look again" flag when Meddy rates the patient more urgent, and can change the department or send a critical patient straight to a doctor, with a reason | The two models tested in this project. Meddy says when a quick review is reasonable and when it advises a personal check. Every verdict is counted ("test regime") |
-| Waiting room (phone) | Your place in line, updated by itself | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
+| Nurse station (nurse's screen) | The nurse's list of patients who finished check-in, danger signs first. She opens one by tapping it, typing the code or scanning the QR code on the phone, and reads what the patient said with a two-sentence summary by the language model. Then Meddy's report: the patient at a glance, a suggested level, and the likely department and doctor. The nurse presses "Everything is correct" or "I want to check the patient myself". In a personal check she gives her own level, sees a "look again" flag when Meddy rates the patient more urgent, and can change the department or send a critical patient straight to a doctor, with a reason. Next to the level Meddy shows a likely range of levels and five real patients from the data who look most like this one | The two models tested in this project. The range and the similar patients are tested in [section 6](#6-a-range-of-levels-and-patients-like-this-one). Meddy says when a quick review is reasonable and when it advises a personal check. Every verdict is counted ("test regime") |
+| Waiting room (phone) | Your place in line, updated by itself, and an "I feel worse" button. One press puts the patient on top of the nurse's list for another look; it changes neither the level nor the place in line. The nurse measures again, Meddy writes a new report, and her new decision keeps the ticket and the minutes already waited. The nurse's screen also marks patients who have waited longer than their level allows without a second look | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level. Re-check times: level 3 every 30 minutes, 4 every 60, 5 every 120, the reassessment times of the Canadian triage scale that the Korean scale of our data was built from |
 | Doctor (doctor's screen, phone) | Department and doctor. The doctor calls the next patient; the phone shows the room | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
 The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
@@ -126,6 +126,10 @@ Our own idea. Three things go beyond a standard classifier:
 - **A different job for the AI.** When it turned out the model could not beat nurses, we stopped asking it to
   replace them and tested it as a second check on them instead. The queue simulation also shows what a line sorted
   by the AI's own levels would do.
+- **An AI that shows its doubt and its evidence.** Next to its level, Meddy gives a range of levels that held the
+  experts' level for 9 unseen patients in 10, and five real patients from the data who look most like this one.
+- **A way back to the nurse.** A waiting patient can say "I feel worse", and the nurse's screen marks who is due
+  a second look. Urgency is not decided once at the door.
 
 ## How it works
 
@@ -281,8 +285,48 @@ What we take from it:
 - **What has to be measured** before anyone can claim a saving: the minutes a doctor saves by having the answers
   already, and the minutes a nurse spends on a report compared with a full assessment.
 
+### 6. A range of levels, and patients like this one
+
+**A range with a promise.** One level is right for 68% of patients, so Meddy also gives a range, such as "level 3
+to level 4". A level is in the range when its probability reaches a cut. The cut is set so that the experts' level
+stays in for 90% of patients (conformal prediction; nothing is tuned by hand). We found the cut on one random half
+of the patients and tried it on the other half, 500 times.
+
+| | Experts' level inside | Levels wide | Urgent patients (1–2) inside |
+|---|---|---|---|
+| Range, promise 90% (used) | 90.6% (87% to 93% over the 500 tries) | 2.0 | 80% |
+| Range, promise 95% | 95.4% | 2.5 | 89% |
+| Baseline: the most likely level and one level either side | 95.7% | 2.9 | 92% |
+| The single most likely level | 68% | 1 | |
+
+The promise is kept, and at the same coverage our range is narrower than the baseline (2.5 levels against 2.9).
+With the 90% range the patient was more urgent than the range for 4.7% of patients and less urgent for 4.8%.
+The range is a single level for 27% of patients.
+
+**The weak result.** The promise is an average. Only 8 in 10 of the most urgent patients are inside the 90% range
+(level 1: 78%, level 2: 80%, level 5: 58%), and for them the simple baseline is better. The nurse's screen says
+this next to every range.
+
+**Patients like this one.** Meddy shows the nurse five real patients from the data who look most like the patient
+in front of her, with the level their nurse gave and the level the experts gave. The diagnosis is never used.
+"Alike" mixes the complaint words (40%), the numbers (40%) and the tick-box answers (20%); patients with the same
+kind of complaint, read by the key-word rule, come first. Each patient was looked up among patients of the other
+four test folds.
+
+| | Most of the five had the experts' level | At least one of them had it |
+|---|---|---|
+| Same kind first, then the mix (used) | 61% | 89% |
+| The mix without the kind | 60% | 89% |
+| Complaint words only | 52% | 89% |
+| Numbers only | 47% | 86% |
+| For comparison: always the most common level 38%, the urgency model 68% | | |
+
+The similar patients are weaker than the model, so they are shown as evidence to look at, not as a second opinion.
+
 ### Where it fails
 
+- **The range misses one urgent patient in five.** See section 6: the 90% promise holds on average, not for the
+  most urgent patients.
 - **Urgent patients sent to the slow queue.** With the safety-first setting the model gave level 4 or 5 to seven
   patients whom experts rated level 1 or 2. They include a chest pain complaint written in Korean with no vital
   signs, two poisonings and an eye injury, where the danger does not show in the measurements. Nurses rated five of
@@ -303,6 +347,8 @@ What we take from it:
 - **The department model's version was chosen on the same test splits it is reported on.** We tried four versions and kept the best, so its 70% and its 3.7-point lead over the key-word rule may be up to a point too kind. It still beats the rule.
 - **One diagnosis cannot be sorted by its name.** "Percutaneous catheter problem" (8 patients) covers urinary catheters and feeding or bile tubes. Our table sends all 8 to urology, and about half belong to gastroenterology.
 - **Each queue order was simulated on its own 200 random days**, so a difference of a minute or two between two rows of the first table is luck. The large differences are not.
+- **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike in age and measurements only; the screen says so.
+- **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: it only calls the nurse and never moves them up by itself.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
@@ -339,6 +385,12 @@ What we take from it:
 - **Dataset:** Moon S-H, Shim JL, Park K-S, Park C-S (2019). Triage accuracy and causes of mistriage using the
   Korean Triage and Acuity Scale. PLOS ONE 14(9): e0216972. https://doi.org/10.1371/journal.pone.0216972
   (supporting files S1 and S2, CC BY 4.0, unchanged apart from file names and CSV copies).
+- **The range of levels (conformal prediction):** Angelopoulos AN, Bates S (2021). A Gentle Introduction to
+  Conformal Prediction and Distribution-Free Uncertainty Quantification. https://arxiv.org/abs/2107.07511
+- **Re-check times while waiting:** the reassessment times of the Canadian Triage and Acuity Scale (level 2 every
+  15 minutes, 3 every 30, 4 every 60, 5 every 120). Murray M, Bullard M, Grafstein E (2004). Revisions to the
+  Canadian Emergency Department Triage and Acuity Scale implementation guidelines. CJEM 6(6): 421–427. We read the
+  times in training material and a hospital policy that quote the guideline, not in the guideline itself.
 - **Libraries:** pandas (https://pandas.pydata.org), scikit-learn (https://scikit-learn.org),
   Matplotlib (https://matplotlib.org), Gradio (https://gradio.app)
 - **Language model for the check-in questions:** Gemma 3 (4B) by Google, run locally through Ollama (https://ollama.com/library/gemma3)
