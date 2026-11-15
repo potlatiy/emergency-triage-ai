@@ -45,6 +45,21 @@
   .fact b { display:block; font-size:1.6rem; font-variant-numeric:tabular-nums; }
   .fact span { color:var(--soft); font-size:.9rem; }
   .foot { margin-top:18px; color:var(--soft); font-size:.9rem; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+  .btn { min-height:48px; padding:10px 20px; border:2px solid var(--blue); border-radius:999px; background:var(--blue); color:#fff;
+         font:inherit; font-weight:800; cursor:pointer; }
+  .btn.light { background:#fff; color:var(--blue); } .btn.danger { border-color:var(--rose); background:var(--rose); }
+  .btn.danger.light { background:#fff; color:var(--rose); }
+  .tips { margin:0; padding-left:22px; } .tips li { margin:8px 0; }
+  .danger-zone { margin-top:18px; border:2px dashed #e3b3b2; }
+  .danger-zone input { min-height:48px; padding:8px 14px; border:2px solid #aab8b0; border-radius:14px; font:inherit; width:140px; }
+  .print-only { display:none; }
+  @media print {
+    body { background:#fff; font-size:12px; } .wrap { padding:0; max-width:none; }
+    header nav, .actions, .danger-zone, #staff-lock, button { display:none !important; }
+    .print-only { display:block; } .card, .tile { box-shadow:none; border:1px solid #ccc; break-inside:avoid; }
+    .grid { grid-template-columns:1fr 1fr; } .scroll { overflow:visible; }
+  }
   @media (max-width: 520px) { .wrap { padding:14px; } .tile b { font-size:1.8rem; } th, td { padding:7px 5px; } }
 </style>
 </head>
@@ -57,7 +72,16 @@
     <nav><a href="/nurse">Nurse</a><a href="/doctor">Doctor</a><a href="/board">Board</a></nav>
   </header>
 
+  <p class="print-only" id="print-title"></p>
+  <div class="actions">
+    <button type="button" class="btn" id="save-pdf">Save today's summary as PDF</button>
+  </div>
   <section class="tiles" id="tiles" aria-label="Today's patients"></section>
+  <section class="card" style="margin-top:18px" aria-labelledby="tips-title">
+    <h2 id="tips-title">Meddy's suggestions</h2>
+    <p class="sub">Plain rules on today's numbers, never written by a language model: each one points to a figure below.</p>
+    <ul class="tips" id="tips"></ul>
+  </section>
 
   <div class="grid">
     <section class="card" aria-labelledby="levels-title">
@@ -80,8 +104,19 @@
     </section>
   </div>
   <p class="foot" id="foot"></p>
+  <section class="card danger-zone" aria-labelledby="wipe-title">
+    <h2 id="wipe-title">Start from scratch</h2>
+    <p class="sub">Erases every visit, answer and log line, and starts as on the very first day, with registration
+      number P-2026-0001. For a clean demonstration. It cannot be undone.</p>
+    <form id="wipe" class="actions" autocomplete="off">
+      <label for="wipe-word" style="align-self:center">Type ERASE to confirm</label>
+      <input id="wipe-word" maxlength="10" aria-describedby="wipe-title">
+      <button type="submit" class="btn danger">Erase everything</button>
+    </form>
+    <p class="sub" id="wipe-result" role="status"></p>
+  </section>
 </div>
-<script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-site.js?v=17"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -107,6 +142,9 @@ async function load() {
       <td>${esc(t.department)}</td><td class="num">${t.on_duty}</td>
       <td><div class="meter busy" title="${t.busy} of ${t.on_duty} busy" aria-label="${t.busy} of ${t.on_duty} busy"><i style="width:${t.on_duty ? Math.round(100 * t.busy / t.on_duty) : 0}%"></i></div></td>
       <td class="num">${t.in_line}</td><td class="num">${min(t.visit_minutes)}</td></tr>`).join("");
+  $("tips").innerHTML = r.suggestions.map((t) => `<li>${esc(t)}</li>`).join("");
+  $("print-title").textContent = "Meddy · Day summary · " + new Date(r.at * 1000).toLocaleString("en-GB", { dateStyle:"full", timeStyle:"short" })
+    + (r.day_started ? " · day started " + new Date(r.day_started * 1000).toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" }) : "");
   const m = r.meddy;
   $("meddy").innerHTML = [
     [`${m.kept} of ${m.assessed}`, `kept Meddy's level (${pct(m.kept, m.assessed)})`],
@@ -121,6 +159,18 @@ async function load() {
 }
 load();
 setInterval(() => { if (!document.hidden) load(); }, 10000);
+// "Save as PDF": the browser's print window, set to the day summary (choose "Save as PDF" as the printer).
+$("save-pdf").addEventListener("click", async () => { await load(); window.print(); });
+$("wipe").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const word = $("wipe-word").value.trim().toUpperCase();
+  if (word !== "ERASE") { $("wipe-result").textContent = "Type ERASE in capitals to confirm."; return; }
+  const response = await fetch("/api/chief/wipe", { method:"POST", headers:{ "Content-Type":"application/json" },
+                                                    body:JSON.stringify({ confirm:"ERASE" }) }).catch(() => null);
+  $("wipe-result").textContent = response && response.ok ? "Everything was erased. The hospital starts as on its first day."
+    : "Could not erase: the hospital server did not answer.";
+  $("wipe-word").value = ""; load();
+});
 </script>
 </body>
 </html>

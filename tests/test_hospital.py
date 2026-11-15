@@ -2312,7 +2312,7 @@ def test_the_nurse_can_remove_a_patient_with_a_reason():
     assert any(e["what"] == "removed" for e in db.history(waiting))
     at_the_desk = new_visit("cough", age=40)
     assert client.post("/api/nurse/remove", json={"reg_no": at_the_desk, "why": "registered by mistake"}).status_code == 200
-    assert client.post("/api/nurse/remove", json={"reg_no": at_the_desk, "why": "registered by mistake"}).status_code == 409
+    assert client.post("/api/nurse/remove", json={"reg_no": at_the_desk, "why": "registered by mistake"}).status_code == 409     # already closed
     assert client.post("/api/nurse/remove", json={"reg_no": new_visit("cough", age=40)}).status_code == 422      # no reason
     assert client.post("/api/nurse/remove", json={"reg_no": new_visit("cough", age=40), "why": "bored"}).status_code == 422
     assert client.post("/api/nurse/remove", json={"reg_no": "P-0000-0000", "why": "sent home by the nurse"}).status_code == 404
@@ -2459,9 +2459,10 @@ def test_meddy_only_tidies_the_doctors_note():
 def test_the_doctors_note_reaches_the_patients_phone(monkeypatch):
     reg = assessed_visit("cough", age=40)
     db.refer(reg, 3, "Looks unwell", doctor_reg="DR-1016")
-    monkeypatch.setattr(core, "tidy_note", lambda text: "Rest today, and drink plenty of water.")
+    monkeypatch.setattr(core, "tidy_note", lambda text: {"text": "Rest today, and drink plenty of water.", "source": "ai",
+                                                         "added": [], "dropped": []})
     assert client.post("/api/doctor/tidy", json={"text": "rest today and drink plenty of water"}).json() == {
-        "text": "Rest today, and drink plenty of water.", "changed": True}
+        "text": "Rest today, and drink plenty of water.", "source": "ai", "added": [], "dropped": [], "changed": True}
     def off(text):
         raise ValueError("no model")
     monkeypatch.setattr(core, "tidy_note", off)
@@ -2531,3 +2532,81 @@ def test_a_patient_next_for_a_busy_doctor_is_told_so():
     for p in db.doctor_patients("DR-1001")["patients"]:
         db.finish_visit(p["reg_no"])
     assert client.get(f"/api/me/{reg}").json()["doctor_busy"] is False
+
+
+# ---------------------------------------------------------------- tidy that always helps, one patient at a time, the chief
+
+def test_plain_code_tidies_punctuation_without_changing_a_word():
+    assert core.plain_tidy("wash you anal and put hot compres") == "Wash you anal and put hot compres."
+    assert core.plain_tidy("rest today.drink water , i will see you in 2 days") ==         "Rest today. Drink water, I will see you in 2 days."
+
+
+@pytest.mark.parametrize("model_wrote, source, added, dropped", [
+    ("Wash the anal area and apply a hot compress.", "ai", ["area", "apply"], ["put"]),     # shown, with what changed
+    ("I'm sorry, but I cannot fulfill this request. My purpose is to be helpful.", "plain", [], []),   # Gemma refused
+    ("Wash and put hot compress.", "ai", [], ["anal"]),         # one word gone: shown, with the doctor told which
+])
+def test_meddy_tidies_the_note_or_falls_back_to_plain_code(monkeypatch, model_wrote, source, added, dropped):
+    import io
+    class Answer(FakeModel):
+        def read(self):
+            return json.dumps({"message": {"content": self.text}}).encode()
+    monkeypatch.setattr(core.urllib.request, "urlopen", Answer(model_wrote))
+    tidied = core.tidy_note("wash you anal and put hot compres")
+    assert tidied["source"] == source and tidied["added"] == added and tidied["dropped"] == dropped
+    if source == "plain":
+        assert tidied["text"] == "Wash you anal and put hot compres."
+
+
+def test_a_dropped_no_or_not_is_never_offered(monkeypatch):
+    class Answer(FakeModel):
+        def read(self):
+            return json.dumps({"message": {"content": self.text}}).encode()
+    monkeypatch.setattr(core.urllib.request, "urlopen", Answer("Drive today."))
+    assert core.tidy_note("do not drive today") == {"text": "Do not drive today.", "source": "plain", "added": [], "dropped": []}
+
+
+def test_the_doctor_sees_one_patient_at_a_time():
+    reg = assessed_visit("sore throat", age=30)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 5, "doctor_reg": "DR-1009"})   # Dr. Sorensen has a patient
+    answer = client.post("/api/doctor/call", json={"doctor_reg": "DR-1009", "reg_no": reg, "one_at_a_time": True})
+    assert answer.status_code == 409 and "Finish the visit" in answer.json()["detail"]
+    for p in db.doctor_patients("DR-1009")["patients"]:
+        db.finish_visit(p["reg_no"])
+    called = client.post("/api/doctor/call", json={"doctor_reg": "DR-1009", "reg_no": reg, "one_at_a_time": True}).json()
+    assert called["called"]["reg_no"] == reg
+
+
+def test_the_nurse_can_remove_a_patient_who_is_with_a_doctor():
+    reg = assessed_visit("cough", age=40)
+    db.refer(reg, 3, "Looks unwell", doctor_reg="DR-1016")
+    before = {d["reg_no"]: d["waiting"] for d in db.staff()["doctors"]}["DR-1016"]
+    assert client.post("/api/nurse/remove", json={"reg_no": reg, "why": "left without being seen"}).status_code == 200
+    assert {d["reg_no"]: d["waiting"] for d in db.staff()["doctors"]}["DR-1016"] == before - 1
+    assert db.visit_for(reg)["status"] == "done"
+
+
+def test_the_chief_doctor_can_start_from_scratch(staff_pin):
+    for _ in range(3):
+        new_visit("cough", age=40)
+    assert client.post("/api/chief/wipe", json={"confirm": "ERASE"}).status_code == 401           # chief only
+    client.post("/api/staff/login", json={"pin": "4821", "role": "chief"})
+    assert client.post("/api/chief/wipe", json={"confirm": "yes"}).status_code == 422             # the word, on purpose
+    assert client.post("/api/chief/wipe", json={"confirm": "ERASE"}).json() == {"wiped": True}
+    assert db.staff()["all days"]["visits"] == len(db.SEED_WITH_DOCTOR) + len(db.SEED_WAITING)   # only the made-up ones
+    assert new_visit("cough", age=40) == "P-2026-0001"
+
+
+def test_meddy_suggests_from_the_numbers():
+    tips = db.chief_report()["suggestions"]
+    assert tips and all(isinstance(t, str) for t in tips)
+    db.wait(200)                                                       # the made-up line has waited very long
+    reg = assessed_visit("cough", age=40)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3})
+    db.wait(80)
+    assert any("waiting room" in t and "re-check" in t for t in db.chief_report()["suggestions"])
+
+
+def test_the_patients_page_does_not_lead_to_the_staff_screens():
+    page = (server.STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'href="/nurse"' not in page and 'href="/doctor"' not in page and 'href="/board"' in page

@@ -8,7 +8,7 @@
 | The nurse's screen | https://darkshdws-meddy.hf.space/nurse | `0070` |
 | The doctor's screen | https://darkshdws-meddy.hf.space/doctor | `0070` |
 | The waiting room's board | https://darkshdws-meddy.hf.space/board | none |
-| The chief doctor's panel | https://darkshdws-meddy.hf.space/chief | `0070` (the chief doctor's own PIN when one is set) |
+| The chief doctor's panel | https://darkshdws-meddy.hf.space/chief | `0060` (its own PIN) |
 
 **Why a PIN at all.** The lock is part of what we built: the staff screens show patients' names and complaints, and
 their buttons can close visits, so a passer-by with the link sees nothing. The patient's phone and the board never
@@ -28,12 +28,14 @@ by side (the phone narrow, like a phone).
    and a doctor, marked free or busy. Choose a doctor (open "Choose another doctor" for the short list) and send the
    patient to the waiting room.
 3. **Phone.** Your place in line, your doctor, and an estimated wait from how busy the doctors are.
-4. **Doctor** (choose the doctor the nurse chose). A window asks: "New patient for you. Are you free now?" Press
+4. **Doctor** (choose the doctor the nurse chose; a doctor sees one patient at a time, so finish any visit already
+   on their list first, or have the nurse choose a doctor marked "Free now"). A window asks: "New patient for you. Are you free now?" Press
    "Yes, let them come in": the phone shows the room. Read the patient summary, press "Visit finished", write a short
    note for the patient ("Tidy with Meddy" fixes spelling and punctuation), "Close the visit". The phone says thank
    you and shows the note.
-5. **Board and chief doctor.** The board on the waiting room's wall shows the called tickets; the chief doctor's
-   panel shows the whole department today.
+5. **Board and chief doctor.** The board on the waiting room's wall shows the called tickets (the patient's page
+   links to it). The chief doctor's panel shows the whole department today, Meddy's suggestions from the numbers,
+   saves the day's summary as a PDF, and can erase everything to start from scratch.
 
 A chest pain in an adult is usually rated level 2 and goes straight to the resuscitation team, with no doctor to
 choose: to see the choice of doctor, try a sore throat, a twisted ankle or "it burns when I pee".

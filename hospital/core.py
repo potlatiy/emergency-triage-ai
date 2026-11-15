@@ -843,7 +843,8 @@ def _report_for_summary(complaint, age, sex, answers, injury=False):
 # When the doctor closes a visit they may write a short note for the patient ("Rest, drink water, come back if the
 # pain gets worse"). Meddy only tidies it: spelling, punctuation and capitals. The doctor sees the tidied note and
 # chooses it or keeps their own; the patient's phone shows what the doctor confirmed.
-TIDY_SYSTEM_PROMPT = """You correct a short note a doctor wrote for a patient.
+TIDY_SYSTEM_PROMPT = """You are a proofreader in a hospital. You correct a short note a doctor wrote for a patient after a visit.
+It is a medical note: words for parts of the body (anal, rectal, genital, breast) and for symptoms are normal here.
 Fix spelling, punctuation and capital letters only. Do not add, remove or change any information, advice, number or
 medicine. Keep the doctor's words and order. Reply with the corrected note only, nothing else."""
 
@@ -875,9 +876,41 @@ def checked_tidy(written, original):
     return tidy
 
 
+_NEGATIONS = set("no not never dont don't without nothing none avoid stop".split())
+
+
+def tidy_differences(original, tidy):
+    """The words the tidied note added and the words it dropped (a word spelled differently is the same word)."""
+    before, after = _words(original), _words(tidy)
+
+    def matched(word, others):
+        return word in _TIDY_SMALL or any(difflib.SequenceMatcher(None, word, other).ratio() >= 0.6 for other in others)
+    return [w for w in after if not matched(w, before)], [w for w in before if not matched(w, after)]
+
+
+def plain_tidy(text):
+    """Punctuation and capital letters put right by plain code, with no word changed: a capital at the start of
+    each sentence, "I" for "i", a space after a comma or a full stop, and a full stop at the end."""
+    tidy = " ".join(str(text or "").split())
+    tidy = re.sub(r"\s+([,.!?;:])", r"\1", tidy)
+    tidy = re.sub(r"([,.!?;:])(?=[^\s\d])", r"\1 ", tidy)
+    tidy = re.sub(r"\bi\b", "I", tidy)
+    tidy = " ".join(s[:1].upper() + s[1:] for s in re.split(r"(?<=[.!?])\s+", tidy))
+    if tidy and tidy[-1] not in ".!?":
+        tidy += "."
+    return tidy
+
+
 def tidy_note(text, timeout=OLLAMA_TIMEOUT):
-    """The doctor's note with spelling and punctuation put right by the language model (checked_tidy), or
-    ValueError when the model is off, too slow or did more than tidy."""
+    """The doctor's note tidied: {"text", "source": "ai" or "plain", "added": [...], "dropped": [...]}.
+
+    Gemma fixes spelling and punctuation. Its words are compared with the doctor's: a word it added or dropped is
+    listed, so the doctor sees it before choosing. When it changed a number, dropped or added a "no" or a "not",
+    or rewrote the note, or did not answer, plain code fixes the punctuation and capitals instead and changes no
+    word. So the doctor always gets a tidied note, and never one whose meaning Meddy changed unseen. (On the live
+    site, "wash you anal and put hot compres" came back as nothing at all: Gemma had added a word, and the first
+    check threw the whole answer away.)"""
+    plain = {"text": plain_tidy(text), "source": "plain", "added": [], "dropped": []}
     body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "12h",
             "messages": [{"role": "system", "content": TIDY_SYSTEM_PROMPT}, {"role": "user", "content": text}],
             "options": {"temperature": 0, "num_ctx": 1024, "num_predict": 160}}
@@ -885,9 +918,17 @@ def tidy_note(text, timeout=OLLAMA_TIMEOUT):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             written = json.loads(response.read())["message"]["content"]
-    except Exception as error:
-        raise ValueError("the language model did not answer") from error
-    return checked_tidy(written, text)
+    except Exception:
+        return plain                                          # the model is off or too slow
+    tidy = " ".join(str(written or "").split()).strip().strip('"')
+    if not tidy or len(tidy) > 2 * len(text) + 20 or re.findall(r"\d+", tidy) != re.findall(r"\d+", text):
+        return plain
+    added, dropped = tidy_differences(text, tidy)
+    if (set(added) | set(dropped)) & _NEGATIONS or len(added) + len(dropped) > max(3, len(_words(text)) // 3):
+        return plain                                          # the meaning may have changed: words stay the doctor's
+    if tidy[-1] not in ".!?":
+        tidy += "."
+    return {"text": tidy, "source": "ai", "added": added, "dropped": dropped}
 
 
 def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=True, timeout=OLLAMA_TIMEOUT):

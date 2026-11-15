@@ -237,6 +237,9 @@ class Worse(BaseModel):
 class Calling(BaseModel):
     doctor_reg: str
     reg_no: str | None = None          # "Accept": this patient, who must be waiting for this doctor
+    # The doctor's own screen sends this: a doctor sees one patient at a time, so they close the visit they are in
+    # before they call the next one. (The nurse's "Call next patient" and the tests do not send it.)
+    one_at_a_time: bool = False
 
 
 class Simulation(BaseModel):
@@ -246,6 +249,10 @@ class Simulation(BaseModel):
 class Managing(BaseModel):
     reg_no: str
     why: Literal["left without being seen", "sent home by the nurse", "registered by mistake"] | None = None
+
+
+class Wiping(BaseModel):
+    confirm: Literal["ERASE"]                 # typed on purpose: erasing everything is never one stray click
 
 
 class Login(BaseModel):
@@ -474,6 +481,12 @@ def chief_page():
     return FileResponse(STATIC / "chief.html", headers={"Cache-Control": "no-cache"})
 
 
+@app.post("/api/chief/wipe")
+def chief_wipe(body: Wiping):
+    """Erase everything and start as on the first day (chief doctor only, and only with the word ERASE)."""
+    return db.wipe_everything()
+
+
 @app.get("/api/chief/report")
 def chief_report():
     """Everything the chief doctor's panel shows, worked out from the database (db.chief_report)."""
@@ -652,6 +665,8 @@ def doctor_call(body: Calling):
     """The doctor calls their next patient: the first in line for their department. "called" is None when
     nobody is waiting for this doctor. A doctor who is off duty is refused (409)."""
     try:
+        if body.one_at_a_time and db.doctor_patients(body.doctor_reg) and db.doctor_patients(body.doctor_reg)["patients"]:
+            raise HTTPException(409, "Finish the visit you are in first: press Visit finished, then call the next patient.")
         called = db.call_for_doctor(body.doctor_reg, body.reg_no)
     except LookupError:
         raise HTTPException(404, "No doctor with this registration number.")
@@ -683,7 +698,7 @@ def tidy(body: Tidying):
         tidied = core.tidy_note(body.text)
     except ValueError:
         raise HTTPException(503, "Meddy could not tidy the note just now. Your own words are fine.")
-    return {"text": tidied, "changed": tidied != body.text}
+    return {**tidied, "changed": tidied["text"] != body.text}
 
 
 @app.get("/api/staff")

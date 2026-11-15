@@ -185,7 +185,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-site.js?v=17"></script>
 <script src="/static/meddy-plan.js?v=18"></script>
 <script>
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
@@ -380,7 +380,14 @@ async function openPatient(reg, takeOver) {
   if (card.status !== "nurse" && card.status !== "registered" && card.status !== "waiting") {
     panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.ticket || card.code)}</span>${esc(card.patient || "Already seen")}</h2>
       ${card.patient ? `<p class="lede" style="font-weight:700;color:var(--ink)">“${esc(card.complaint)}”</p>` : ""}
-      <p class="lede">${todayWhere[reg] ? "Now: " + esc(todayWhere[reg]) + "." : "The nurse station has already dealt with this patient."}</p>`;
+      <p class="lede">${todayWhere[reg] ? "Now: " + esc(todayWhere[reg]) + "." : "The nurse station has already dealt with this patient."}</p>
+      ${card.status === "with doctor" ? `<div class="manage">
+        <button type="button" class="mini danger" id="remove-open" aria-expanded="false">Remove patient…</button>
+        <div class="why" id="remove-why" hidden><span class="hint" style="margin:0;align-self:center">Why?</span>
+          ${["left without being seen", "sent home by the nurse", "registered by mistake"].map((w) =>
+            `<button type="button" class="mini" data-why="${w}">${w[0].toUpperCase() + w.slice(1)}</button>`).join("")}</div>
+        <p class="error" id="manage-error" role="alert" style="width:100%;margin:0"></p></div>` : ""}`;
+    if (card.status === "with doctor") manage(reg, card);
     return;
   }
   const answers = card.answers.map((a) => `<dt>${a.label ? `<span class="tag topic">${esc(a.label)}</span>` : ""}${esc(a.question)}</dt>

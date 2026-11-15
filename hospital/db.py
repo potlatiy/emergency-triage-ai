@@ -805,11 +805,14 @@ def remove_visit(reg_no, why):
     if why not in REMOVED_BECAUSE:
         raise ValueError(why)
     with _lock, _conn:
-        visit = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        visit = _conn.execute("SELECT status, doctor_reg FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None:
             return None
-        if visit["status"] not in ("registered", "nurse", "waiting"):
+        if visit["status"] not in ("registered", "nurse", "waiting", "with doctor"):
             raise NotHere(reg_no)
+        # A patient already with a doctor can leave too (they walked out): the doctor's list gets one shorter.
+        if visit["status"] == "with doctor":
+            _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
         _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = ? WHERE reg_no = ?",
                       (_now(), why, reg_no))
         _event(reg_no, "removed", "nurse", why)
@@ -1183,9 +1186,47 @@ def chief_report():
              "less_urgent": sum(v["level"] > v["ai_level"] for v in assessed),
              "flags": sum(v["second_check"] == "strong" for v in assessed),
              "reviews": reviews}
-    return {"flow": flow, "registered": len(real), "levels": by_level,
-            "departments": sorted(teams.values(), key=lambda t: (-t["in_line"], t["department"])),
-            "meddy": meddy, "simulation": simulation, "at": now}
+    departments = sorted(teams.values(), key=lambda t: (-t["in_line"], t["department"]))
+    left = sum(v["closed_why"] == "left without being seen" for v in real)
+    return {"flow": flow, "registered": len(real), "levels": by_level, "departments": departments,
+            "meddy": meddy, "simulation": simulation, "at": now, "day_started": _setting("day_started", None),
+            "suggestions": chief_suggestions(by_level, departments, meddy, left)}
+
+
+def chief_suggestions(levels, departments, meddy, left):
+    """Meddy's suggestions for the chief doctor: plain rules on today's numbers, never written by a language model,
+    so every one can be traced to a figure on the panel. Nothing here changes the department by itself."""
+    found = []
+    for l in levels:
+        target = core.RECHECK_AFTER.get(l["level"])
+        if target and l["door_median"] is not None and l["door_median"] > target:
+            found.append(f"Level {l['level']} patients waited a median {l['door_median']} min from registering to a "
+                         f"doctor today, longer than the {target} minutes after which they are re-checked.")
+        if target and l["waiting_longest"] is not None and l["waiting_longest"] > 2 * target:
+            found.append(f"A level {l['level']} patient has been in the waiting room {l['waiting_longest']} min, "
+                         f"more than twice the re-check time. Worth a look now.")
+    for t in departments:
+        if t["in_line"] and not t["on_duty"]:
+            found.append(f"{t['department']}: {t['in_line']} waiting and nobody on duty; general medicine covers them. "
+                         f"Consider calling in a doctor.")
+        elif t["in_line"] >= 2 and t["busy"] == t["on_duty"]:
+            found.append(f"{t['department']}: {t['in_line']} waiting and every doctor on duty is busy. "
+                         f"Consider calling in a night-shift doctor.")
+    if left:
+        found.append(f"{left} patient{'s' if left > 1 else ''} left without being seen today.")
+    if meddy["assessed"] >= 5 and meddy["more_urgent"] >= max(2, meddy["assessed"] // 4):
+        found.append(f"Nurses rated {meddy['more_urgent']} of {meddy['assessed']} patients more urgent than Meddy did. "
+                     f"Worth reviewing these cases: Meddy may be rating some complaints too low.")
+    return found or ["Nothing stands out today: waits are within the re-check times and no department is overloaded."]
+
+
+def wipe_everything():
+    """Erase all visits, answers, the log and the registry, and start from nothing, as on the very first day: for
+    the chief doctor before a demonstration. The staff list stays as built in. Registration numbers start again at
+    P-2026-0001, so an old phone's visit is not found (the phone then starts again by itself)."""
+    reset()
+    _watched.clear()
+    return {"wiped": True}
 
 
 def wait_estimate(reg_no):
