@@ -26,34 +26,42 @@
   const caption = el.querySelector("p");
   let timers = [], swapLater = null, revealLater = null;
 
-  // ---------- the bar ----------
-  // A soft start and a soft landing (easeInOutQuad, easings.net). topUp() finishes whatever is left, quicker the
-  // less there is, on the strong ease-out, so leaving early still shows the bar completing.
+  // ---------- the bar: a 0-100% counter ----------
+  // It climbs one percent at a time and shows the number under the bar. The curtain never lifts and the
+  // page never leaves before it reads 100%: topUp() speeds up whatever is left, then resolves at 100.
+  // A hidden tab draws no frames, so there it simply completes.
   const bar = el.querySelector(".bar i");
-  const FILL = "cubic-bezier(0.45, 0, 0.55, 1)", LAND = "cubic-bezier(0.23, 1, 0.32, 1)";
-  let barRun = null;
-  function barAt() {
-    const m = getComputedStyle(bar).transform;
-    if (!m || m === "none") return 1;
-    const v = parseFloat(m.slice(m.indexOf("(") + 1));
-    return isNaN(v) ? 0 : Math.min(1, Math.max(0, v));
+  const pctLabel = document.createElement("span");
+  pctLabel.className = "pct"; pctLabel.textContent = "0%";
+  el.querySelector(".bar").after(pctLabel);
+  let pct = 0, raf = 0, from = 0, startAt = 0, span = 0, done = null, doneWait = null;
+  function draw(p) {
+    pct = p;
+    bar.style.transform = `scaleX(${p / 100})`;
+    pctLabel.textContent = p + "%";
+    if (p >= 100 && doneWait) { const d = doneWait; doneWait = null; d(); }
   }
-  function fillBar(ms, delay) {
-    if (barRun) barRun.cancel();
-    if (calm.matches) { barRun = null; return; }
-    barRun = bar.animate([{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }],
-                         { duration: ms, delay: delay || 0, easing: FILL, fill: "both" });
+  function step(now) {
+    const t = span ? Math.min(1, Math.max(0, (now - startAt) / span)) : 1;
+    const p = Math.min(100, from + Math.floor((100 - from) * t));
+    if (p !== pct) draw(p);
+    raf = p < 100 ? requestAnimationFrame(step) : 0;
   }
+  function count(ms, delay) {           // from the current value to 100, one percent at a time
+    cancelAnimationFrame(raf);
+    from = pct; span = ms; startAt = performance.now() + (delay || 0);
+    if (calm.matches || document.hidden) { draw(100); return; }
+    raf = requestAnimationFrame(step);
+  }
+  function fillBar(ms, delay) { draw(0); count(ms, delay); }
   function topUp() {
-    if (!barRun || calm.matches) return Promise.resolve();
-    const at = barAt();
-    if (at >= 0.995) return Promise.resolve();
-    barRun.cancel();
-    barRun = bar.animate([{ transform: `scaleX(${at})` }, { transform: "scaleX(1)" }],
-                         { duration: Math.round(140 + 260 * (1 - at)), easing: LAND, fill: "both" });
-    return barRun.finished.catch(() => {});
+    if (pct >= 100) return Promise.resolve();
+    const p = new Promise((resolve) => { doneWait = resolve; });
+    count(Math.round(120 + 3 * (100 - pct)), 0);       // what is left, quicker the less there is
+    setTimeout(() => { if (pct < 100) draw(100); }, 1200); // never wait forever (a paused tab)
+    return p;
   }
-  function resetBar() { if (barRun) { barRun.cancel(); barRun = null; } }
+  function resetBar() { cancelAnimationFrame(raf); raf = 0; doneWait = null; draw(0); }
 
   function run(fn) { if (fn) try { fn(); } catch (e) { console.error(e); } }
   function finish() {                                   // end any curtain that is still running, keeping its changes
@@ -162,6 +170,7 @@
     const mine = ++playing;
     caption.textContent = arriving;
     el.classList.add("cover");
+    draw(100);
     later(360, () => rollAway(mine));
   }
 

@@ -148,7 +148,8 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 /* already covering (a new screen opening after the curtain) */
 .curtain.cover { visibility:visible; transform:none; pointer-events:auto; }
 .curtain.cover img, .curtain.cover p { opacity:1; transform:none; }
-.curtain.cover .bar i, .curtain.out .bar i { animation:none; transform:none; }
+.curtain .pct { margin-top:-14px; font-size:.95rem; font-weight:800; color:var(--blue, #2152c4);
+               font-variant-numeric:tabular-nums; min-width:4ch; text-align:center; }
 /* rolling away, upwards, to show the next step */
 .curtain.out { visibility:visible; transform:translateY(-100%); transition:transform 380ms var(--ease-in-out); }
 .curtain.out img, .curtain.out p { opacity:1; transform:none; }
