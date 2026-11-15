@@ -93,6 +93,17 @@ class Answer(BaseModel):
     topic: str | None = Field(default=None, max_length=30)   # the history topic, for the doctor's overview
 
 
+class Vitals(BaseModel):
+    """What the nurse measured, typed in by hand. The limits only keep out typing slips; they are wide enough for
+    a very sick patient, because a value the form refuses is a sick patient the model never sees."""
+    SBP: float = Field(ge=40, le=260)           # blood pressure, upper number
+    DBP: float = Field(ge=20, le=160)           # blood pressure, lower number
+    HR: float = Field(ge=20, le=250)            # pulse
+    RR: float = Field(ge=4, le=70)              # breaths a minute
+    BT: float = Field(ge=30, le=43)             # temperature, degrees Celsius
+    Saturation: float = Field(ge=50, le=100)    # oxygen, percent
+
+
 class Assessment(BaseModel):
     # Every choice is spelled out. An unknown value is refused rather than quietly read as "normal" or "alert":
     # a silent default here would make a sick patient look well.
@@ -107,7 +118,8 @@ class Assessment(BaseModel):
     injury: bool = False
     alert: Literal["Alert", "Responds to voice", "Responds to pain", "Unresponsive"] = "Alert"
     pain: int = Field(default=0, ge=0, le=10)
-    vitals: Literal["normal", "feverish", "unstable"] = "normal"       # one of core.VITAL_PRESETS
+    # One of core.VITAL_PRESETS, or the nurse's own measurements.
+    vitals: Literal["normal", "feverish", "unstable"] | Vitals = "normal"
     answers: list[Answer] = Field(default=[], max_length=20)
 
 
@@ -318,7 +330,7 @@ def nurse_summary(reg_no: str):
 @app.post("/api/triage")
 def triage(body: Assessment):
     visit = open_visit(body.reg_no)
-    vitals = core.VITAL_PRESETS[body.vitals]
+    vitals = core.VITAL_PRESETS[body.vitals] if isinstance(body.vitals, str) else body.vitals.model_dump()
     answers = checked_answers(visit, body.answers, body.injury)
     injury = body.injury or bool(visit["injury"])
     if answers:
