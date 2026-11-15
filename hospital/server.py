@@ -325,7 +325,10 @@ def register(body: Arrival):
         # One person, one open visit. The answer points to the visit that is already open.
         raise HTTPException(409, {"message": "This card already has an open visit. One person, one visit at a time.",
                                   **already.visit})
-    return {"reg_no": reg_no, "day": db.day(), **core.questionnaire(body.complaint, use_model=body.use_model)}
+    # "key": only this phone gets it. It sends it back when it asks about its visit, and the doctor's note for the
+    # patient is given to nobody else (registration numbers follow one another and can be guessed).
+    return {"reg_no": reg_no, "day": db.day(), "key": db.phone_key(reg_no),
+            **core.questionnaire(body.complaint, use_model=body.use_model)}
 
 
 @app.get("/api/follow-up/{reg_no}")
@@ -593,9 +596,10 @@ def line():
 
 
 @app.get("/api/me/{reg_no}")
-def me(reg_no: str):
-    """The patient's phone: ticket, place in line and doctor. Never the urgency level (see db.where_is)."""
-    status = db.where_is(reg_no)
+def me(reg_no: str, request: Request):
+    """The patient's phone: ticket, place in line and doctor. Never the urgency level (see db.where_is).
+    The phone's own key travels in a header, never in the address."""
+    status = db.where_is(reg_no, request.headers.get("x-meddy-visit"))
     if status is None:
         raise HTTPException(404, "No visit with this registration number.")
     return status

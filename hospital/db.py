@@ -29,6 +29,7 @@ the server. In the demonstration everybody uses a made-up name. The doctors are 
 
 import atexit
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -75,6 +76,7 @@ CREATE TABLE IF NOT EXISTS visits (
     ai_level_then INTEGER, remeasured INTEGER DEFAULT 0, held_at INTEGER, quick_pending INTEGER,
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
     wanted_doctor TEXT REFERENCES doctors(reg_no), sim_until REAL, seen_from REAL, seen_to REAL, doctor_note TEXT,
+    phone_key TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
     person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
@@ -369,8 +371,9 @@ def register(complaint, age, sex, insurance="none", card=None, first_name=None, 
                           (person, insurance, card_end))
         reg_no = f"P-2026-{_next_number('visit'):04d}"
         _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you, person, insurance, card_end, day, registered_at, "
-                      "first_name, last_name) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
-                      (reg_no, complaint, age, sex, person, insurance, card_end, _meta("day"), _now(), first_name, last_name))
+                      "first_name, last_name, phone_key) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      (reg_no, complaint, age, sex, person, insurance, card_end, _meta("day"), _now(), first_name, last_name,
+                       secrets.token_urlsafe(18)))
         _event(reg_no, "registered", "patient's phone", complaint)
     return reg_no
 
@@ -736,7 +739,15 @@ def line():
         for i, p in enumerate(rows, 1)]}
 
 
-def where_is(reg_no):
+def phone_key(reg_no):
+    """The key only this visit's phone holds: it is given once, in the answer to the registration. The doctor's
+    note for the patient is sent only to a phone that shows it. None for an unknown visit or one from before keys."""
+    with _lock:
+        row = _conn.execute("SELECT phone_key FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    return row["phone_key"] if row else None
+
+
+def where_is(reg_no, key=None):
     """What the patient's own phone may show: the ticket, the place in line and, once called, the doctor.
 
     On purpose there is no level, no danger mark and no waiting time in here. Patients must never see
@@ -745,7 +756,9 @@ def where_is(reg_no):
 
     In the waiting room it does carry an estimate of the wait, as a range ("about 15 to 25 minutes"), worked out
     from how busy the doctors are now (wait_estimate). It is labelled on the phone as an estimate, never a promise.
-    After the visit it carries the doctor's note for the patient, if the doctor wrote one."""
+    After the visit it carries the doctor's note for the patient, if the doctor wrote one, but only for the phone
+    that registered the visit (key: see phone_key). Registration numbers follow one another, so without the key
+    anybody could have read every patient's note by counting up. A visit from before keys has none to show."""
     with _lock:
         visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None:
@@ -771,7 +784,11 @@ def where_is(reg_no):
     elif visit["status"] == "done":
         why = visit["closed_why"] or ""
         me.update(status="finished", closed="seen" if why in ("finished by the doctor", "seen (simulated)")
-                  else "removed" if why in REMOVED_BECAUSE else "closed", note=visit["doctor_note"])
+                  else "removed" if why in REMOVED_BECAUSE else "closed")
+        own_phone = visit["phone_key"] is None or (
+            key is not None and hmac.compare_digest(str(key).encode(), visit["phone_key"].encode()))
+        if own_phone:
+            me.update(note=visit["doctor_note"])
     return me
 
 
