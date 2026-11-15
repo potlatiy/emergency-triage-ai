@@ -226,6 +226,9 @@
   .tips .section-head h3 { color:#155c3d; }
   .tips ul { margin:14px 0 0; padding-left:26px; font-size:1.12rem; line-height:1.5; }
   .tips li { margin:8px 0; }
+  details.tips > summary { cursor:pointer; list-style:none; } details.tips > summary::-webkit-details-marker { display:none; }
+  details.tips > summary::after { content:"Show"; margin-left:auto; font-weight:700; color:#155c3d; }
+  details.tips[open] > summary::after { content:"Hide"; }
   .tips .safety { list-style:none; padding:0; margin-top:16px; display:grid; gap:8px; }
   .tips .safety li { margin:0; padding:12px 16px; border-radius:16px; background:#fff; font-weight:700; }
   .tips .safety li::before { content:"!"; display:inline-grid; place-items:center; width:26px; height:26px; margin-right:10px;
@@ -412,7 +415,6 @@
       <img class="logo" src="/static/meddy-logo.webp" alt="Meddy" width="152" height="50"><span class="role-name">Digital hospital, your triage buddy</span>
       <h1 class="sr-only">Meddy: digital hospital, the patient's phone</h1>
     </div>
-    <p>This is the patient's phone. Check in here, then show your code to the nurse. The nurse and the doctor work on their own screens.</p>
     <nav class="roles" aria-label="Meddy's screens">
       <a href="/" data-caption="The patient's phone" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>Patient</a>
       <a href="/nurse" data-caption="The nurse's screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 13h6M12 10v6"/></svg>Nurse</a>
@@ -494,7 +496,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=5"></script>
+<script src="/static/meddy-site.js?v=6"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -725,7 +727,7 @@ function drawSeats(count) {
 }
 async function refreshDatabase() {
   // The seats on the floor plan fill up with the people waiting. The staff table lives on the nurse's screen.
-  try { drawSeats((await api("/api/staff")).visits.waiting); } catch (e) {}
+  try { drawSeats((await api("/api/waiting-room")).waiting); } catch (e) {}
 }
 
 function choice(id, options, value, labelledBy) {
@@ -756,7 +758,7 @@ function entrance() {
     ${head("patient")}
     ${stepNo(1)}
     <h2>You arrive</h2>
-    <p class="lede">Tell us who you are and what is wrong, in your own words. Your visit also gets a number.</p>
+    <p class="lede">Tell us who you are and what is wrong.</p>
     <div class="row">
       <div><label for="first-name">First name</label><input type="text" id="first-name" maxlength="40" autocomplete="off"
         autocapitalize="words" spellcheck="false" value="${esc(me.firstName)}"></div>
@@ -764,8 +766,7 @@ function entrance() {
         autocapitalize="words" spellcheck="false" value="${esc(me.lastName)}"></div>
     </div>
     <div class="card-tools"><button type="button" class="mini" id="made-up-name">Make up a name</button></div>
-    <p class="hint">This is a demonstration: please use a made-up name. Only the nurse and the doctor see it, and it is
-      never given to the AI.</p>
+    <p class="hint">Demo: please use a made-up name.</p>
     <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
     <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
     <p class="hint" id="spell" hidden>Did you mean: <b id="spell-text"></b>? <button type="button" class="mini" id="spell-use">Yes, use this</button></p>
@@ -787,11 +788,9 @@ function entrance() {
       <div class="card-tools">
         <button type="button" class="mini" id="made-up">Make up a number</button>
       </div>
-      <p class="hint">This is a demonstration, so never type a real card number. Meddy keeps a one-way fingerprint of the
-        number and its last four characters, never the number itself. One card, one visit at a time.</p>
+      <p class="hint">Demo: never type a real card number.</p>
     </div>
     <p class="hint" id="no-insurance" ${me.insurance === "none" ? "" : "hidden"}>You will be seen all the same.</p>
-    <p class="hint">Insurance never changes your level or your place in line.</p>
     <p class="error" id="error" role="alert"></p>
     <button class="go" id="go">Register and go to check-in</button>`;
   bindChoice("sex", (v) => { me.sex = v; remember("entrance"); });
@@ -947,8 +946,7 @@ function checkin() {
     ${head("patient")}
     ${stepNo(2)}
     <h2>Quick check</h2>
-    <p class="lede">A few taps, then you go to the nurse. The questions were chosen for the kind of problem you described.
-      Meddy does not tell you what is wrong: only a doctor can.</p>
+    <p class="lede">A few taps, then you go to the nurse.</p>
     <section class="section sec-danger">
       ${sectionHead("danger", "Is any of this true for you?", "Tap each one you would answer yes to. A yes moves you up the line.")}
       <div class="ticks" id="ticks" role="group" aria-label="Danger signs">
@@ -958,8 +956,11 @@ function checkin() {
     </section>
     <section class="section sec-pain">
       ${sectionHead("pain", "About the pain")}
-      <div class="q"><p id="feel-label">${esc(me.painForm.feel.question)}</p>
-        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.concat(me.painForm.none).map((c) =>
+      ${me.painForm.mentioned === false ? `<div class="q"><p id="any-pain-label">Do you have any pain?</p>${choice("any-pain", ["Yes", "No"],
+        me.feel === null ? null : me.feel === me.painForm.none ? "No" : "Yes", "any-pain-label")}</div>` : ""}
+      <div class="q" id="feel-q" ${me.painForm.mentioned === false && (me.feel === null || me.feel === me.painForm.none) ? "hidden" : ""}>
+        <p id="feel-label">${esc(me.painForm.feel.question)}</p>
+        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.concat(me.painForm.mentioned === false ? [] : [me.painForm.none]).map((c) =>
           `<button type="button" data-v="${esc(c)}" class="${c === me.feel ? "on" : ""}" aria-pressed="${c === me.feel}">${esc(c)}</button>`).join("")}</div></div>
       <div class="q"><p id="injury-label">Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No", "injury-label")}</div>
     </section>
@@ -993,14 +994,22 @@ function checkin() {
   // server says which score stands for "there is pain" (the typical score in our data); no pain is 0.
   bindChoice("feel", (v) => { me.feel = v; me.pain = v === me.painForm.none ? 0 : me.painForm.score;
     document.getElementById("error").textContent = ""; remember(); });
+  if (me.painForm.mentioned === false) bindChoice("any-pain", (v) => {
+    const feelQ = document.getElementById("feel-q");
+    if (v === "No") { me.feel = me.painForm.none; me.pain = 0; feelQ.hidden = true; }
+    else { if (me.feel === me.painForm.none) me.feel = null; feelQ.hidden = false; }
+    for (const b of document.getElementById("feel").children) { b.classList.toggle("on", b.dataset.v === me.feel); b.setAttribute("aria-pressed", b.dataset.v === me.feel); }
+    document.getElementById("error").textContent = ""; remember(); });
   document.getElementById("go").addEventListener("click", async () => {
     if (!me.noDanger && !danger.some(([q]) => q.answer === "Yes")) {
       document.getElementById("error").textContent = "Tap what is true for you under “Is any of this true for you?”, or tap “No, none of these”.";
       ticks.scrollIntoView({ block: "center" }); ticks.firstElementChild.focus({ preventScroll: true }); return; }
     if (me.feel === null) {
-      document.getElementById("error").textContent = "Tap what the pain feels like. If nothing hurts, tap “No pain”.";
-      document.getElementById("feel").scrollIntoView({ block: "center" });
-      document.getElementById("feel").firstElementChild.focus({ preventScroll: true }); return; }
+      const ask = me.painForm.mentioned === false && document.getElementById("feel-q").hidden;
+      document.getElementById("error").textContent = ask ? "Tap whether you have any pain."
+        : me.painForm.mentioned === false ? "Tap what the pain feels like." : "Tap what the pain feels like. If nothing hurts, tap “No pain”.";
+      const target = document.getElementById(ask ? "any-pain" : "feel");
+      target.scrollIntoView({ block: "center" }); target.firstElementChild.focus({ preventScroll: true }); return; }
     danger.forEach(([q]) => { if (q.answer !== "Yes") q.answer = "No"; });
     const story = (me.story || "").trim();
     const answers = [...me.questions, { ...me.painForm.feel, answer: me.feel },               // last, so nothing above shifts
@@ -1038,10 +1047,8 @@ function atNurse() {
       <p>Your code<b>${esc(me.code || me.reg.slice(-4))}</b></p>
       <div class="qr-code small" id="nurse-qr" aria-hidden="true"></div>
     </div>
-    <p class="lede">Your answers are with the nurse. She will call your code, measure your blood pressure, pulse and
-      temperature, and then this screen moves on by itself.</p>
+    <p class="lede">The nurse will call your code. This screen moves on by itself.</p>
     <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
-    <p class="hint">The nurse can also scan the square code with her phone: it opens your answers on her screen.</p>
     <div id="worse-box"></div>
     <p class="error" id="error" role="alert"></p>`;
   drawQr(document.getElementById("nurse-qr"), nurseLink, 112);
@@ -1069,13 +1076,13 @@ function atNurse() {
 // Only patients at levels 3-5 reach the waiting room, so only they see comfort tips.
 function tipsCard() {
   const tips = TIPS[me.topic] || TIPS["General medicine"];
-  return `<section class="tips" aria-labelledby="tips-title">
-    <div class="section-head"><span class="icon">${ICON.comfort}</span><div><h3 id="tips-title">While you wait: tips from Meddy</h3></div></div>
+  // Folded: tips for whoever wants them, not a wall of text for everyone.
+  return `<details class="tips">
+    <summary class="section-head"><span class="icon">${ICON.comfort}</span><div><h3 id="tips-title">While you wait: tips</h3></div></summary>
     <ul>${tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
     <ul class="safety">${SAFETY.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
-    <p class="source">Comfort tips for this kind of complaint, written with an AI assistant from
-    common first-aid advice. Not yet checked by a clinician. Not medical advice.</p>
-  </section>`;
+    <p class="source">General first-aid comfort tips, not checked by a clinician. Not medical advice.</p>
+  </details>`;
 }
 // The patient's phone shows only what GET /api/me sends: the ticket and the place in line. Never the level,
 // a colour or a promised time. The whole line with levels is the nurse's screen, kept in a closed drawer.
@@ -1107,14 +1114,11 @@ async function waiting(message) {
       <p>Your place in line<b>${ahead}</b></p>
       <div class="clock">Your ticket<b>${esc(mine.ticket)}</b></div>
     </div>
-    <p class="lede">Please wait until your ticket is called. The most urgent patients go first, and the longer you wait,
-    the further you move up. This screen updates by itself.</p>
+    <p class="lede">Please wait until your ticket is called. This screen updates by itself.</p>
     <div id="worse-box"></div>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
-    <p class="hint">Your doctor calls you from their own screen, and this screen then shows the room.
-      In the demo: press “Call my next patient” on the <a href="/doctor" target="_blank" rel="noopener">doctor's screen</a>
-      (or “Call next patient” on the <a href="/nurse" target="_blank" rel="noopener">nurse's screen</a>).</p>`;
+`;
   // The patient's phone asks again every 5 seconds, so it also follows a nurse working on another screen.
   watching = setInterval(async () => {
     try {
@@ -1149,9 +1153,7 @@ function drawWorse(isWorse, note) {
          ${inLine ? "She has been asked to check you again. Your place in line is kept." : "She has been asked to see you first."}
          <span class="hint">If it is an emergency, call out to the staff now.</span></div>`
     : `<button type="button" class="go light" id="worse" style="margin-top:18px">I feel worse</button>
-       <p class="hint" style="margin:8px 0 0">${note ? `<b>${esc(note)}</b> ` : ""}${inLine
-         ? "Tells the nurse to check you again. It does not change your place in line."
-         : "Tells the nurse that you feel worse, so that she sees you sooner."} If it is an emergency, call out to the staff.</p>
+       <p class="hint" style="margin:8px 0 0">${note ? `<b>${esc(note)}</b> ` : ""}If it is an emergency, call out to the staff.</p>
        <p class="error" id="worse-error" role="alert"></p>`;
   const button = document.getElementById("worse");
   if (button) button.addEventListener("click", async () => {

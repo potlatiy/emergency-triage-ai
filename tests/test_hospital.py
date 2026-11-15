@@ -2146,3 +2146,77 @@ def test_what_the_patient_types_is_never_put_in_an_address():
     page = (server.STATIC / "index.html").read_text(encoding="utf-8")
     assert "/api/spelling?" not in page and "?text=" not in page and "?complaint=" not in page
 
+
+# ---------------------------------------------------------------- the staff PIN, tickets, real time, pain question
+
+@pytest.fixture
+def staff_pin(monkeypatch):
+    monkeypatch.setattr(server, "STAFF_PIN", "4821")
+    server._wrong_pins.clear()
+    yield
+    client.cookies.clear()
+
+
+def test_with_a_staff_pin_the_staff_screens_need_it_and_the_phone_does_not(staff_pin):
+    reg = new_visit("cough", age=40)                                     # the phone registers without a PIN
+    assert client.get(f"/api/me/{reg}").status_code == 200
+    assert client.get("/api/waiting-room").json()["waiting"] >= 0
+    for path in ["/api/nurse/patients", f"/api/nurse/patient/{reg}", "/api/staff", "/api/line", "/api/events",
+                 "/api/doctor/DR-1001/patients"]:
+        assert client.get(path).status_code == 401, path
+    for path, body in [("/api/reset", {}), ("/api/line/wait", {}), ("/api/triage", {"reg_no": reg}),
+                       ("/api/staff/duty", {"reg_no": "DR-1001", "on_duty": False})]:
+        assert client.post(path, json=body).status_code == 401, path
+    assert client.get("/api/staff/session").json() == {"locked": True}
+    assert client.post("/api/staff/login", json={"pin": "0000"}).status_code == 401
+    assert client.post("/api/staff/login", json={"pin": "4821"}).status_code == 200
+    assert client.get("/api/staff/session").json() == {"locked": False}
+    assert client.get("/api/nurse/patients").status_code == 200
+    client.post("/api/staff/logout")
+    assert client.get("/api/nurse/patients").status_code == 401
+
+
+def test_guessing_the_staff_pin_is_slowed_down(staff_pin):
+    for _ in range(5):
+        assert client.post("/api/staff/login", json={"pin": "1111"}).status_code == 401
+    assert client.post("/api/staff/login", json={"pin": "4821"}).status_code == 429     # even the right one, for a minute
+
+
+def test_without_a_staff_pin_the_screens_stay_open():
+    assert server.STAFF_PIN is None
+    assert client.get("/api/staff/session").json() == {"locked": False}
+    assert client.get("/api/nurse/patients").status_code == 200
+
+
+def test_simulated_patients_do_not_use_up_the_waiting_rooms_tickets():
+    before = db._meta("ticket")
+    db.simulate(FixedDice(0.0), now=1000)                                 # every free doctor gets a simulated patient
+    assert db._meta("ticket") == before
+    tickets = [r["ticket"] for r in db._conn.execute("SELECT ticket FROM visits WHERE status = 'with doctor' AND ticket LIKE 'B%'")]
+    assert tickets and tickets[0] == "B001"
+    reg = assessed_visit("cough", age=40)
+    joined = client.post("/api/line/join", json={"reg_no": reg, "level": 4}).json()
+    assert joined["ticket"] == f"A{before + 1:03d}"
+
+
+def test_the_clock_runs_in_real_minutes(monkeypatch):
+    start = db._clock()
+    real = db.time.time
+    monkeypatch.setattr(db.time, "time", lambda: real() + 20 * 60)       # twenty real minutes later
+    assert db._clock() == start + 20
+    db.wait(15)                                                          # "15 minutes pass" still jumps ahead
+    assert db._clock() == start + 35
+
+
+@pytest.mark.parametrize("complaint, mentioned", [("chest pain", True), ("my knee hurts", True), ("headache", True),
+                                                  ("breathing problems", False), ("fever and cough", False)])
+def test_the_pain_question_depends_on_the_complaint(complaint, mentioned):
+    assert core.questionnaire(complaint, use_model=False)["pain"]["mentioned"] is mentioned
+
+
+def test_the_summary_drops_a_kind_of_pain_the_patient_never_described():
+    report = core._report_for_summary("hurt pain for one hour", 30, "Female", [])
+    with pytest.raises(ValueError):
+        core.checked_summary("The patient reported experiencing a sharp, persistent pain for one hour.", "hurt pain for one hour", report)
+    described = core._report_for_summary("chest pain", 30, "Female", [{**core.PAIN_FEEL, "answer": "Sharp or stabbing"}])
+    assert core.checked_summary("She describes the pain as sharp.", "chest pain", described) == "She describes the pain as sharp."

@@ -162,7 +162,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=5"></script>
+<script src="/static/meddy-site.js?v=6"></script>
 <script>
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
@@ -283,21 +283,22 @@ function rangeNote(range) {
 // Five real patients from the public data who look most like this one, with the level the nurse and the experts gave.
 function similarBlock(similar) {
   if (!similar || !similar.patients.length) return "";
+  // Only patients with a complaint like this one: five strangers alike only in age and pulse are no help.
+  const alike = similar.patients.filter((p) => !p.other_complaint);
+  if (!similar.complaint_matched || !alike.length) return `<h3 class="sub">Patients like this one</h3>
+    <p class="hint" style="margin:6px 0 0">No patient in the data had a complaint like this one.</p>`;
   const counts = {};
-  similar.patients.forEach((p) => { counts[p.expert_level] = (counts[p.expert_level] || 0) + 1; });
+  alike.forEach((p) => { counts[p.expert_level] = (counts[p.expert_level] || 0) + 1; });
   const said = Object.keys(counts).sort().map((l) => `${counts[l]} at level ${l}`).join(", ");
-  const rows = similar.patients.map((p) => `<tr>
-    <td>${esc(p.complaint)}${p.other_complaint ? ` <span class="tag">different complaint</span>` : ""}</td>
+  const rows = alike.map((p) => `<tr>
+    <td>${esc(p.complaint)}</td>
     <td class="num">${Math.round(p.age)}, ${esc(sexWord(p.sex))}</td>
     <td class="num">${p.nurse_level}</td>
     <td class="num"><b>${p.expert_level}</b>${p.nurse_level > p.expert_level ? ` <span class="tag red">nurse under-rated</span>` : ""}</td></tr>`).join("");
   return `<h3 class="sub">Patients like this one</h3>
     <p class="hint" style="margin:6px 0 0">Experts put ${esc(said)}.</p>
-    ${similar.complaint_matched ? "" : `<div class="note amber" style="margin-top:10px"><b>▲ Meddy found no patient in the data with a
-      complaint clearly like this one.</b> The rows marked "different complaint" are alike mostly in age and measurements.</div>`}
     <div class="table-wrap"><table class="staff alike"><thead><tr><th>Their complaint</th><th>Age, sex</th><th>Nurse's level</th><th>Experts' level</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>
-`;
+      <tbody>${rows}</tbody></table></div>`;
 }
 function facts(card) {
   const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
@@ -714,8 +715,8 @@ async function loadLine(message) {
   let data;
   try { data = await api("/api/line"); } catch (e) { return; }
   if (message !== undefined) document.getElementById("moved").textContent = message;
-  const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
-  document.getElementById("line").innerHTML = `<p class="hint">Demo clock <b class="mono">${hours}:${minutes}</b> · ${data.patients.length} waiting</p>` +
+
+  document.getElementById("line").innerHTML = `<p class="hint">${data.patients.length} waiting</p>` +
     data.patients.map((p) => `<div class="line-row">
       <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
       <div><div class="who-line">${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.who)}</div>

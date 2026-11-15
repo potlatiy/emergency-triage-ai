@@ -186,6 +186,7 @@
     .answers li { grid-template-columns:minmax(0,1fr); } .answers .a { justify-self:start; }
   }
   @media (prefers-reduced-motion: reduce) { .live i { animation:none; } .pt { transition:none; } }
+  .pick { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -235,7 +236,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=5"></script>
+<script src="/static/meddy-site.js?v=6"></script>
 <script>
 // The doctor's screen asks the server every 5 seconds for the patients now with this doctor:
 //   GET /api/doctor/{reg_no}/patients   (the full card: level, Meddy's level, vital signs, answers, referral)
@@ -247,7 +248,6 @@ const LEVEL_NAME = { 1:"Resuscitation", 2:"Emergency", 3:"Urgent", 4:"Less urgen
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
 const LEVEL_ICON = { 1:"⚠", 2:"⚠", 3:"▲", 4:"✓", 5:"✓" };       // never colour alone
-const FIRST_DOCTOR = "DR-1001";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -255,7 +255,7 @@ const levelText = (l) => `${LEVEL_ICON[l]} Level ${l}: ${LEVEL_NAME[l]}`;
 
 let reg = new URLSearchParams(location.search).get("reg");
 try { reg = reg || localStorage.getItem("meddy-doctor"); } catch (e) {}
-reg = reg || FIRST_DOCTOR;
+// No doctor chosen on this device yet: the screen first asks who is using it (see choosePage).
 let staffKey = "", screenKey = "";      // what was drawn last, so the page is only redrawn when something changed
 let screen = null;                      // the last answer of /api/doctor/.../patients
 let selected = null;                    // registration number of the open card
@@ -292,13 +292,36 @@ $("who").addEventListener("change", (event) => chooseDoctor(event.target.value))
 // ---------------------------------------------------------------- asking the server
 
 let turn = 0;                                       // counts the requests, so a slow old answer cannot overwrite a newer one
+// "Who are you?": the doctors on duty, by department. Asked once per device; the menu at the top changes it later.
+let pickerDrawn = false;
+async function choosePage() {
+  if (pickerDrawn) return;
+  const staff = await get("/api/staff").catch(() => null);
+  if (!staff || reg) return;
+  pickerDrawn = true;
+  const teams = {};
+  staff.doctors.filter((d) => d.on_duty && d.reg_no !== "DR-1000").forEach((d) => (teams[d.department] = teams[d.department] || []).push(d));
+  $("who").innerHTML = `<option value="" selected disabled>Choose your name</option>` + staff.doctors.map((d) =>
+    `<option value="${esc(d.reg_no)}">${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)}</option>`).join("");
+  $("me-name").textContent = "Who are you?";
+  $("me-where").textContent = "Choose your name once. This device remembers it.";
+  $("call").hidden = true;
+  $("list").innerHTML = "";
+  $("card").innerHTML = `<h2>Choose your name</h2>` + Object.keys(teams).sort().map((team) => `
+    <h3 class="sub" style="margin-top:18px">${esc(team)}</h3>
+    <div class="pick">${teams[team].map((d) => `<button type="button" class="mini" data-reg="${esc(d.reg_no)}">${esc(d.name)} · ${esc(d.room)}</button>`).join("")}</div>`).join("");
+  $("card").querySelectorAll("[data-reg]").forEach((b) => b.addEventListener("click", () => {
+    pickerDrawn = false; $("call").hidden = false; chooseDoctor(b.dataset.reg); }));
+}
+
 async function check() {
+  if (!reg) { choosePage(); return; }
   const asked = reg, mine = ++turn;
   try {
     const [staff, answer] = await Promise.all([get("/api/staff"), get(`/api/doctor/${encodeURIComponent(asked)}/patients`)]);
     if (asked !== reg || mine !== turn) return;      // the doctor was changed, or a newer request has been sent
     if (answer === null) {                           // no doctor with this number: fall back to the first one
-      if (asked !== FIRST_DOCTOR) chooseDoctor(FIRST_DOCTOR);
+      reg = null; try { localStorage.removeItem("meddy-doctor"); } catch (e) {} choosePage();
       return;
     }
     drawStaff(staff, answer.doctor);
@@ -393,8 +416,7 @@ $("list").addEventListener("click", (event) => {
 function meddyLine(p) {
   if (p.ai_level === null) return `<p class="meddy">No suggestion from Meddy was saved for this visit.</p>`;
   if (lookAgain(p)) return `<div class="note amber"><b>▲ Look again: Meddy thinks this patient is more urgent.</b>
-    Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}); the final level is ${p.level}.
-    <span class="hint">About 1 flag in 3 was right in our tests. This is a prompt to re-check, not a verdict.</span></div>`;
+    Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}); the final level is ${p.level}.</div>`;
   if (p.second_check === "mild") return `<p class="meddy">Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
     It leaned more urgent than the final level, but not strongly enough to flag.</p>`;
   if (p.ai_level > p.level) return `<p class="meddy">Meddy suggested a less urgent level, ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
@@ -436,12 +458,9 @@ function answersBlock(p) {
   const answer = (a) => a.answer === "Yes" ? `<span class="a yes">⚠ Yes</span>`
     : a.answer ? `<span class="a">${esc(a.answer)}</span>` : `<span class="a none">Not answered</span>`;
   return `${danger.length ? `<h3>Danger signs</h3>
-    <p class="hint">${yes ? `${yes} of ${danger.length} answered yes.` : "None answered yes."}
-      A yes moves the patient up the line by half a level. It does not change the level.</p>
+    <p class="hint">${yes ? `${yes} of ${danger.length} answered yes.` : "None answered yes."}</p>
     <ul class="answers danger">${danger.map((a) => `<li><span>${esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}
     ${extra.length ? `<h3>History for the doctor</h3>
-    <p class="hint">Chosen for this complaint, most of them worded by an AI model. Information only: the answers did not
-      change the level or the line.</p>
     <ul class="answers extra">${extra.map((a) => `<li><span>${a.label ? `<span class="topic">${esc(a.label)}</span>` : ""}${
       esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}`;
 }
@@ -462,8 +481,6 @@ function summaryBlock(p) {
   const review = nurse.review === "approved" ? " She accepted Meddy's report after reviewing it."
       + (nurse.against_advice ? " Meddy itself had advised checking the patient in person." : "")
     : nurse.review === "checked" ? " She checked the patient herself." : "";
-  const flag = !meddy ? "" : meddy.flag === "strong" ? "▲ Meddy thinks this patient is more urgent than the nurse's level."
-    : meddy.flag === "mild" ? "Meddy leaned more urgent than the nurse's level, but not strongly." : "";
   return `<section class="psum" aria-labelledby="psum-title">
     <h3 id="psum-title">Patient summary</h3>
     <div class="part said">
@@ -487,14 +504,10 @@ function summaryBlock(p) {
       <span class="src">Meddy suggested</span>
       ${meddy ? `<p class="main">${esc(levelText(meddy.level))}${meddy.sure === null ? "" : ", " + Math.round(meddy.sure * 100) + "% sure"}.${
           meddy.unsure ? " It was not sure of the level." : ""}${meddy.unread ? " It could not read the complaint." : ""}</p>
-        ${meddy.range ? `<p>Meddy's likely range: ${meddy.range.low === meddy.range.high ? `level ${meddy.range.low} only`
-            : `level ${meddy.range.low} to level ${meddy.range.high}`}. In our tests the experts' level was inside a range
-            this wide for ${meddy.range.inside ? Math.round(meddy.range.inside * 100) + "%" : "9 in 10"} of patients (8 in 10
-            of the most urgent). Not a guarantee for this patient.</p>` : ""}
-        ${flag ? `<p>${flag}</p>` : ""}
-        ${meddy.department ? `<p>Department: ${esc(meddy.department)}${meddy.how ? ", chosen by the " + esc(meddy.how) : ""}.</p>` : ""}`
+        ${meddy.range ? `<p>Likely range: ${meddy.range.low === meddy.range.high ? `level ${meddy.range.low} only`
+            : `level ${meddy.range.low} to ${meddy.range.high}`}.</p>` : ""}
+        ${meddy.department ? `<p>Department: ${esc(meddy.department)}.</p>` : ""}`
         : `<p class="main">Nothing: the patient was sent on before Meddy was asked.</p>`}
-      <p class="hint">A suggestion from a model that is right less often than a nurse. Never a diagnosis.</p>
     </div>
   </section>`;
 }
@@ -540,7 +553,6 @@ function drawCard() {
     <h3>Measured at the nurse station</h3>
     ${vitalsBlock(p.vitals)}
     ${answersBlock(p)}
-    <p class="hint" style="margin:24px 2px 0">Meddy has given no diagnosis: only a level, a department, and the patient's own answers.</p>
     <div class="finish">
       <button type="button" class="done" id="finish">Visit finished</button>
       <p class="hint" id="finish-hint" role="status">Closes the visit and takes the patient off your list.</p>
