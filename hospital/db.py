@@ -431,6 +431,7 @@ def nurse_card(reg_no):
     with _lock:
         clock = _meta("clock")
     return {"reg_no": reg_no, "code": code_for(reg_no), "status": visit["status"], "complaint": visit["complaint"],
+            "complaint_read": core.spelling(visit["complaint"]),     # with typing slips put right, as the models read it
             "first_name": visit["first_name"], "last_name": visit["last_name"], "patient": full_name(visit),
             "age": visit["age"], "sex": visit["sex"], "arrival": visit["arrival"] or "Walked in",
             "injury": bool(visit["injury"]), "pain": visit["pain"] or 0, "pain_word": core.pain_word(visit["pain"]),
