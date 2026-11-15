@@ -8,7 +8,7 @@
 try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me && v.me.reg) document.documentElement.classList.add("restoring"); } catch (e) {}</script>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=27">
+<link rel="stylesheet" href="/static/meddy-site.css?v=28">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -683,8 +683,11 @@ function offerToContinue(other) {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} :
-    { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body) });
+  // The key the hospital gave this phone when it registered goes along in a header: the doctor's note for the
+  // patient is sent only to the phone that holds it.
+  const own = me && me.key ? { "X-Meddy-Visit": me.key } : {};
+  const response = await fetch(path, body === undefined ? { headers: own } :
+    { method:"POST", headers:{ "Content-Type":"application/json", ...own }, body:JSON.stringify(body) });
   if (!response.ok) throw Object.assign(new Error("The hospital server did not answer (" + response.status + ")."),
                                         { status: response.status });
   return response.json();
@@ -974,7 +977,7 @@ function entrance() {
       if (!response.ok) throw new Error();
       const data = await response.json();
       me.cardEnd = me.insurance === "none" ? null : card.slice(-4).toUpperCase();      // the number itself is not kept
-      me.reg = data.reg_no; me.day = data.day; me.topic = data.topic; me.source = data.source;
+      me.reg = data.reg_no; me.day = data.day; me.key = data.key || null; me.topic = data.topic; me.source = data.source;
       me.questions = data.questions.map((q) => ({ ...q, answer: null }));
       me.painForm = data.pain;
       me.followUp = "writing";

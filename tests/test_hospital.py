@@ -2468,7 +2468,7 @@ def test_the_doctors_note_reaches_the_patients_phone(monkeypatch):
     assert client.post("/api/doctor/tidy", json={"text": "rest"}).status_code == 503
     assert client.post("/api/doctor/finish", json={"reg_no": reg, "note": "x" * 301}).status_code == 422
     assert client.post("/api/doctor/finish", json={"reg_no": reg, "note": "Rest today."}).json()["note"] == "Rest today."
-    me = client.get(f"/api/me/{reg}").json()
+    me = client.get(f"/api/me/{reg}", headers={"X-Meddy-Visit": db.phone_key(reg)}).json()   # the patient's own phone
     assert me["closed"] == "seen" and me["note"] == "Rest today."
     assert {p["reg_no"]: p["note"] for p in client.get("/api/nurse/today").json()["patients"]}[reg] == "Rest today."
 

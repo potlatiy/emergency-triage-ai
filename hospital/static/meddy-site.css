@@ -24,8 +24,9 @@
                    border-bottom:1px solid rgba(220,227,221,.8); box-shadow:0 6px 24px -18px rgba(22,37,42,.35); }
 :root .card { border-color:rgba(220,227,221,.9); box-shadow:var(--lift); }
 :root .panel { border-color:transparent; box-shadow:var(--lift-high); }
-:root .panel::after { content:""; position:absolute; left:0; right:0; top:0; height:5px; border-radius:20px 20px 0 0;
-                      background:linear-gradient(90deg, var(--mint-bright), var(--sky), var(--blue, #2152c4)); }
+/* the stripe is painted as the card's own top background, so the card's rounded corners clip it exactly */
+:root .panel { background:linear-gradient(90deg, var(--mint-bright), var(--sky), var(--blue, #2152c4)) top / 100% 5px no-repeat,
+                          var(--card, #fff); }
 :root .go:not(.light):not(:disabled) { background:linear-gradient(135deg, #2b63d8, #1d48b0); border:0;
                       box-shadow:0 10px 24px -10px rgba(33,82,196,.6), inset 0 1px 0 rgba(255,255,255,.18); }
 :root .go { transition:transform 140ms var(--ease-out), box-shadow 200ms ease, filter 200ms ease, background-color 150ms ease; }
@@ -57,7 +58,9 @@
                 box-shadow:0 0 0 4px rgba(33,82,196,.18); }
 
 /* the footer: the logo, the disclaimer, and where things are */
-:root footer.bottom { background:rgba(255,255,255,.9); border-top:0; position:relative; }
+/* short pages: the page is at least the window's height and the footer sits on its bottom edge */
+:root body { min-height:100vh; min-height:100dvh; }
+:root footer.bottom { background:rgba(255,255,255,.9); border-top:0; position:sticky; top:100vh; top:100dvh; }
 :root footer.bottom::before { content:""; position:absolute; left:0; right:0; top:0; height:4px;
                               background:linear-gradient(90deg, var(--mint-bright), var(--sky), var(--blue, #2152c4), var(--lilac)); }
 footer.bottom .foot-logo { height:30px; width:auto; display:block; }
