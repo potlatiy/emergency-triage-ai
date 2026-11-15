@@ -2265,3 +2265,47 @@ def test_a_pin_typed_in_another_alphabet_is_a_wrong_pin_and_not_a_crash(monkeypa
 def test_gemma_stays_loaded_between_patients():
     assert core.KEEP_GEMMA_LOADED == "12h"
 
+
+# ---------------------------------------------------------------- the nurse manages her patients
+
+def test_the_nurse_can_remove_a_patient_with_a_reason():
+    waiting = db.line()["patients"][0]["reg_no"]
+    answer = client.post("/api/nurse/remove", json={"reg_no": waiting, "why": "left without being seen"})
+    assert answer.status_code == 200 and db.visit_for(waiting)["status"] == "done"
+    assert db.visit_for(waiting)["closed_why"] == "left without being seen"
+    assert waiting not in [p["reg_no"] for p in db.line()["patients"]]
+    assert any(e["what"] == "removed" for e in db.history(waiting))
+    at_the_desk = new_visit("cough", age=40)
+    assert client.post("/api/nurse/remove", json={"reg_no": at_the_desk, "why": "registered by mistake"}).status_code == 200
+    assert client.post("/api/nurse/remove", json={"reg_no": at_the_desk, "why": "registered by mistake"}).status_code == 409
+    assert client.post("/api/nurse/remove", json={"reg_no": new_visit("cough", age=40)}).status_code == 422      # no reason
+    assert client.post("/api/nurse/remove", json={"reg_no": new_visit("cough", age=40), "why": "bored"}).status_code == 422
+    assert client.post("/api/nurse/remove", json={"reg_no": "P-0000-0000", "why": "sent home by the nurse"}).status_code == 404
+
+
+def test_still_fine_starts_the_re_check_again_and_keeps_the_place():
+    reg = assessed_visit("cough", age=40)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3})
+    db.wait(45)                                                            # longer than a level 3 may wait unseen
+    assert reg in [p["reg_no"] for p in db.nurse_patients()["recheck"]]
+    place = [p["reg_no"] for p in db.line()["patients"]].index(reg)
+    assert client.post("/api/nurse/still-fine", json={"reg_no": reg}).status_code == 200
+    assert reg not in [p["reg_no"] for p in db.nurse_patients()["recheck"]]
+    assert [p["reg_no"] for p in db.line()["patients"]].index(reg) == place and db.visit_for(reg)["level"] == 3
+    assert client.post("/api/nurse/still-fine", json={"reg_no": new_visit("cough", age=40)}).status_code == 409
+
+
+def test_todays_patients_say_where_each_one_went_and_the_phone_knows_its_doctor():
+    waiting = assessed_visit("chest pain", age=40)
+    client.post("/api/line/join", json={"reg_no": waiting, "level": 3, "doctor_reg": "DR-1002"})
+    sent = assessed_visit("cough", age=40)
+    db.refer(sent, 3, "Looks unwell", doctor_reg="DR-1016")
+    gone = new_visit("cough", age=40)
+    db.remove_visit(gone, "sent home by the nurse")
+    where = {p["reg_no"]: p["where"] for p in client.get("/api/nurse/today").json()["patients"]}
+    assert where[waiting] == "In the waiting room for Dr. Okafor"
+    assert where[sent] == "With Dr. Moreau, Room 16"
+    assert where[gone] == "Closed: sent home by the nurse"
+    assert all(not r.startswith("P-") or r in where for r in where)                 # made-up patients are left out
+    assert client.get(f"/api/me/{waiting}").json()["doctor"] == "Dr. Okafor"
+    assert [p for p in db.line()["patients"] if p["reg_no"] == waiting][0]["doctor"] == "Dr. Okafor"

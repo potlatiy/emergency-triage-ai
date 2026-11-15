@@ -292,6 +292,13 @@ $("who").addEventListener("change", (event) => chooseDoctor(event.target.value))
 // ---------------------------------------------------------------- asking the server
 
 let turn = 0;                                       // counts the requests, so a slow old answer cannot overwrite a newer one
+// Free, busy or off duty, in a few words for the doctor menu: "busy, 2 patients, free in ~4 min".
+function doctorState(d) {
+  if (!d.on_duty) return "off duty";
+  if (!d.busy) return "free";
+  return `busy, ${d.waiting} patient${d.waiting === 1 ? "" : "s"}${d.free_in_minutes ? `, free in ~${d.free_in_minutes} min` : ""}`;
+}
+
 // "Who are you?": the doctors on duty, by department. Asked once per device; the menu at the top changes it later.
 let pickerDrawn = false;
 async function choosePage() {
@@ -302,14 +309,14 @@ async function choosePage() {
   const teams = {};
   staff.doctors.filter((d) => d.on_duty && d.reg_no !== "DR-1000").forEach((d) => (teams[d.department] = teams[d.department] || []).push(d));
   $("who").innerHTML = `<option value="" selected disabled>Choose your name</option>` + staff.doctors.map((d) =>
-    `<option value="${esc(d.reg_no)}">${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)}</option>`).join("");
+    `<option value="${esc(d.reg_no)}">${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)} — ${esc(doctorState(d))}</option>`).join("");
   $("me-name").textContent = "Who are you?";
   $("me-where").textContent = "Choose your name once. This device remembers it.";
   $("call").hidden = true;
   $("list").innerHTML = "";
   $("card").innerHTML = `<h2>Choose your name</h2>` + Object.keys(teams).sort().map((team) => `
     <h3 class="sub" style="margin-top:18px">${esc(team)}</h3>
-    <div class="pick">${teams[team].map((d) => `<button type="button" class="mini" data-reg="${esc(d.reg_no)}">${esc(d.name)} · ${esc(d.room)}</button>`).join("")}</div>`).join("");
+    <div class="pick">${teams[team].map((d) => `<button type="button" class="mini" data-reg="${esc(d.reg_no)}">${esc(d.name)} · ${esc(d.room)} · ${esc(doctorState(d))}</button>`).join("")}</div>`).join("");
   $("card").querySelectorAll("[data-reg]").forEach((b) => b.addEventListener("click", () => {
     pickerDrawn = false; $("call").hidden = false; chooseDoctor(b.dataset.reg); }));
 }
@@ -336,11 +343,11 @@ async function check() {
 }
 
 function drawStaff(staff, doctor) {
-  const key = JSON.stringify([staff.doctors.map((d) => [d.reg_no, d.name, d.department, d.on_duty]), doctor]);
+  const key = JSON.stringify([staff.doctors.map((d) => [d.reg_no, d.name, d.department, d.on_duty, d.waiting, d.free_in_minutes]), doctor]);
   if (key === staffKey) return;
   staffKey = key;
   $("who").innerHTML = staff.doctors.map((d) => `<option value="${esc(d.reg_no)}" ${d.reg_no === doctor.reg_no ? "selected" : ""}>
-    ${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)}</option>`).join("");
+    ${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)} — ${esc(doctorState(d))}</option>`).join("");
   const mine = staff.doctors.find((d) => d.reg_no === doctor.reg_no);
   $("me-name").textContent = doctor.name;
   $("me-where").textContent = [doctor.name === doctor.department ? null : doctor.department, doctor.room, doctor.reg_no]

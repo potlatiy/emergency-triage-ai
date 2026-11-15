@@ -214,6 +214,11 @@ class Simulation(BaseModel):
     on: bool
 
 
+class Managing(BaseModel):
+    reg_no: str
+    why: Literal["left without being seen", "sent home by the nurse", "registered by mistake"] | None = None
+
+
 class Login(BaseModel):
     pin: str = Field(min_length=1, max_length=40)
 
@@ -341,6 +346,38 @@ def nurse_patients():
     """The nurse's list: patients who finished check-in and wait for her (someone who feels worse first, then
     danger signs), and "recheck": patients in the waiting room who need her again."""
     return db.nurse_patients()
+
+
+@app.post("/api/nurse/still-fine")
+def still_fine(body: Managing):
+    """The nurse looked again at a patient in the waiting room and nothing changed: the re-check starts again."""
+    try:
+        done = db.still_fine(body.reg_no)
+    except db.NotHere:
+        raise HTTPException(409, "This patient is not in the waiting room.")
+    if done is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return done
+
+
+@app.post("/api/nurse/remove")
+def remove(body: Managing):
+    """The nurse takes a patient off her list or out of the line, with the reason. The visit is closed and kept."""
+    if body.why is None:
+        raise HTTPException(422, "Say why the patient is removed.")
+    try:
+        done = db.remove_visit(body.reg_no, body.why)
+    except db.NotHere:
+        raise HTTPException(409, "This patient is already with a doctor or gone.")
+    if done is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return done
+
+
+@app.get("/api/nurse/today")
+def todays_patients():
+    """Today's patients and where each one went, for the nurse."""
+    return {"patients": db.todays_patients()}
 
 
 @app.get("/api/staff/session")

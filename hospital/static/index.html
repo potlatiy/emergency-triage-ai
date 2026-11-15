@@ -1140,6 +1140,7 @@ async function waiting(message) {
       <p>Your place in line<b>${ahead}</b></p>
       <div class="clock">Your ticket<b>${esc(mine.ticket)}</b></div>
     </div>
+    ${mine.doctor ? `<p class="lede" style="font-weight:700;color:var(--ink)">Your doctor: ${esc(mine.doctor)}, ${esc(mine.room)}</p>` : ""}
     <p class="lede">Please wait until your ticket is called. This screen updates by itself.</p>
     <div id="worse-box"></div>
     ${tipsCard()}
