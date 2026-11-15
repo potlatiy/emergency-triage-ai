@@ -41,3 +41,13 @@ def test_a_changed_recipe_or_other_inputs_means_training_again(monkeypatch):
     monkeypatch.setattr(trained_models, "NUMBERS", trained_models.NUMBERS[:-1])
     assert "other inputs" in trained_models.why_not_usable()
 
+
+def test_the_saved_range_cut_is_the_one_the_data_gives_today():
+    """The cut for Meddy's range of levels is saved next to the models. It must be what the fair probabilities
+    give, never something worked out from the saved model's answers on patients it has already seen."""
+    from triage import fair_probabilities, load, range_cut
+    data = load()
+    fresh = range_cut(fair_probabilities(data), data["KTAS_expert"].values)
+    assert trained_models.why_not_usable() is None
+    assert trained_models.level_range_cut() == round(fresh, 4)
+

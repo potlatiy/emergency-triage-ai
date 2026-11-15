@@ -465,12 +465,17 @@ function summaryBlock(p) {
       <p class="main">${nurse.level ? esc(levelText(nurse.level)) + "." : "No level yet."}${review}</p>
       <p>${esc(measured)}</p>
       ${nurse.referral_reason ? `<p><b>Sent straight in.</b> Her reason: ${esc(nurse.referral_reason)}</p>` : ""}
+      ${nurse.rechecks || nurse.said_worse ? `<p>While waiting: ${nurse.said_worse ? `the patient said ${nurse.said_worse > 1 ? nurse.said_worse + " times " : ""}that they felt worse` : "no call from the patient"}${
+          nurse.rechecks ? `; the nurse checked them again ${nurse.rechecks === 1 ? "once" : nurse.rechecks + " times"}. The level above is from her last check.` : ", and was called before the nurse could look again."}</p>` : ""}
       ${nurse.note ? `<blockquote>“${esc(nurse.note)}”<span class="hint">the nurse's note</span></blockquote>` : ""}
     </div>
     <div class="part meddy">
       <span class="src">Meddy suggested</span>
       ${meddy ? `<p class="main">${esc(levelText(meddy.level))}${meddy.sure === null ? "" : ", " + Math.round(meddy.sure * 100) + "% sure"}.${
           meddy.unsure ? " It was not sure of the level." : ""}${meddy.unread ? " It could not read the complaint." : ""}</p>
+        ${meddy.range ? `<p>Likely range: ${meddy.range.low === meddy.range.high ? `level ${meddy.range.low} only`
+            : `level ${meddy.range.low} to level ${meddy.range.high}`}. In our tests the experts' level was inside this
+            range for 9 patients in 10 (8 in 10 of the most urgent).</p>` : ""}
         ${flag ? `<p>${flag}</p>` : ""}
         ${meddy.department ? `<p>Department: ${esc(meddy.department)}${meddy.how ? ", chosen by the " + esc(meddy.how) : ""}.</p>` : ""}`
         : `<p class="main">Nothing: the patient was sent on before Meddy was asked.</p>`}

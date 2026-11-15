@@ -931,8 +931,10 @@ function atNurse() {
       temperature, and then this screen moves on by itself.</p>
     <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
     <p class="hint">The nurse can also scan the square code with her phone: it opens your answers on her screen.</p>
+    <div id="worse-box"></div>
     <p class="error" id="error" role="alert"></p>`;
   drawQr(document.getElementById("nurse-qr"), nurseLink, 112);
+  drawWorse(me.worse);
   const run = tick;
   watching = setInterval(async () => {
     let now;
@@ -946,6 +948,7 @@ function atNurse() {
     if (run !== tick) return;
     document.getElementById("error").textContent = "";
     if (!sameVisit(now)) { startOver("The hospital started a new day, so your visit was cleared. Please register again."); return; }
+    if (now.status === "nurse" && Boolean(now.worse) !== Boolean(me.worse)) drawWorse(now.worse);
     if (now.status === "waiting") waiting("The nurse is done. You are in the waiting room now.");
     else if (now.status === "called") doctor({ doctor: now.doctor, room: now.room, ticket: now.ticket });
     else if (now.status === "finished") startOver();
@@ -969,8 +972,10 @@ async function waiting(message) {
   const held = document.activeElement && document.activeElement.id;      // to give the keyboard its place back
   walkTo(4);
   const run = tick;
-  let mine, data;
-  try { [mine, data] = await Promise.all([api("/api/me/" + encodeURIComponent(me.reg)), api("/api/line")]); }
+  let mine;
+  // Only this patient's own ticket and place are asked for. The page used to download the whole line as well
+  // (every waiting patient's name, complaint and level) just to read the clock, which a patient's phone must not get.
+  try { mine = await api("/api/me/" + encodeURIComponent(me.reg)); }
   catch (e) {
     if (run !== tick) return;
     if (e.status === 404) { startOver(); return; }
@@ -981,7 +986,6 @@ async function waiting(message) {
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
   if (mine.status !== "waiting") { startOver(); return; }               // finished, or no longer in the line
   remember("waiting");
-  const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
   panel.innerHTML = `
     ${head("patient")}
@@ -994,6 +998,7 @@ async function waiting(message) {
     </div>
     <p class="lede">Please wait until your ticket is called. The most urgent patients go first, and the longer you wait,
     the further you move up. This screen updates by itself.</p>
+    <div id="worse-box"></div>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
     <p class="hint">Your doctor calls you from their own screen, and this screen then shows the room.
@@ -1006,9 +1011,38 @@ async function waiting(message) {
       if (run !== tick) return;
       if (!sameVisit(now)) { startOver(); return; }
       if (now.status !== mine.status || now.position !== mine.position) waiting(now.status === "called" ? "" : "The line moved.");
+      else if (Boolean(now.worse) !== Boolean(me.worse)) {                  // the nurse has looked at the patient again
+        mine.worse = now.worse; drawWorse(now.worse, now.worse ? "" : "The nurse has checked you again.");
+      }
     } catch (e) { if (run === tick && e.status === 404) startOver(); }     // a new day was started on another screen
   }, 5000);
+  drawWorse(mine.worse);
   if (held && document.getElementById(held)) document.getElementById(held).focus({ preventScroll: true });
+}
+
+// "I feel worse": while the patient waits (for the nurse or in the waiting room) one press tells the nurse to come
+// and look again. It never changes the level or the place in line; only a nurse can do that.
+function drawWorse(isWorse, note) {
+  const box = document.getElementById("worse-box");
+  if (!box) return;
+  me.worse = Boolean(isWorse);
+  box.innerHTML = me.worse
+    ? `<div class="note red" role="status"><b>The nurse has been told that you feel worse.</b> Stay where you are: she will
+         come to you. Your place in line is kept.<span class="hint">If it is an emergency, call out to the staff now.</span></div>`
+    : `<button type="button" class="go light" id="worse" style="margin-top:18px">I feel worse</button>
+       <p class="hint" style="margin:8px 0 0">${note ? `<b>${esc(note)}</b> ` : ""}Tells the nurse to come and check you again.
+         It does not change your place in line. If it is an emergency, call out to the staff.</p>
+       <p class="error" id="worse-error" role="alert"></p>`;
+  const button = document.getElementById("worse");
+  if (button) button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await api("/api/worse", { reg_no: me.reg }); drawWorse(true); }
+    catch (e) {
+      button.disabled = false;
+      document.getElementById("worse-error").textContent = e.status === 409
+        ? "You are not in the line right now. Please speak to the staff." : "Meddy can't reach the hospital server. Please tell the staff in person.";
+    }
+  });
 }
 
 // ---------------------------------------------------------------- 5. doctor

@@ -146,6 +146,10 @@ class Finished(BaseModel):
     reg_no: str
 
 
+class Worse(BaseModel):
+    reg_no: str
+
+
 class Calling(BaseModel):
     doctor_reg: str
 
@@ -251,9 +255,23 @@ def checkin(body: CheckIn):
     return {"reg_no": body.reg_no, "code": code, "status": "nurse"}
 
 
+@app.post("/api/worse")
+def worse(body: Worse):
+    """The patient pressed "I feel worse" while waiting. Nothing about their level or place changes: the nurse is
+    told, and the patient goes to the top of her list for another look. Refused (409) when they are not waiting."""
+    try:
+        status = db.feel_worse(body.reg_no)
+    except db.NotWaiting:
+        raise HTTPException(409, "This patient is not waiting, so there is nobody to call. Speak to the staff.")
+    if status is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return {"reg_no": body.reg_no, "status": status, "worse": True}
+
+
 @app.get("/api/nurse/patients")
 def nurse_patients():
-    """The nurse's list: patients who finished check-in and wait for her, danger signs first."""
+    """The nurse's list: patients who finished check-in and wait for her (someone who feels worse first, then
+    danger signs), and "recheck": patients in the waiting room who need her again."""
     return db.nurse_patients()
 
 
@@ -296,7 +314,11 @@ def triage(body: Assessment):
     # Meddy's report for the nurse: can she accept it after a quick look, and who would the doctor be?
     # "asked" is false for a patient the nurse took over before they answered the danger questions on the phone.
     result["asked"] = any(a["kind"] == "danger" and a["answer"] in ("Yes", "No") for a in answers)
-    result["advice"] = core.review_advice(result, result["danger"], result["asked"])
+    # A patient who is already in the waiting room is being re-checked: what stood before, and did they ask for it?
+    said_worse = visit["worse_at"] is not None
+    if visit["status"] == "waiting":
+        result["recheck"] = {"earlier_level": visit["level"], "earlier_ai_level": visit["ai_level"], "worse": said_worse}
+    result["advice"] = core.review_advice(result, result["danger"], result["asked"], worse=said_worse)
     for option in result["department_options"]:
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
     result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])

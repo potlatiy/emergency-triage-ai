@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS visits (
     summary TEXT, nurse_note TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     arrival TEXT, pain INTEGER, checked_in INTEGER, first_name TEXT, last_name TEXT,
+    seen_at INTEGER, worse_at INTEGER, worse_said INTEGER DEFAULT 0, rechecks INTEGER DEFAULT 0,
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
@@ -392,11 +393,25 @@ def nurse_patients():
         rows = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE status = 'nurse'")]
         for row in rows:
             row["danger"] = _danger_yes(row["reg_no"])
-    rows.sort(key=lambda p: (-p["danger"], p["checked_in"], p["reg_no"]))
+        _, line_now = _waiting()
+    # A patient who says they feel worse comes before everyone, then danger signs, then who has waited longest.
+    rows.sort(key=lambda p: (p["worse_at"] is None, -p["danger"], p["checked_in"], p["reg_no"]))
+    # Patients already in the waiting room who need the nurse again: first those who pressed "I feel worse"
+    # (who asked first comes first), then those who have waited longer than their level allows.
+    again = [p for p in line_now if p["worse_at"] is not None or core.recheck_due(p, clock)]
+    again.sort(key=lambda p: (p["worse_at"] is None, p["worse_at"] if p["worse_at"] is not None else 0,
+                              p["seen_at"] if p["seen_at"] is not None else p["arrived"]))
     return {"clock": clock, "patients": [
         {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "patient": full_name(p), "complaint": p["complaint"],
-         "age": p["age"], "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"]}
-        for p in rows]}
+         "age": p["age"], "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"],
+         "worse": p["worse_at"] is not None}
+        for p in rows],
+        "recheck": [
+        {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "ticket": p["ticket"], "patient": full_name(p),
+         "complaint": p["complaint"], "age": p["age"], "sex": p["sex"], "level": p["level"],
+         "worse": p["worse_at"] is not None, "recheck_due": core.recheck_due(p, clock),
+         "since_seen": clock - (p["seen_at"] if p["seen_at"] is not None else p["arrived"])}
+        for p in again]}
 
 
 def nurse_card(reg_no):
@@ -413,6 +428,12 @@ def nurse_card(reg_no):
             "injury": bool(visit["injury"]), "pain": visit["pain"] or 0, "pain_word": core.pain_word(visit["pain"]),
             "insurance": visit["insurance"], "card_end": visit["card_end"], "ticket": visit["ticket"],
             "waited": None if visit["checked_in"] is None else clock - visit["checked_in"],
+            # For a re-check of a patient who is already in the waiting room (staff only, like the rest of the card).
+            "level": visit["level"], "ai_level": visit["ai_level"], "worse": visit["worse_at"] is not None,
+            "recheck_due": visit["status"] == "waiting" and core.recheck_due(visit, clock),
+            "since_seen": (clock - (visit["seen_at"] if visit["seen_at"] is not None else visit["arrived"])
+                           if visit["status"] == "waiting" else None),
+            "rechecks": visit["rechecks"] or 0,
             "answers": answers_for(reg_no)}
 
 
@@ -511,15 +532,46 @@ def _still_at_the_desk(reg_no):
 def _join(reg_no, level, danger, department, department_how, review):
     visit = _still_at_the_desk(reg_no)
     ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
-    arrived = visit["arrived"] if visit and visit["arrived"] is not None else _meta("clock")
+    clock = _meta("clock")
+    arrived = visit["arrived"] if visit and visit["arrived"] is not None else clock
+    again = bool(visit and visit["status"] == "waiting")          # a re-check of a patient who is already in the line
     # A department that is not given is left as it was: joining again must not wipe the nurse's choice.
+    # The nurse has now seen the patient: the re-check time starts again and a "I feel worse" is answered.
     _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = COALESCE(?, department), "
                   "department_how = COALESCE(?, department_how), second_check = ?, review = COALESCE(?, review), "
-                  "status = 'waiting' WHERE reg_no = ?",
-                  (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review, reg_no))
-    if visit:
+                  "status = 'waiting', seen_at = ?, worse_at = NULL, rechecks = COALESCE(rechecks, 0) + ? WHERE reg_no = ?",
+                  (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review,
+                   clock, int(again), reg_no))
+    if visit and again:
+        _event(reg_no, "re-checked", "nurse", f"level {visit['level']} to level {level}"
+               + (", after the patient said they felt worse" if visit["worse_at"] is not None else ""))
+    elif visit:
         _event(reg_no, "in line", "nurse", f"level {level}, ticket {ticket}" + (f", {review}" if review else ""))
     return ticket
+
+
+class NotWaiting(Exception):
+    """The patient is not waiting (for the nurse or in the waiting room), so there is nobody to call back to them."""
+
+
+def feel_worse(reg_no):
+    """The patient pressed "I feel worse" on their phone while waiting.
+
+    It does not change the level or the place in line: only a nurse can do that. It puts the patient on top of
+    the nurse's list so that she looks at them again. Pressing twice asks once. Returns the visit's status,
+    None for an unknown visit, or raises NotWaiting."""
+    with _lock, _conn:
+        visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if visit is None:
+            return None
+        if visit["status"] not in ("nurse", "waiting"):
+            raise NotWaiting(reg_no)
+        if visit["worse_at"] is None:
+            _conn.execute("UPDATE visits SET worse_at = ?, worse_said = COALESCE(worse_said, 0) + 1 WHERE reg_no = ?",
+                          (_meta("clock"), reg_no))
+            _event(reg_no, "said they feel worse", "patient's phone",
+                   "waiting for the nurse" if visit["status"] == "nurse" else "in the waiting room")
+        return visit["status"]
 
 
 def join_line(reg_no, level, danger, department=None, department_how=None, review=None):
@@ -569,7 +621,10 @@ def line():
     return {"clock": clock, "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "who": p["complaint"], "patient": full_name(p), "level": p["level"],
          "name": core.LEVEL_NAMES[p["level"]], "danger": bool(p["danger"]), "you": bool(p["you"]),
-         "waited": clock - p["arrived"], "position": i}
+         "waited": clock - p["arrived"], "position": i,
+         # For the nurse: the patient pressed "I feel worse", or has waited longer than their level allows
+         # without a nurse looking at them again (core.RECHECK_AFTER).
+         "worse": p["worse_at"] is not None, "recheck_due": core.recheck_due(p, clock)}
         for i, p in enumerate(rows, 1)]}
 
 
@@ -587,12 +642,13 @@ def where_is(reg_no):
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
-          "day": today, "code": code_for(reg_no)}
+          "day": today, "code": code_for(reg_no), "worse": False}
     if visit["status"] == "nurse":
-        me.update(status="nurse")          # check-in done: the phone shows the code for the nurse
+        # check-in done: the phone shows the code for the nurse. "worse": the nurse has been told they feel worse.
+        me.update(status="nurse", worse=visit["worse_at"] is not None)
     elif visit["status"] == "waiting":
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
-        me.update(status="waiting", position=position, ahead=position - 1)
+        me.update(status="waiting", position=position, ahead=position - 1, worse=visit["worse_at"] is not None)
     elif visit["status"] == "with doctor":
         me.update(status="called", doctor=doctor["name"], room=doctor["room"])
     elif visit["status"] == "done":

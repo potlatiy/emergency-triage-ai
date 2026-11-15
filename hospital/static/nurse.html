@@ -54,6 +54,12 @@
   header.top .links { display:flex; flex-wrap:wrap; gap:10px; margin-left:auto; }
   header.top .links + .size { margin-left:0; }
   @media (max-width: 960px) { .list { position:static; } }
+  .bar.in span:first-child { color:var(--ink); font-weight:800; }
+  .bar.in span:first-child::after { content:" ●"; color:var(--blue); font-size:.7em; vertical-align:middle; }
+  .note.range { margin-top:14px; background:var(--blue-tint); }
+  table.alike { min-width:0; } table.alike td.num, table.alike th:not(:first-child) { white-space:nowrap; }
+  .pt.due .code { background:#a86a12; }
+  .tag.amber { background:#fdf1dc; color:#7a4a05; }
 </style>
 </head>
 <body>
@@ -86,6 +92,7 @@
       <button class="mini" type="submit">Open</button>
     </form>
     <p class="error" id="find-error" role="alert"></p>
+    <div id="again" aria-live="polite"></div>
     <div id="patients" aria-live="polite"></div>
   </section>
 
@@ -191,20 +198,31 @@ async function loadList() {
   document.getElementById("list-note").textContent = "Danger signs first, then who has waited longest. Updates by itself.";
   lastList = data.patients;
   const box = document.getElementById("patients");
+  // Patients already in the waiting room who need the nurse again: they said they feel worse, or they have waited
+  // longer than their level allows without a second look.
+  const again = (data.recheck || []).map((p) => `
+    <button type="button" class="pt ${p.worse ? "danger" : "due"} ${cur && cur.reg === p.reg_no ? "on" : ""}" data-reg="${esc(p.reg_no)}">
+      <span class="code">${esc(p.ticket)}</span>
+      <b>${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</b>
+      <span class="hint">Level ${p.level} · last seen ${p.since_seen} min ago
+        ${p.worse ? `<span class="tag red">feels worse</span>` : ""}${p.recheck_due ? `<span class="tag amber">re-check due</span>` : ""}</span>
+    </button>`).join("");
+  document.getElementById("again").innerHTML = again ? `<h3 class="sub" style="margin:0 0 8px;font-size:1.05rem">Needs you again</h3>${again}
+    <h3 class="sub" style="margin:18px 0 8px;font-size:1.05rem">New from check-in</h3>` : "";
   if (!data.patients.length) {
     box.innerHTML = `<p class="empty">Nobody is waiting for the nurse. A patient appears here as soon as they finish check-in
       on their phone (open the <a href="/" target="_blank" rel="noopener">patient's phone</a> to try).</p>`;
     return;
   }
   box.innerHTML = data.patients.map((p) => `
-    <button type="button" class="pt ${p.danger ? "danger" : ""} ${cur && cur.reg === p.reg_no ? "on" : ""}" data-reg="${esc(p.reg_no)}">
+    <button type="button" class="pt ${p.danger || p.worse ? "danger" : ""} ${cur && cur.reg === p.reg_no ? "on" : ""}" data-reg="${esc(p.reg_no)}">
       <span class="code">${esc(p.code)}</span>
       <b>${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</b>
       <span class="hint">${p.age} years, ${esc(sexWord(p.sex))} · waiting ${p.waited} min
-        ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.injury ? `<span class="tag">injury</span>` : ""}</span>
+        ${p.worse ? `<span class="tag red">feels worse</span>` : ""}${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.injury ? `<span class="tag">injury</span>` : ""}</span>
     </button>`).join("");
 }
-document.getElementById("patients").addEventListener("click", (event) => {
+for (const id of ["patients", "again"]) document.getElementById(id).addEventListener("click", (event) => {
   const button = event.target.closest(".pt"); if (button) openPatient(button.dataset.reg);
 });
 document.getElementById("find").addEventListener("submit", (event) => {
@@ -223,6 +241,40 @@ document.getElementById("find").addEventListener("submit", (event) => {
 
 // ---------------------------------------------------------------- one patient on the right
 const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+// Minutes a waiting patient may go without a second look, by level: the reassessment times of the Canadian triage
+// scale, which the Korean scale of our data was built from (the same numbers as core.RECHECK_AFTER on the server).
+const RECHECK_AFTER = { 3: 30, 4: 60, 5: 120 };
+// Meddy's range of levels. The cut was set so that the experts' level is inside for 9 unseen patients in 10; the
+// figures in the hint are the ones measured in triage.py (section 9), weak spot included.
+function rangeNote(range) {
+  if (!range) return "";
+  const one = range.low === range.high;
+  return `<div class="note range" role="status"><b>Likely range: ${one ? `level ${range.low} only` : `level ${range.low} to level ${range.high}`}.</b>
+    ${one ? "Meddy sees one level for this patient." : range.high - range.low >= 2 ? "A wide range: Meddy is telling you it does not know." : ""}
+    <span class="hint">In our tests the experts' level was inside Meddy's range for 9 patients in 10, but only 8 in 10 of the
+      most urgent patients (levels 1 and 2). The range is not a guarantee for one patient.</span></div>`;
+}
+// Five real patients from the public data who look most like this one, with the level the nurse and the experts gave.
+function similarBlock(similar) {
+  if (!similar || !similar.patients.length) return "";
+  const counts = {};
+  similar.patients.forEach((p) => { counts[p.expert_level] = (counts[p.expert_level] || 0) + 1; });
+  const said = Object.keys(counts).sort().map((l) => `${counts[l]} at level ${l}`).join(", ");
+  const rows = similar.patients.map((p) => `<tr>
+    <td>${esc(p.complaint)}${p.other_complaint ? ` <span class="tag">different complaint</span>` : ""}</td>
+    <td class="num">${Math.round(p.age)}, ${esc(sexWord(p.sex))}</td>
+    <td class="num">${p.nurse_level}</td>
+    <td class="num"><b>${p.expert_level}</b>${p.nurse_level > p.expert_level ? ` <span class="tag red">nurse rated too low</span>` : ""}</td></tr>`).join("");
+  return `<h3 class="sub">Patients like this one</h3>
+    <p class="hint" style="margin:6px 0 0">The five patients most like this one among the 1,267 real patients in the data.
+      The experts put ${esc(said)}.${similar.under_rated ? ` Their nurse rated ${similar.under_rated} of them too low.` : ""}</p>
+    ${similar.complaint_matched ? "" : `<div class="note amber" style="margin-top:10px"><b>▲ No patient in the data had a complaint like this one.</b>
+      These five are alike in age and measurements only.</div>`}
+    <div class="table-wrap"><table class="staff alike"><thead><tr><th>Their complaint</th><th>Age, sex</th><th>Nurse's level</th><th>Experts' level</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <p class="hint" style="margin:8px 0 0">Evidence to look at, not a second opinion: in our tests, most of the five had the
+      experts' level for 6 patients in 10 (Meddy's own level: 7 in 10). Their diagnoses are never shown.</p>`;
+}
 function facts(card) {
   const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
   const list = [`“${card.complaint}”`, `${card.age} years, ${sexWord(card.sex)}`, card.arrival,
@@ -277,7 +329,7 @@ async function openPatient(reg, takeOver) {
       <button class="go light" id="take-over">The patient cannot finish: take them now</button>`;
     if (!takeOver) { document.getElementById("take-over").addEventListener("click", () => openPatient(reg, true)); return; }
   }
-  if (card.status !== "nurse" && card.status !== "registered") {
+  if (card.status !== "nurse" && card.status !== "registered" && card.status !== "waiting") {
     panel.innerHTML = `${ids(card)}<h2><span class="bigcode">${esc(card.code)}</span>Already seen</h2>
       <p class="lede">The nurse station has already dealt with this patient${card.ticket ? ` (ticket ${esc(card.ticket)})` : ""}.</p>`;
     return;
@@ -289,7 +341,14 @@ async function openPatient(reg, takeOver) {
     <h2><span class="bigcode">${esc(card.code)}</span>${card.patient ? esc(card.patient) : esc(card.complaint)}</h2>
     ${card.patient ? `<p class="lede" style="font-weight:700;color:var(--ink)">“${esc(card.complaint)}”</p>` : ""}
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
-      ${card.waited === null ? "Did not finish check-in on the phone." : `Waiting for the nurse ${card.waited} min.`}</p>
+      ${card.status === "waiting" ? `In the waiting room with ticket ${esc(card.ticket)}, level ${card.level}. Last seen by the nurse ${card.since_seen} min ago.`
+        : card.waited === null ? "Did not finish check-in on the phone." : `Waiting for the nurse ${card.waited} min.`}</p>
+    ${card.status === "waiting" ? `<div class="note ${card.worse ? "red" : "amber"}" style="margin:10px 0"><b>Re-check.</b>
+      ${card.worse ? "The patient pressed “I feel worse” on their phone."
+        : card.recheck_due ? `A level ${card.level} patient is looked at again every ${RECHECK_AFTER[card.level]} minutes while they wait.`
+        : "This patient is already in the waiting room."}
+      Measure again and decide again. They keep their ticket and the minutes they have already waited.</div>`
+      : card.worse ? `<div class="note red" style="margin:10px 0"><b>The patient pressed “I feel worse” on their phone</b> while waiting for you.</div>` : ""}
     ${card.answers.some((a) => a.kind === "danger" && a.answer) ? "" : `<div class="note red" style="margin:10px 0">The patient
       did not answer the danger-sign questions. Ask about them yourself before you decide.</div>`}
     <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
@@ -380,6 +439,9 @@ function showLevel() {
         department fits. What is wrong with the patient is for the doctor to say.</p>
       <p class="measured">Measured: blood pressure <b>${v.SBP}/${v.DBP}</b>, pulse <b>${v.HR}</b>, breathing <b>${v.RR}</b>,
         temperature <b>${v.BT}°C</b>, oxygen <b>${v.Saturation}%</b>, ${esc(cur.alert.toLowerCase())}</p>
+      ${r.recheck ? `<div class="note">Before this re-check: the nurse's level was <b>${r.recheck.earlier_level}</b>${
+        r.recheck.earlier_ai_level ? ` and Meddy had suggested level <b>${r.recheck.earlier_ai_level}</b>` : ""}.
+        Meddy's report below uses the new measurements.</div>` : ""}
       ${r.danger ? `<div class="note red">The patient answered yes to a danger-sign question. In the line this counts as half a level more urgent.</div>` : ""}
       ${r.unread ? `<div class="note amber"><b>▲ Meddy could not read this complaint.</b> It found no symptom word it knows (another
         language, a typing slip, or no symptom named). Its level rests on the vital signs only, and the department is a guess.</div>` : ""}
@@ -390,8 +452,10 @@ function showLevel() {
           <span class="who">Meddy's suggestion. The nurse decides.</span></div>
       </div>
       <div class="bars">${[1, 2, 3, 4, 5].map((l) => { const p = r.probabilities[l]; return `
-        <div class="bar ${l === r.level ? "on" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
+        <div class="bar ${l === r.level ? "on" : ""} ${r.range && l >= r.range.low && l <= r.range.high ? "in" : ""}"><span>Level ${l}</span><i><b style="width:${Math.max(1, Math.round(p * 100))}%"></b></i>
         <span>${Math.round(p * 100)}%</span></div>`; }).join("")}</div>
+      ${rangeNote(r.range)}
+      ${similarBlock(r.similar)}
       <h3 class="sub">Suggested doctor</h3>
       <div class="note" style="margin-top:12px"><b>${urgent ? "Resuscitation team, Resus bay" : `${esc(r.department)}: ${esc(likely.doctor)}, ${esc(likely.room)}`}</b>
         <span class="hint">${urgent ? "Levels 1 and 2 go in at once, whatever the department."
@@ -522,7 +586,8 @@ async function loadLine(message) {
       <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
       <div><div class="who-line">${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.who)}</div>
         <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
-        ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
+        ${p.worse ? `<span class="tag red">feels worse</span>` : ""}${p.recheck_due ? `<span class="tag amber">re-check due</span>` : ""}${
+          p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
     </div>`).join("");
 }
 document.getElementById("next").addEventListener("click", async (event) => {

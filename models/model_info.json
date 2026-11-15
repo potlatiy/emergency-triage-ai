@@ -1,5 +1,5 @@
 {
-  "trained_on": "2026-11-14",
+  "trained_on": "2026-11-15",
   "patients": 1267,
   "made_with": {
     "python": "3.13.7",
@@ -68,6 +68,13 @@
       "right_department_in_top_three": 0.878,
       "fingerprint": "e83793970cb02dae"
     }
+  },
+  "level_range": {
+    "promise": 0.9,
+    "keep_a_level_when_its_probability_is_at_least": 0.1047,
+    "expert_level_inside_on_unseen_patients": 0.906,
+    "average_levels_in_range": 1.99,
+    "urgent_patients_inside": 0.798
   },
   "note": "The figures were measured with 5-fold cross-validation: every patient scored by a model that never saw them. The saved files were then trained on all patients, for the demonstration."
 }
