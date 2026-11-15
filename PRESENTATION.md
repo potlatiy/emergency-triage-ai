@@ -23,6 +23,17 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 | 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
 | 1:45–2:00 | The limits section of the README | "The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
 
+## The back end, explained in ten slides
+
+`docs/backend-presentation.html` (online: https://potlatiy.github.io/emergency-triage-ai/backend-presentation.html) is a
+slide deck about the back end, about 3:50 long: the one rule, what runs where, a visit's five states, the three AI
+parts, how Meddy shows its doubt, the safety rules in code, the database, how we know it works and where it fails.
+
+To record it: open it in Chrome and record only that window. Press **N** for a second window with the notes for
+the slide on screen (what to say, what to show, the planned time, a clock); it follows the slides. **F** is full
+screen, **S** the whole script on one page, the arrow keys move. Its figures are the README's; if a figure changes
+there, change it on the slide too.
+
 ## Demo checklist before recording
 
 1. Open the three windows: https://darkshdws-meddy.hf.space, `/nurse` and `/doctor`. (Or locally:

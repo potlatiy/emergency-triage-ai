@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meddy: the back end</title>
+<style>
+  :root { --ink:#16252a; --soft:#4d5b57; --line:#d5ded9; --page:#f4f7f6; --card:#ffffff; --blue:#2152c4; --blue-dark:#173f9c;
+          --blue-tint:#e8eefc; --mint:#1baf7a; --mint-tint:#e6f6ef; --amber:#b86a00; --amber-tint:#fdf1dc; --rose:#b4302f;
+          --rose-tint:#fdeeec; --violet:#5a45b8; --violet-tint:#f1eefc; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:#dfe6e3; color:var(--ink); font-family:"Atkinson Hyperlegible Next", "Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+         overflow:hidden; }
+  .mono { font-family:ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+  /* ---------- the slides: one 1280 by 720 stage, scaled to the window ---------- */
+  #stage { position:absolute; left:50%; top:50%; width:1280px; height:720px; transform-origin:center; background:var(--page);
+           box-shadow:0 20px 60px rgba(22,37,42,.25); overflow:hidden; }
+  .slide { position:absolute; inset:0; padding:56px 72px 64px; display:none; flex-direction:column; }
+  .slide.on { display:flex; }
+  .slide::before { content:""; position:absolute; left:0; right:0; top:0; height:8px; background:linear-gradient(90deg, #5dcaa5, #4f9be0, var(--blue)); }
+  .kicker { font-size:20px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--blue); margin:0 0 10px; }
+  h1 { font-size:76px; line-height:1.05; margin:0; font-weight:800; }
+  h2 { font-size:46px; line-height:1.12; margin:0 0 26px; font-weight:800; }
+  p.lead { font-size:28px; line-height:1.4; color:var(--soft); margin:0; max-width:980px; }
+  .foot { position:absolute; left:72px; right:72px; bottom:22px; display:flex; justify-content:space-between; font-size:16px; color:var(--soft); }
+  .foot b { color:var(--ink); }
+  .grid { display:grid; gap:22px; flex:1; min-height:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:22px; padding:24px 26px; }
+  .card h3 { margin:0 0 12px; font-size:28px; font-weight:800; }
+  .card p, .card li { font-size:23px; line-height:1.42; margin:0; color:var(--soft); }
+  .card ul { margin:0; padding-left:22px; } .card li { margin:6px 0; }
+  .card b { color:var(--ink); }
+  .tag { display:inline-block; padding:4px 14px; border-radius:999px; font-size:17px; font-weight:800; background:var(--blue-tint); color:var(--blue-dark); }
+  .tag.mint { background:var(--mint-tint); color:#12603f; } .tag.amber { background:var(--amber-tint); color:#7a4700; }
+  .tag.rose { background:var(--rose-tint); color:#8c2322; } .tag.violet { background:var(--violet-tint); color:#3c2d8a; }
+  .card p.big { font-size:72px; font-weight:800; line-height:1; color:var(--ink); }
+  .card p.big small { font-size:26px; font-weight:700; color:var(--soft); }
+  .note-line, .card p.note-line { font-size:19px; color:var(--soft); margin-top:14px; }
+
+  /* slide 2: three bars */
+  .bars { display:grid; gap:22px; margin-top:8px; }
+  .bar { display:grid; grid-template-columns:230px 1fr 110px; align-items:center; gap:20px; font-size:26px; font-weight:800; }
+  .bar i { display:block; height:44px; border-radius:12px; background:#e3eae6; overflow:hidden; }
+  .bar i b { display:block; height:100%; border-radius:12px; }
+  .bar span:last-child { text-align:right; font-size:38px; }
+
+  /* slide 3 and 4: diagrams */
+  svg text { font-family:inherit; }
+  .steps { display:grid; grid-template-columns:repeat(5, 1fr); gap:14px; margin:6px 0 22px; }
+  .step { position:relative; background:var(--card); border:2px solid var(--line); border-radius:18px; padding:18px 14px 16px; text-align:center; }
+  .step b { display:block; font-size:25px; } .step span { display:block; margin-top:6px; font-size:17px; color:var(--soft); line-height:1.3; }
+  .step:not(:last-child)::after { content:"→"; position:absolute; right:-17px; top:50%; transform:translateY(-50%); font-size:26px; font-weight:800; color:var(--blue); z-index:1; }
+  .step.on { border-color:var(--blue); background:var(--blue-tint); }
+
+  #progress { position:absolute; left:0; bottom:0; height:6px; background:var(--blue); transition:width .25s ease; }
+  #hint { position:fixed; left:50%; bottom:14px; transform:translateX(-50%); padding:8px 16px; border-radius:999px; background:rgba(22,37,42,.82);
+          color:#fff; font-size:14px; transition:opacity .4s ease; z-index:5; white-space:nowrap; }
+  #hint.off { opacity:0; pointer-events:none; }
+
+  /* ---------- the notes window and the script page ---------- */
+  body.notes, body.script { background:var(--page); overflow:auto; }
+  body.notes #stage, body.script #stage, body.notes #hint, body.script #hint { display:none; }
+  #notes, #script { display:none; max-width:900px; margin:0 auto; padding:24px 28px 60px; }
+  body.notes #notes, body.script #script { display:block; }
+  #notes header { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  #notes .where { font-size:18px; font-weight:800; color:var(--blue-dark); }
+  #notes .clock { font-size:30px; font-weight:800; font-variant-numeric:tabular-nums; }
+  #notes .clock small { font-size:16px; color:var(--soft); font-weight:700; }
+  #notes h2 { font-size:30px; margin:0 0 12px; }
+  .say { background:#fff; border:1px solid var(--line); border-left:8px solid var(--blue); border-radius:16px; padding:20px 24px; font-size:27px; line-height:1.5; }
+  .show-cue { margin-top:14px; background:var(--amber-tint); border-radius:16px; padding:14px 20px; font-size:19px; line-height:1.45; color:#5c3a05; }
+  .next-up { margin-top:14px; font-size:18px; color:var(--soft); }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+  button { font:inherit; font-size:18px; font-weight:800; padding:12px 22px; border-radius:999px; border:2px solid var(--blue); background:#fff; color:var(--blue-dark); cursor:pointer; }
+  button.main { background:var(--blue); color:#fff; }
+  #script h1 { font-size:36px; margin:8px 0 6px; } #script .intro { font-size:18px; color:var(--soft); line-height:1.5; margin:0 0 22px; }
+  #script article { background:#fff; border:1px solid var(--line); border-radius:16px; padding:18px 22px; margin:0 0 14px; break-inside:avoid; }
+  #script article h3 { margin:0 0 8px; font-size:21px; } #script article h3 small { font-weight:700; color:var(--soft); font-size:15px; }
+  #script article p { margin:0 0 8px; font-size:18px; line-height:1.5; }
+  #script article p.cue { color:#5c3a05; background:var(--amber-tint); border-radius:10px; padding:8px 12px; font-size:16px; }
+  aside.speak { display:none; }
+  @media print { body.script { background:#fff; } #script article { border-color:#bbb; } button { display:none; } }
+</style>
+</head>
+<body>
+
+<div id="stage">
+
+  <!-- 1 -->
+  <section class="slide" data-title="Title" data-seconds="18">
+    <div style="margin:auto 0">
+      <p class="kicker">Veritas AI Hackathon 2026 · Health track</p>
+      <h1>Meddy: the back end</h1>
+      <p class="lead" style="margin-top:22px;font-size:32px">What runs behind the patient's phone, the nurse's screen and the doctor's screen.</p>
+      <p class="lead" style="margin-top:34px"><span class="tag">Yegor · back end</span></p>
+    </div>
+    <div class="foot"><span>github.com/potlatiy/emergency-triage-ai</span><span>This project is a prototype and is not medical advice.</span></div>
+    <aside class="speak">
+      <p class="say-text">I'm Yegor, and I built the back end of Meddy. In the next three minutes I'll show what runs behind the three screens: one server, two trained models, a small language model and a database. And the rules that keep the AI in its place.</p>
+      <p class="cue-text">Start the recording on this slide. Speak calmly, about 150 words a minute.</p>
+    </aside>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide" data-title="The one rule" data-seconds="22">
+    <p class="kicker">The rule everything follows</p>
+    <h2>The nurse decides. Meddy double-checks her.</h2>
+    <div class="bars">
+      <div class="bar"><span>Always guessing level 3</span><i><b style="width:38%;background:#9aa9a3"></b></i><span>38%</span></div>
+      <div class="bar"><span>Meddy's model</span><i><b style="width:68%;background:var(--blue)"></b></i><span>68%</span></div>
+      <div class="bar"><span>Triage nurses</span><i><b style="width:85%;background:var(--mint)"></b></i><span>85%</span></div>
+    </div>
+    <p class="note-line" style="font-size:22px;margin-top:26px">Exact urgency level, checked against an expert panel on 1,267 real emergency patients
+      (Moon et al., PLOS ONE, 2019). Every patient is scored by a model that never saw them.</p>
+    <div class="foot"><span><b>2</b> / 10</span><span>Meddy: the back end</span></div>
+    <aside class="speak">
+      <p class="say-text">We tested first, and the result was honest: our model gives the right urgency level for 68% of patients. Guessing gets 38%. Nurses get 85%. So the model cannot replace a nurse. That one result shaped the whole back end: the nurse always sets the level, and Meddy is her second check.</p>
+      <p class="cue-text">Point at the three bars as you say the three numbers. Keep the numbers exact: 68, 38, 85.</p>
+    </aside>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide" data-title="What runs where" data-seconds="24">
+    <p class="kicker">Architecture</p>
+    <h2>One server behind five screens</h2>
+    <svg viewBox="0 0 1136 420" width="1136" height="420" role="img" aria-label="Five screens talk to one server, which uses the models, the rules, the language model and the database">
+      <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#2152c4"/></marker></defs>
+      <g font-size="19" font-weight="800" text-anchor="middle">
+        <g fill="#fff" stroke="#d5ded9" stroke-width="2">
+          <rect x="0" y="6" width="200" height="62" rx="14"/><rect x="0" y="84" width="200" height="62" rx="14"/>
+          <rect x="0" y="162" width="200" height="62" rx="14"/><rect x="0" y="240" width="200" height="62" rx="14"/><rect x="0" y="318" width="200" height="62" rx="14"/>
+        </g>
+        <text x="100" y="44" fill="#16252a">Patient's phone</text><text x="100" y="122" fill="#16252a">Nurse's screen</text>
+        <text x="100" y="200" fill="#16252a">Doctor's screen</text><text x="100" y="278" fill="#16252a">Waiting-room board</text><text x="100" y="356" fill="#16252a">Chief doctor</text>
+        <g stroke="#2152c4" stroke-width="3" fill="none" marker-end="url(#a)">
+          <path d="M204 37 L372 150"/><path d="M204 115 L372 175"/><path d="M204 193 L372 200"/><path d="M204 271 L372 225"/><path d="M204 349 L372 250"/>
+        </g>
+        <rect x="378" y="96" width="270" height="208" rx="22" fill="#e8eefc" stroke="#2152c4" stroke-width="3"/>
+        <text x="513" y="150" font-size="26" fill="#173f9c">The server</text>
+        <text x="513" y="184" font-size="18" font-weight="700" fill="#16252a">FastAPI · 39 addresses</text>
+        <text x="513" y="216" font-size="18" font-weight="700" fill="#16252a">checks every request,</text>
+        <text x="513" y="242" font-size="18" font-weight="700" fill="#16252a">keeps the order of steps,</text>
+        <text x="513" y="268" font-size="18" font-weight="700" fill="#16252a">locks the staff screens</text>
+        <g stroke="#2152c4" stroke-width="3" fill="none" marker-end="url(#a)">
+          <path d="M652 150 L812 60"/><path d="M652 185 L812 165"/><path d="M652 220 L812 268"/><path d="M652 255 L812 368"/>
+        </g>
+        <rect x="818" y="14" width="318" height="88" rx="16" fill="#fff" stroke="#d5ded9" stroke-width="2"/>
+        <text x="977" y="50" fill="#16252a">Two trained models</text><text x="977" y="78" font-size="17" font-weight="700" fill="#4d5b57">urgency level · department</text>
+        <rect x="818" y="118" width="318" height="88" rx="16" fill="#fff" stroke="#d5ded9" stroke-width="2"/>
+        <text x="977" y="154" fill="#16252a">Plain rules</text><text x="977" y="182" font-size="17" font-weight="700" fill="#4d5b57">the line, warning signs, filters</text>
+        <rect x="818" y="222" width="318" height="88" rx="16" fill="#fff" stroke="#d5ded9" stroke-width="2"/>
+        <text x="977" y="258" fill="#16252a">A small language model</text><text x="977" y="286" font-size="17" font-weight="700" fill="#4d5b57">Gemma 3, on the same machine</text>
+        <rect x="818" y="326" width="318" height="88" rx="16" fill="#fff" stroke="#d5ded9" stroke-width="2"/>
+        <text x="977" y="362" fill="#16252a">The database</text><text x="977" y="390" font-size="17" font-weight="700" fill="#4d5b57">one SQLite file, seven tables</text>
+      </g>
+    </svg>
+    <div class="foot"><span><b>3</b> / 10</span><span>Python · FastAPI · scikit-learn · SQLite · Ollama</span></div>
+    <aside class="speak">
+      <p class="say-text">Five screens talk to one Python server. The server checks every request and keeps the steps in order. Behind it are two models we trained ourselves, plain rules, a small language model that runs on the same machine, and one database file. No outside AI service is called, so what a patient types stays on our server.</p>
+      <p class="cue-text">Follow the arrows left to right with the mouse. Optional: cut to the live nurse's screen for three seconds here.</p>
+    </aside>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide" data-title="A visit's path" data-seconds="24">
+    <p class="kicker">The chain</p>
+    <h2>Every visit moves through five states</h2>
+    <div class="steps">
+      <div class="step"><b>registered</b><span>the phone gets a number and a questionnaire</span></div>
+      <div class="step"><b>nurse</b><span>check-in done, waits for the nurse</span></div>
+      <div class="step on"><b>waiting</b><span>the nurse set a level, ticket in the line</span></div>
+      <div class="step"><b>with doctor</b><span>called to a room</span></div>
+      <div class="step"><b>done</b><span>closed, and kept</span></div>
+    </div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card"><h3>The server keeps the order</h3>
+        <ul><li>A step out of order is refused, not guessed.</li>
+            <li>Two clicks at once cannot send one patient to two doctors: the check and the change happen in one locked step.</li>
+            <li>Levels 1 and 2 never wait in the line.</li></ul></div>
+      <div class="card"><h3>Urgency is not decided once</h3>
+        <ul><li><b>"I feel worse"</b> on the phone puts the patient on top of the nurse's list. It never moves them up by itself.</li>
+            <li>A waiting patient is due a second look after 30, 60 or 120 minutes, by level.</li>
+            <li>While the nurse re-checks, no doctor can call that patient away.</li></ul></div>
+    </div>
+    <div class="foot"><span><b>4</b> / 10</span><span>hospital/server.py · hospital/db.py</span></div>
+    <aside class="speak">
+      <p class="say-text">Every visit moves through five states, and the server keeps them in order. A step out of order is refused. Two clicks at once cannot send one patient to two doctors. And urgency is not decided once: a waiting patient can say "I feel worse", which calls the nurse back. It never moves them up the line by itself.</p>
+      <p class="cue-text">Run the mouse along the five boxes, then stop on "I feel worse".</p>
+    </aside>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide" data-title="Three AI parts" data-seconds="26">
+    <p class="kicker">Where the AI is</p>
+    <h2>Three AI parts, each with one narrow job</h2>
+    <div class="grid" style="grid-template-columns:repeat(3, 1fr)">
+      <div class="card"><span class="tag">Trained by us</span><h3 style="margin-top:12px">Urgency model</h3>
+        <p>Reads the complaint in words, age, how the patient came, alertness, pain and six vital signs. Gives a probability for each of the five levels.</p>
+        <p class="note-line">Logistic regression. It never sees the nurse's level, the diagnosis or the outcome.</p></div>
+      <div class="card"><span class="tag">Trained by us</span><h3 style="margin-top:12px">Department model</h3>
+        <p>Suggests one of nine departments, together with a key-word rule. The right one is among the four it offers <b>92%</b> of the time.</p>
+        <p class="note-line">Alone it is right 70%; the key-word rule 67%; always the biggest department 21%.</p></div>
+      <div class="card"><span class="tag violet">Steered, not trained</span><h3 style="margin-top:12px">Language model</h3>
+        <p>Words three history questions for the doctor and a two-sentence summary for the nurse.</p>
+        <p class="note-line">Plain code throws away any sentence with a guess, advice, a diagnosis, or a symptom the patient never mentioned.</p></div>
+    </div>
+    <div class="foot"><span><b>5</b> / 10</span><span>triage.py · assignment.py · hospital/core.py</span></div>
+    <aside class="speak">
+      <p class="say-text">There are three AI parts, each with one narrow job. The urgency model reads the complaint and the vital signs and gives a probability for each level. The department model suggests where the patient belongs. And a small language model words the questions and a short summary. Plain code checks its text: no guesses, no advice, no diagnosis.</p>
+      <p class="cue-text">Point at one card per sentence. "Never a diagnosis" is the line to stress.</p>
+    </aside>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide" data-title="The AI shows its doubt" data-seconds="26">
+    <p class="kicker">Honest about what it knows</p>
+    <h2>Meddy shows its doubt and its evidence</h2>
+    <div class="grid" style="grid-template-columns:repeat(3, 1fr)">
+      <div class="card"><span class="tag amber">Second check</span>
+        <p class="big" style="margin:16px 0 8px">107 <small>of 131</small></p>
+        <p>patients nurses rated too low are flagged "look again". The price: a re-check on 36% of all patients.</p></div>
+      <div class="card"><span class="tag">A range of levels</span>
+        <p class="big" style="margin:16px 0 8px">90.6%</p>
+        <p>of unseen patients had the experts' level inside Meddy's range. For the most urgent patients only <b>80%</b>.</p></div>
+      <div class="card"><span class="tag mint">Patients like this one</span>
+        <p class="big" style="margin:16px 0 8px">61%</p>
+        <p>Five similar real patients are shown as evidence. Their most common level matched the experts 61% of the time: weaker than the model's 68%.</p></div>
+    </div>
+    <p class="note-line">Weak results are reported next to the strong ones, on the screens and in the README.</p>
+    <div class="foot"><span><b>6</b> / 10</span><span>triage.py (sections 7 and 9) · similar.py</span></div>
+    <aside class="speak">
+      <p class="say-text">Meddy shows its doubt. As a second check, it flags 107 of the 131 patients nurses rated too low. It gives a range of levels that held the right one for 90.6% of patients it had not seen, but only 80% of the most urgent. And it shows five similar real patients as evidence, not as a second opinion.</p>
+      <p class="cue-text">Say the weak number too: "only 80% of the most urgent". Judges look for that.</p>
+    </aside>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide" data-title="Rules written in code" data-seconds="24">
+    <p class="kicker">Safety</p>
+    <h2>The rules are in the code, not in a promise</h2>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card"><h3>What the patient's phone can get</h3>
+        <ul><li>Its own ticket, place in line and room. <b>Never the level</b>, never another patient.</li>
+            <li>The doctor's note goes only to the phone that registered the visit.</li>
+            <li>A "yes" to a danger sign counts only for the server's own hand-written questions.</li></ul></div>
+      <div class="card"><h3>What Meddy may say</h3>
+        <ul><li>A level, a department, a question. <b>Never a diagnosis.</b></li>
+            <li>"Not asked" is never shown as "no".</li>
+            <li>The nurse reads the AI's summary first and can hold it back from the doctor.</li></ul></div>
+      <div class="card" style="grid-column:1 / -1"><h3>Who can open what</h3>
+        <p>The nurse's, doctor's and chief doctor's screens sit behind a staff PIN: they show names, and their buttons can close visits.
+           The waiting-room board is open and shows tickets and rooms only.</p></div>
+    </div>
+    <div class="foot"><span><b>7</b> / 10</span><span>Each rule has a test that fails if someone breaks it</span></div>
+    <aside class="speak">
+      <p class="say-text">The safety rules are written in code. The patient's phone gets its own ticket and place, never the urgency level and never another patient. Meddy can suggest a level and a department, never a diagnosis. And "not asked" is never shown as "no". Each of these rules has a test that fails if someone breaks it.</p>
+      <p class="cue-text">Optional: cut to the phone's waiting screen for three seconds to show there is no level on it.</p>
+    </aside>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide" data-title="The database" data-seconds="22">
+    <p class="kicker">Memory</p>
+    <h2>One database file that keeps everything</h2>
+    <div class="grid" style="grid-template-columns:1.1fr 1fr">
+      <div class="card"><h3>Seven tables</h3>
+        <ul><li><b>visits</b>: every visit from the door to the doctor</li>
+            <li><b>answers</b>: what the patient tapped and wrote</li>
+            <li><b>events</b>: a log of every step, with its time and who did it</li>
+            <li><b>doctors</b> and <b>departments</b>: who is on duty where</li>
+            <li><b>people</b>: one open visit per insurance card</li>
+            <li><b>meta</b>: the clock and the counters</li></ul></div>
+      <div class="card"><h3>What it promises</h3>
+        <ul><li>A restart or a new version loses nothing: an older file is upgraded in place.</li>
+            <li>"Start a new day" closes visits and keeps them.</li>
+            <li>The insurance card number is never stored: only a one-way fingerprint and its last four characters.</li>
+            <li>Insurance never reaches a model and never changes the level.</li></ul></div>
+    </div>
+    <div class="foot"><span><b>8</b> / 10</span><span>hospital/db.py · SQLite</span></div>
+    <aside class="speak">
+      <p class="say-text">Everything is kept in one database file with seven tables. Every step of every visit is logged with its time and who did it. A restart or a new version loses nothing. And we never store an insurance card number, only a one-way fingerprint, so one person can have one open visit at a time.</p>
+      <p class="cue-text">Optional: on the nurse's screen open "Behind the scenes" and show the log for three seconds.</p>
+    </aside>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide" data-title="How we know it works" data-seconds="22">
+    <p class="kicker">Evidence</p>
+    <h2>How we know it works</h2>
+    <div class="grid" style="grid-template-columns:repeat(3, 1fr)">
+      <div class="card"><p class="big">350 <small>tests</small></p>
+        <p style="margin-top:12px">About 350 automated tests run on every change: the models' figures, the order of steps, and every safety rule.</p></div>
+      <div class="card"><p class="big">5 <small>folds</small></p>
+        <p style="margin-top:12px">Every figure comes from patients the model had not seen. Each one is compared with a simple baseline and with real nurses.</p></div>
+      <div class="card"><p class="big">3 <small>reviews</small></p>
+        <p style="margin-top:12px">Independent reviews of the statistics, the back end and the pages. They found no data leakage, and the gaps they found were fixed.</p></div>
+    </div>
+    <p class="note-line">If the data or a model changes, a test fails and every document that quotes the figure has to be re-read.</p>
+    <div class="foot"><span><b>9</b> / 10</span><span>tests/ · triage.ipynb</span></div>
+    <aside class="speak">
+      <p class="say-text">How do we know it works? About 350 automated tests run on every change. Every figure comes from patients the model had not seen, and each is compared with a simple baseline and with real nurses. We also had the statistics and the code reviewed independently. They found no data leakage, and we fixed what they did find.</p>
+      <p class="cue-text">Optional: show a terminal with the tests passing, "python -m pytest tests", for three seconds.</p>
+    </aside>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide" data-title="Where it fails" data-seconds="22">
+    <p class="kicker">Limits</p>
+    <h2>Where it fails, and what comes next</h2>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card"><span class="tag rose">It fails here</span>
+        <ul style="margin-top:12px"><li>It misses urgent patients whose danger does not show in the measurements: 19 were given a low level, and nurses rated 14 of those correctly.</li>
+            <li>It does not travel: trained at one hospital and tested at the other, 68% drops to 55–58%.</li>
+            <li>The data was written by nurses, not typed by patients. Waiting times are simulated.</li></ul></div>
+      <div class="card"><span class="tag mint">Next</span>
+        <ul style="margin-top:12px"><li>Try the flags and the report with real triage nurses.</li>
+            <li>Collect complaints written by patients themselves.</li>
+            <li>Train and test on more hospitals.</li></ul></div>
+    </div>
+    <p style="font-size:26px;font-weight:800;margin:22px 0 0;text-align:center">This project is a prototype and is not medical advice.</p>
+    <div class="foot"><span><b>10</b> / 10</span><span>github.com/potlatiy/emergency-triage-ai</span></div>
+    <aside class="speak">
+      <p class="say-text">And where it fails. It misses urgent patients whose danger does not show in the measurements, and it gets worse when moved to another hospital. That is why the nurse decides. Next, we would test it with real triage nurses. Meddy is a prototype, and it is not medical advice.</p>
+      <p class="cue-text">Stay on this slide for two seconds after the last sentence, then stop the recording.</p>
+    </aside>
+  </section>
+
+  <div id="progress"></div>
+</div>
+<div id="hint">→ next &nbsp;·&nbsp; ← back &nbsp;·&nbsp; <b>N</b> notes in a second window &nbsp;·&nbsp; <b>F</b> full screen &nbsp;·&nbsp; <b>S</b> whole script</div>
+
+<!-- the notes window: open it with N and keep it out of the recording -->
+<div id="notes">
+  <header>
+    <span class="where" id="n-where"></span>
+    <span class="clock"><span id="n-clock">0:00</span> <small id="n-plan"></small></span>
+  </header>
+  <h2 id="n-title"></h2>
+  <div class="say" id="n-say"></div>
+  <div class="show-cue" id="n-cue"></div>
+  <p class="next-up" id="n-next"></p>
+  <div class="controls">
+    <button id="n-prev">← Back</button><button class="main" id="n-nextb">Next →</button>
+    <button id="n-timer">Start the clock</button><button id="n-reset">Reset</button>
+  </div>
+  <p class="next-up">This window is for you. Record only the window with the slides. The arrow keys work here too.</p>
+</div>
+
+<!-- the whole script on one page: press S, or print it -->
+<div id="script">
+  <h1>Meddy: the back end. The whole script</h1>
+  <p class="intro" id="s-intro"></p>
+  <div id="s-list"></div>
+  <div class="controls"><button id="s-back" class="main">Back to the slides</button><button id="s-print">Print</button></div>
+</div>
+
+<script>
+const slides = [...document.querySelectorAll(".slide")];
+const view = new URLSearchParams(location.search).get("view") || "slides";
+const data = slides.map((s, i) => ({
+  n: i + 1, title: s.dataset.title, seconds: Number(s.dataset.seconds),
+  say: s.querySelector(".say-text").textContent.trim(), cue: s.querySelector(".cue-text").textContent.trim() }));
+const total = data.reduce((sum, d) => sum + d.seconds, 0);
+const clock = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+const words = (t) => t.split(/\s+/).filter(Boolean).length;
+let at = Math.min(slides.length, Math.max(1, Number(location.hash.slice(1)) || 1)) - 1;
+let other = null;                       // the notes window, as seen from the slides (and the slides from the notes)
+
+// ---------------------------------------------------------------- the slides
+function fit() {
+  const scale = Math.min(innerWidth / 1280, innerHeight / 720);
+  document.getElementById("stage").style.transform = `translate(-50%, -50%) scale(${scale})`;
+}
+function show(n, quiet) {
+  at = Math.min(slides.length - 1, Math.max(0, n));
+  slides.forEach((s, i) => s.classList.toggle("on", i === at));
+  document.getElementById("progress").style.width = ((at + 1) / slides.length * 100) + "%";
+  history.replaceState(null, "", location.pathname + location.search + "#" + (at + 1));
+  if (view === "notes") drawNotes();
+  if (!quiet && other && !other.closed) other.postMessage({ meddy: "slide", at }, "*");
+}
+function openNotes() {
+  other = window.open(location.pathname + "?view=notes#" + (at + 1), "meddy-notes", "width=760,height=820");
+}
+
+// ---------------------------------------------------------------- the notes window
+let ticking = null;
+function drawNotes() {
+  const d = data[at], before = data.slice(0, at).reduce((sum, x) => sum + x.seconds, 0);
+  document.getElementById("n-where").textContent = `Slide ${d.n} of ${data.length}`;
+  document.getElementById("n-title").textContent = d.title;
+  document.getElementById("n-say").textContent = d.say;
+  document.getElementById("n-cue").textContent = "On screen: " + d.cue;
+  document.getElementById("n-plan").textContent =
+    `this slide about ${d.seconds} s (${words(d.say)} words) · should start at ${clock(before)} · whole talk ${clock(total)}`;
+  document.getElementById("n-next").textContent = at + 1 < data.length ? "Next: " + data[at + 1].title : "This is the last slide.";
+}
+function go(n) {                         // from the notes window: move the slides too
+  show(n, true);
+  if (window.opener && !window.opener.closed) window.opener.postMessage({ meddy: "go", at }, "*");
+}
+
+// ---------------------------------------------------------------- the whole script
+function drawScript() {
+  document.getElementById("s-intro").textContent =
+    `${data.length} slides, about ${clock(total)} at a calm pace (${data.reduce((sum, d) => sum + words(d.say), 0)} words). ` +
+    "Learn the lines rather than reading them; a few words different is fine, but keep the numbers exact.";
+  let before = 0;
+  document.getElementById("s-list").innerHTML = data.map((d) => {
+    const html = `<article><h3>${d.n}. ${d.title} <small>${clock(before)} to ${clock(before + d.seconds)} · ${words(d.say)} words</small></h3>
+      <p>${d.say.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p><p class="cue">On screen: ${d.cue.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p></article>`;
+    before += d.seconds;
+    return html;
+  }).join("");
+}
+
+// ---------------------------------------------------------------- keys, clicks, windows talking to each other
+document.body.classList.toggle("notes", view === "notes");
+document.body.classList.toggle("script", view === "script");
+if (view === "script") drawScript();
+if (view === "notes") document.title = "Notes · Meddy: the back end";
+addEventListener("resize", fit); fit();
+show(at, true);
+
+addEventListener("keydown", (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const key = event.key;
+  if (view === "script") { if (key === "Escape" || key.toLowerCase() === "s") location.href = location.pathname + "#" + (at + 1); return; }
+  const move = (n) => view === "notes" ? go(n) : show(n);
+  if (["ArrowRight", "PageDown", " ", "Enter"].includes(key)) { event.preventDefault(); move(at + 1); }
+  else if (["ArrowLeft", "PageUp", "Backspace"].includes(key)) { event.preventDefault(); move(at - 1); }
+  else if (key === "Home") move(0);
+  else if (key === "End") move(slides.length - 1);
+  else if (view === "slides" && key.toLowerCase() === "n") openNotes();
+  else if (view === "slides" && key.toLowerCase() === "f") { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}); }
+  else if (view === "slides" && key.toLowerCase() === "s") location.href = location.pathname + "?view=script#" + (at + 1);
+  document.getElementById("hint").classList.add("off");
+});
+if (view === "slides") {
+  document.getElementById("stage").addEventListener("click", (event) => {
+    show(at + (event.clientX < innerWidth * 0.25 ? -1 : 1));
+    document.getElementById("hint").classList.add("off");
+  });
+  setTimeout(() => document.getElementById("hint").classList.add("off"), 9000);
+}
+addEventListener("message", (event) => {
+  const message = event.data || {};
+  if (message.meddy === "slide" && view === "notes") show(message.at, true);          // the slides moved
+  if (message.meddy === "go" && view === "slides") { other = event.source; show(message.at, true); }   // the notes moved them
+});
+if (view === "notes") {
+  document.getElementById("n-prev").addEventListener("click", () => go(at - 1));
+  document.getElementById("n-nextb").addEventListener("click", () => go(at + 1));
+  const face = document.getElementById("n-clock"), button = document.getElementById("n-timer");
+  button.addEventListener("click", () => {
+    if (ticking) { clearInterval(ticking); ticking = null; button.textContent = "Start the clock"; return; }
+    const from = Date.now() - (button.dataset.elapsed ? Number(button.dataset.elapsed) : 0);      // carries on after a pause
+    ticking = setInterval(() => { button.dataset.elapsed = Date.now() - from; face.textContent = clock((Date.now() - from) / 1000); }, 250);
+    button.textContent = "Pause the clock";
+  });
+  document.getElementById("n-reset").addEventListener("click", () => {
+    clearInterval(ticking); ticking = null; button.dataset.elapsed = ""; face.textContent = "0:00"; button.textContent = "Start the clock"; });
+}
+if (view === "script") {
+  document.getElementById("s-back").addEventListener("click", () => { location.href = location.pathname + "#" + (at + 1); });
+  document.getElementById("s-print").addEventListener("click", () => print());
+}
+</script>
+</body>
+</html>

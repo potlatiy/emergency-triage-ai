@@ -261,3 +261,24 @@ def test_the_notebook_reads_the_kind_of_complaint_with_the_hospitals_own_rule():
     exec(copy[copy.index("KINDS = ["):copy.index("def kind_of")], scope)       # only the list of patterns
     assert [(name, pattern) for name, pattern in scope["KINDS"]] == [(name, pattern) for name, pattern in core.DEPARTMENTS]
 
+
+def test_the_back_end_slides_quote_the_figures_the_code_gives(tested):
+    """docs/backend-presentation.html is recorded for the video. Its headline figures are checked here, so a slide
+    cannot go on saying 68% after the model changed."""
+    from pathlib import Path
+    df, probabilities = tested
+    slides = (Path(triage.__file__).parent / "docs" / "backend-presentation.html").read_text(encoding="utf-8")
+    truth, nurse = df["KTAS_expert"].values, df["KTAS_RN"].values
+    model = round(float((triage.most_likely(probabilities) == truth).mean()) * 100)
+    nurses = round(float((nurse == truth).mean()) * 100)
+    baseline = round(float((truth == np.bincount(truth).argmax()).mean()) * 100)
+    assert (baseline, model, nurses) == (38, 68, 85)
+    for figure in (f"<span>{baseline}%</span>", f"<span>{model}%</span>", f"<span>{nurses}%</span>"):
+        assert figure in slides
+    under = nurse > truth
+    flagged = int(((triage.safety_first(probabilities) < nurse) & under).sum())
+    assert f"{flagged} <small>of {int(under.sum())}</small>" in slides                 # 107 of 131
+    inside = triage.level_range_figures(truth, probabilities)["inside"]
+    assert f"{inside:.1%}" in slides                                                    # 90.6%
+    assert "This project is a prototype and is not medical advice." in slides
+
