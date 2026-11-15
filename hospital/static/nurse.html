@@ -222,6 +222,7 @@ document.getElementById("find").addEventListener("submit", (event) => {
 });
 
 // ---------------------------------------------------------------- one patient on the right
+const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 function facts(card) {
   const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
   const list = [`“${card.complaint}”`, `${card.age} years, ${sexWord(card.sex)}`, card.arrival,
@@ -367,8 +368,11 @@ function showLevel() {
         <span class="hint">In our tests, on patients like this Meddy's level was right 84% of the time and too low for 7%,
         the same 7% as the nurses.</span></div>`
     : `<div class="note amber" role="status"><b>▲ Meddy advises checking this patient in person.</b>
-        ${esc(advice.reasons.join("; "))}.
-        <span class="hint">In our tests, on patients like this Meddy's level was right only 63% of the time, against 84% for nurses.</span></div>`;
+        ${esc(sentence(advice.reasons.join("; ")))}.
+        <span class="hint">${advice.rule_only
+          ? `This is a safety rule, not a test result: the 1,267 patients in our tests had no check-in answers, so the tests
+             cannot say how often Meddy's level is right for a patient like this.`
+          : `In our tests, on patients like this Meddy's level was right only 63% of the time, against 84% for nurses.`}</span></div>`;
   document.getElementById("result").innerHTML = `
     <div class="report">
       <span class="role staff">Meddy's report · for the nurse to review</span>

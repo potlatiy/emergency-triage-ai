@@ -116,6 +116,10 @@ def review_advice(result, danger=False, asked=True):
     asked says whether the patient answered the danger-sign questions at all. "Not asked" is not "no": a
     patient the nurse took over before check-in was finished has no answers, so a quick look is not enough.
 
+    "rule_only" is true when a personal check is advised only for a reason our tests could not measure: the
+    1,267 test patients have no check-in answers, so a yes to a danger sign, unanswered danger questions and
+    an unread complaint are safety rules. The page must not print a test figure next to such advice.
+
     A quick review is advised only where Meddy's level held up in our tests: Meddy is at least 80% sure,
     the level is 3 to 5 and nothing in the measurements or the answers is a warning. On such patients its
     level was too low as rarely as the nurses' (7%). A suggested level 1 or 2 is also quick: accepting it
@@ -125,7 +129,8 @@ def review_advice(result, danger=False, asked=True):
     if result["unread"]:
         reasons.append("Meddy found no symptom it knows in the complaint")
     if result["level"] <= 2:
-        return {"quick": not reasons, "emergency": True, "reasons": reasons}
+        return {"quick": not reasons, "emergency": True, "reasons": reasons, "rule_only": False}
+    measured = sure >= QUICK_SURE and not result["warnings"]       # the group where Meddy's level held up in the tests
     if sure < QUICK_SURE:
         reasons.append(f"Meddy is only {sure:.0%} sure of the level")
     if danger:
@@ -134,7 +139,7 @@ def review_advice(result, danger=False, asked=True):
         reasons.append("the patient did not answer the danger-sign questions")
     if result["warnings"]:
         reasons.append("warning signs: " + ", ".join(result["warnings"]))
-    return {"quick": not reasons, "emergency": False, "reasons": reasons}
+    return {"quick": not reasons, "emergency": False, "reasons": reasons, "rule_only": bool(reasons) and measured}
 
 
 def second_check(probabilities, nurse_level):
@@ -667,7 +672,10 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
         six = {name: saved.get(name) for name in VITAL_PRESETS["normal"]}
         warnings = vital_warnings(six, saved.get("alert", "Alert"), saved.get("pain") or 0)
         measured = {**six, "alert": saved.get("alert"), "pain_word": pain_word(saved.get("pain"))}
+    # She accepted Meddy's report although Meddy itself had advised checking the patient in person: the doctor is told.
+    against_advice = visit.get("review") == "approved" and visit.get("quick_advised") == 0
     nurse_found = {"measured": measured, "warnings": warnings, "level": visit.get("level"), "review": visit.get("review"),
+                   "against_advice": against_advice,
                    "referral_reason": visit.get("referral_reason"), "note": note}
     meddy = None
     if visit.get("ai_level") is not None:
