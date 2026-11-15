@@ -38,7 +38,12 @@ PORT = int(os.environ.get("MEDDY_PORT", 8000))
 LAN = os.environ.get("MEDDY_LAN") == "1"
 # Set when the hospital runs online (see deploy/huggingface): the QR code then points to this address.
 PUBLIC_URL = os.environ.get("MEDDY_PUBLIC_URL") or None
-app = FastAPI(title="Digital hospital")
+# No /docs, /redoc or /openapi.json: the list of every address is for developers, and those pages load scripts
+# from other sites.
+app = FastAPI(title="Digital hospital", docs_url=None, redoc_url=None, openapi_url=None)
+# The pages, by address. The guard lists the fingerprints of each page's own scripts in its content policy.
+PAGES = {"/": "index.html", "/nurse": "nurse.html", "/doctor": "doctor.html", "/board": "board.html",
+         "/chief": "chief.html", "/privacy": "privacy.html"}
 
 
 # ---------------------------------------------------------------- staff only
@@ -53,6 +58,7 @@ FOR_PATIENTS = ("/api/register", "/api/follow-up/", "/api/checkin", "/api/worse"
                 "/api/staff/logout",
                 "/api/board")
 _wrong_pins = {}            # address -> (wrong tries, refused until)
+_log_checked = None         # (when, the last check of the log's seals): see chief_security
 
 
 def _staff_token():
@@ -84,20 +90,34 @@ async def watched(request, call_next):
     """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching.
     A request for a staff screen's data without the staff PIN is refused."""
     path = request.url.path
-    headers = guard.security_headers(path, request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
+    page = STATIC / PAGES[path] if path in PAGES else None
+    scripts = guard.marks_of(page) if page is not None and page.exists() else ()
+    headers = guard.security_headers(path, request.headers.get("x-forwarded-proto", request.url.scheme) == "https",
+                                     scripts)
 
     def refuse(status, detail, more=None):
         return JSONResponse({"detail": detail}, status_code=status, headers={**headers, **(more or {})})
 
     if path.startswith("/api/"):
-        # The guard against spam and abuse (guard.py): nothing oversized, and nobody calls the open addresses
-        # more often than a real phone would.
-        if request.method == "POST" and guard.body_too_large(request.headers):
+        # The guard against spam and abuse (guard.py): nothing oversized, nobody calls the open addresses more
+        # often than a real phone would, and an address that keeps being refused is shut out for a while.
+        # Staff who signed in with the PIN are not limited: they may share the hospital's address with a spammer.
+        who, write = who_asks(request), request.method == "POST"
+        if write and guard.body_too_large(request.headers):
+            guard.note("too_large", who, path)
             return refuse(413, "This request is larger than anything Meddy asks for.")
-        wait = guard.too_many(who_asks(request), path)
-        if wait:
-            return refuse(429, "Too many requests from this connection. Wait a moment, then try again.",
-                          {"Retry-After": str(wait)})
+        if not (STAFF_PIN is not None and is_staff(request)):
+            left = guard.blocked(who, path)
+            if left:
+                guard.note("blocked", who, path, strike=False)
+                return refuse(429, f"Too many refused requests came from this connection. It can be used again in "
+                                   f"about {(left + 59) // 60} minutes. Until then, please speak to the staff at the desk.",
+                              {"Retry-After": str(left)})
+            wait = guard.too_many(who, path)
+            if wait:
+                guard.note("too_many", who, path, strike=write)       # reading too often never blocks anybody
+                return refuse(429, "Too many requests from this connection. Wait a moment, then try again.",
+                              {"Retry-After": str(wait)})
         db.seen()
         if path.startswith("/api/chief/"):
             if not is_chief(request):
@@ -122,6 +142,7 @@ def own_phone(visit, request):
     a key (the nurse took the patient over, or it is from before keys) is left as it was."""
     key = visit.get("phone_key")
     if key and not hmac.compare_digest((request.headers.get("x-meddy-visit") or "").encode(), key.encode()):
+        guard.note("wrong_phone", who_asks(request), request.url.path)
         raise HTTPException(403, "This visit was registered on another phone. Use that phone, or speak to the staff.")
 
 
@@ -482,6 +503,7 @@ def staff_login(body: Login, request: Request):
     # Compared as bytes: as text, a PIN typed with letters outside English made the comparison itself fail.
     if not hmac.compare_digest(body.pin.strip().encode(), pin.encode()):
         _wrong_pins[who] = (0, time.time() + 60) if tries + 1 >= 5 else (tries + 1, 0)
+        guard.note("wrong_pin", who, request.url.path)
         raise HTTPException(401, "That is not the staff PIN.")
     _wrong_pins.pop(who, None)
     answer = JSONResponse({"locked": False})
@@ -533,6 +555,16 @@ def chief_page():
 def chief_wipe(body: Wiping):
     """Erase everything and start as on the first day (chief doctor only, and only with the word ERASE)."""
     return db.wipe_everything()
+
+
+@app.get("/api/chief/security")
+def chief_security():
+    """What the guard refused since the server started, who is blocked now, and whether the log of the visits is
+    whole (chief doctor only). Addresses appear only as fingerprints."""
+    global _log_checked
+    if _log_checked is None or time.time() - _log_checked[0] > 20:        # the whole log is read: not at every look
+        _log_checked = (time.time(), db.log_check())
+    return {**guard.report(), "log": _log_checked[1]}
 
 
 @app.get("/api/chief/report")

@@ -26,6 +26,10 @@ The same text is on the site: https://darkshdws-meddy.hf.space/privacy (every sc
 It is kept in one SQLite file on the Hugging Face Space, with a copy in the Space's private storage, until the chief
 doctor presses "Erase everything". "Start a new day" closes open visits but does not delete them.
 
+**Against spam,** Meddy's own server counts how often each IP address calls it (see [SECURITY.md](SECURITY.md)).
+The addresses stay in the server's memory for at most two hours and are never written to the database. The chief
+doctor's panel shows them only as short fingerprints that cannot be turned back into an address.
+
 ## Cookies (strictly necessary only, so no consent banner is needed)
 
 | Name | What it does | Lasts |

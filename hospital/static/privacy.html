@@ -84,6 +84,9 @@
     <p>In one database file on our server, hosted on Hugging Face Spaces, with a copy in the Space's private storage
       so a restart loses nothing. It stays there until the demonstration is erased ("Erase everything" on the chief
       doctor's panel), which we do regularly. "Start a new day" closes open visits but does not delete them.</p>
+    <p><b>Against spam,</b> Meddy's own server counts how often each IP address calls it. The addresses stay in the
+      server's memory for at most two hours and are never written to the database. The chief doctor's panel shows them
+      only as short fingerprints that cannot be turned back into an address.</p>
     <p><b>The AI:</b> Meddy's urgency model and the Gemma 3 language model (which writes the follow-up questions,
       the nurse's summary and tidies the doctor's note) both run inside this server. Nothing is sent to OpenAI,
       Google, Anthropic or any other AI service.</p>

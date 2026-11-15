@@ -114,6 +114,13 @@
       <p class="sub">How the nurses' final levels compare with Meddy's suggestion today. The nurse always decides.</p>
       <div class="facts" id="meddy"></div>
     </section>
+    <section class="card" aria-labelledby="guard-title">
+      <h2 id="guard-title">Security</h2>
+      <p class="sub">What the server refused since it started, and whether the log of the visits is unchanged.
+        Connections are shown only as fingerprints. <a href="https://github.com/potlatiy/emergency-triage-ai/blob/main/SECURITY.md">What is and is not protected</a></p>
+      <div class="facts" id="guard"></div>
+      <p class="sub" id="guard-note" role="status"></p>
+    </section>
   </div>
   <p class="foot" id="foot"></p>
   <section class="card danger-zone" aria-labelledby="wipe-title">
@@ -170,8 +177,32 @@ async function load() {
   $("foot").textContent = "Patients are today's real patients only. The doctors' load also counts the simulated patients of other nurses"
     + (r.simulation ? " (the simulated hospital is on)." : ".");
 }
-load();
-setInterval(() => { if (!document.hidden) load(); }, 10000);
+// The guard's own figures (GET /api/chief/security): refusals, blocked connections, and the check of the log's seals.
+async function loadGuard() {
+  let g;
+  try { const response = await fetch("/api/chief/security", { cache:"no-store" }); if (!response.ok) return; g = await response.json(); }
+  catch (e) { return; }
+  const log = g.log, r = g.refused;
+  $("guard").innerHTML = [
+    [log.whole ? "Unchanged" : "Changed", `log of the visits (${log.lines} sealed ${log.lines === 1 ? "line" : "lines"} checked)`],
+    [g.blocked_now.length, g.blocked_now.length === 1 ? "connection blocked now" : "connections blocked now"],
+    [r.too_many + r.blocked, "requests over the limit"],
+    [r.wrong_phone, "tries on another patient's visit"],
+    [r.wrong_pin, "wrong PIN tries"],
+    [r.too_large, "oversized requests"]]
+    .map(([n, label]) => `<div class="fact"><b>${esc(n)}</b><span>${esc(label)}</span></div>`).join("");
+  const notes = [`Counted since ${g.since}.`];
+  if (!g.limits_on) notes.push("The limits are switched off (MEDDY_LIMITS=off).");
+  if (g.pressure.length) notes.push("Under pressure now: " + g.pressure.join(", ") + ". Each connection gets a smaller share there.");
+  if (!log.whole) notes.push("The log was changed outside Meddy: " + log.broken.map((b) => `${b.visit} (${b.how})`).join("; ")
+    + (log.broken_count > log.broken.length ? ` and ${log.broken_count - log.broken.length} more` : "") + ".");
+  if (log.older) notes.push(`${log.older} older lines are from before the log was sealed and cannot be checked.`);
+  if (!log.own_key) notes.push("The seals use the key built into the code (no MEDDY_LOG_KEY is set).");
+  if (g.recent.length) notes.push("Last refused: " + g.recent.slice(0, 3).map((x) => `${x.at} ${x.why.replace("_", " ")} at ${x.where}`).join("; ") + ".");
+  $("guard-note").textContent = notes.join(" ");
+}
+load(); loadGuard();
+setInterval(() => { if (!document.hidden) { load(); loadGuard(); } }, 10000);
 // "Save as PDF": the browser's print window, set to the day summary (choose "Save as PDF" as the printer).
 $("save-pdf").addEventListener("click", async () => { await load(); window.print(); });
 $("wipe").addEventListener("submit", async (event) => {
