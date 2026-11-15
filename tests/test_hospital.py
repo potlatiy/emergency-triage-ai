@@ -2180,10 +2180,10 @@ def test_with_a_staff_pin_the_staff_screens_need_it_and_the_phone_does_not(staff
     for path, body in [("/api/reset", {}), ("/api/line/wait", {}), ("/api/triage", {"reg_no": reg}),
                        ("/api/staff/duty", {"reg_no": "DR-1001", "on_duty": False})]:
         assert client.post(path, json=body).status_code == 401, path
-    assert client.get("/api/staff/session").json() == {"locked": True}
+    assert client.get("/api/staff/session").json() == {"locked": True, "pin": True}
     assert client.post("/api/staff/login", json={"pin": "0000"}).status_code == 401
     assert client.post("/api/staff/login", json={"pin": "4821"}).status_code == 200
-    assert client.get("/api/staff/session").json() == {"locked": False}
+    assert client.get("/api/staff/session").json() == {"locked": False, "pin": True}
     assert client.get("/api/nurse/patients").status_code == 200
     client.post("/api/staff/logout")
     assert client.get("/api/nurse/patients").status_code == 401
@@ -2197,7 +2197,7 @@ def test_guessing_the_staff_pin_is_slowed_down(staff_pin):
 
 def test_without_a_staff_pin_the_screens_stay_open():
     assert server.STAFF_PIN is None
-    assert client.get("/api/staff/session").json() == {"locked": False}
+    assert client.get("/api/staff/session").json() == {"locked": False, "pin": False}
     assert client.get("/api/nurse/patients").status_code == 200
 
 
@@ -2478,7 +2478,7 @@ def test_the_chief_doctors_panel_has_its_own_pin(staff_pin, monkeypatch):
     client.post("/api/staff/login", json={"pin": "4821"})                      # a nurse is signed in
     assert client.get("/api/nurse/patients").status_code == 200
     assert client.get("/api/chief/report").status_code == 401                 # the staff PIN does not open the panel
-    assert client.get("/api/staff/session", params={"role": "chief"}).json() == {"locked": True}
+    assert client.get("/api/staff/session", params={"role": "chief"}).json() == {"locked": True, "pin": True}
     assert client.post("/api/staff/login", json={"pin": "4821", "role": "chief"}).status_code == 401
     assert client.post("/api/staff/login", json={"pin": "9911", "role": "chief"}).status_code == 200
     report = client.get("/api/chief/report").json()

@@ -234,7 +234,21 @@
       if (response.status === 401 && String(args[0]).startsWith("/api/")) showLock();
       return response;
     };
-    realFetch("/api/staff/session?role=" + role, { cache: "no-store" }).then((r) => r.json()).then((s) => { if (s.locked) showLock(); }).catch(() => {});
+    realFetch("/api/staff/session?role=" + role, { cache: "no-store" }).then((r) => r.json()).then((s) => {
+      if (s.locked) { showLock(); return; }
+      if (!s.pin) return;
+      // Open: a small "Lock this screen" button, so a nurse who steps away (or anyone testing the PIN) can lock it.
+      const lockButton = document.createElement("button");
+      lockButton.type = "button";
+      lockButton.textContent = "🔒 Lock this screen";
+      lockButton.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:1100;padding:10px 16px;border:2px solid #aab8b0;" +
+        "border-radius:999px;background:#fff;color:#16252a;font:inherit;font-weight:700;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.12)";
+      lockButton.addEventListener("click", async () => {
+        await realFetch("/api/staff/logout", { method: "POST" }).catch(() => {});
+        location.reload();
+      });
+      document.body.appendChild(lockButton);
+    }).catch(() => {});
   }
 
   // A new version online: an open tab keeps its old screens until it is reloaded, so it says so.
