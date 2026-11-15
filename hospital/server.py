@@ -33,6 +33,14 @@ PUBLIC_URL = os.environ.get("MEDDY_PUBLIC_URL") or None
 app = FastAPI(title="Digital hospital")
 
 
+@app.middleware("http")
+async def watched(request, call_next):
+    """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching."""
+    if request.url.path.startswith("/api/"):
+        db.seen()
+    return await call_next(request)
+
+
 def lan_ip():
     """This computer's address on the local network, or None. Connecting a UDP socket sends nothing."""
     try:
@@ -124,6 +132,8 @@ class Joining(BaseModel):
     # (False: "this is not right, do not pass it on"). Both optional, so older pages keep working.
     note: str | None = Field(default=None, max_length=300)
     summary_ok: bool = True
+    # The doctor the nurse chose from the short list, if she chose one: the patient then waits for this doctor.
+    doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
 class Referral(BaseModel):
@@ -135,6 +145,8 @@ class Referral(BaseModel):
     department: str | None = None
     note: str | None = Field(default=None, max_length=300)  # for the doctor's patient summary, like in Joining
     summary_ok: bool = True
+    # The doctor the nurse chose from the short list, if she chose one: the patient then waits for this doctor.
+    doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
 class Duty(BaseModel):
@@ -148,6 +160,14 @@ class Finished(BaseModel):
 
 class Calling(BaseModel):
     doctor_reg: str
+
+
+class Simulation(BaseModel):
+    on: bool
+
+
+class Matching(BaseModel):
+    match: dict[str, float] = Field(max_length=20)
 
 
 def open_visit(reg_no):
@@ -300,6 +320,8 @@ def triage(body: Assessment):
     for option in result["department_options"]:
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
     result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])
+    # The best doctor for this patient and a short list of three more, each with how busy they are now.
+    result["doctors"] = db.doctor_choices(result["department_match"])
     # Keep the AI's suggestion and the measurements: the doctor's screen and the test regime need them later.
     db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
                        [result["probabilities"][str(l)] for l in core.LEVELS],
@@ -317,9 +339,12 @@ def join(body: Joining):
         raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
     try:        # the state is checked again inside the database, together with the change (two quick clicks)
         ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review,
-                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
+                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok,
+                                  doctor_reg=body.doctor_reg)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
+    except db.UnknownDoctor:
+        raise HTTPException(422, "No such doctor to choose. Choose one from the list.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"ticket": ticket, "called": called, **db.line()}
@@ -364,9 +389,11 @@ def refer(body: Referral):
     known_department(body.department)
     try:
         return db.refer(body.reg_no, body.level, body.reason, body.department,
-                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
+                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok, doctor_reg=body.doctor_reg)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
+    except db.UnknownDoctor:
+        raise HTTPException(422, "No such doctor to choose. Choose one from the list.")
 
 
 @app.get("/api/doctor/{doctor_reg}/patients")
@@ -375,6 +402,7 @@ def doctor_patients(doctor_reg: str):
     screen = db.doctor_patients(doctor_reg)
     if screen is None:
         raise HTTPException(404, "No doctor with this registration number.")
+    db.watching(doctor_reg)         # a person plays this doctor now: the simulation leaves them alone
     return screen
 
 
@@ -418,6 +446,20 @@ def duty(body: Duty):
     return db.staff()
 
 
+@app.post("/api/doctor-choices")
+def doctor_choices(body: Matching):
+    """The doctors the nurse can choose from, asked for again while she reads the report: who is free now."""
+    match = {name: value for name, value in body.match.items() if name in core.DEPARTMENT_NAMES and 0 <= value <= 1}
+    return db.doctor_choices(match)
+
+
+@app.post("/api/staff/simulation")
+def simulation(body: Simulation):
+    """Switch the simulated rest of the hospital on or off (made-up patients coming to the doctors and leaving)."""
+    db.set_simulation(body.on)
+    return db.staff()
+
+
 @app.post("/api/reset")
 def reset():
     """"Start a new day": open visits are closed and kept, the made-up patients are back. Nothing is deleted and
@@ -457,5 +499,6 @@ if __name__ == "__main__":
     # The database is kept between starts: everything from earlier is still there ("Start a new day" closes the
     # open visits). Online, a copy goes to lasting storage every few seconds (see db.start_keeping).
     db.start_keeping()
+    db.start_simulation()
     online = LAN or PUBLIC_URL
     uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning")

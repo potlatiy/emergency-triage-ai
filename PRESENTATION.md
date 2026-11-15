@@ -34,6 +34,10 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
    and a complaint it has already seen is answered at once, so the recording will not wait.
 4. On the nurse's screen open "Behind the scenes" and press "Start a new day", so the recording begins with a
    clean waiting room. Then reload the patient's window.
+5. The rest of the hospital runs by itself while a screen is open: doctors get made-up patients from other nurses
+   and are free again a few minutes later, so the nurse's doctor list shows who is free and who is busy. Keep it on
+   for the recording ("Simulated hospital: on" in "Behind the scenes"). It never touches your own patient, the
+   line, or the doctor whose screen you have open.
 
 ## Numbers to know by heart
 

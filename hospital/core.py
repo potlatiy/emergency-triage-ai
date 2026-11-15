@@ -5,7 +5,7 @@ What is here, and what uses AI:
                    local language model chooses and words for the exact complaint
 2. triage        - the urgency level, from the model tested in the notebook
 3. line order    - who is seen next (plain rules)
-4. department    - which department a complaint belongs to (a trained model when it is sure, plain rules otherwise)
+4. department    - which department a complaint belongs to (the trained model and key-word rules together)
 The doctors, the registration numbers and the line itself live in the database (db.py).
 """
 
@@ -50,6 +50,53 @@ VITAL_PRESETS = {
     "feverish": {"SBP": 132, "DBP": 82, "HR": 108, "RR": 22, "BT": 38.9, "Saturation": 96},
     "unstable": {"SBP": 88, "DBP": 54, "HR": 128, "RR": 28, "BT": 36.4, "Saturation": 89},
 }
+
+
+# ---------------------------------------------------------------- patients' words, nurses' words
+# Both models learned from complaints as nurses write them: "abd pain", "dyspnea", "ant. chest pain". A patient
+# types "my heart hurts" or "i cant breathe", and the models, which read letter patterns, half recognise it at
+# best: "heart pain" came out as neurology. So before the models read a complaint, everyday words are put in
+# the nurses' words and filler words are left out. Staff still see what the patient wrote, word for word.
+# On 34 everyday complaints this raised the urgency model's average confidence from 55% to 66%.
+EVERYDAY_TO_NURSE = [
+    (r"\b(can'?t|cannot|can not|hard to|struggling to|trouble|difficulty|problems?)( catch(ing)?)?( my)? breath(e|ing)?\b", "dyspnea"),
+    (r"\bshort(ness)? of breath\b|\bbreathless(ness)?\b|\bout of breath\b", "dyspnea"),
+    (r"\b(vomit(ing|ed)?|throw(ing)? up|threw up) blood\b|\bblood in (my )?vomit\b", "hematemesis"),
+    (r"\b(throw(ing|s)? up|threw up|being sick|puk(e|ed|ing))\b", "vomiting"),
+    (r"\bblood in (my )?(pee|urine)\b", "hematuria"),
+    (r"\b(blood in (my )?(poo|poop|stool)|black (poo|poop|stool))\b", "melena"),
+    (r"\b(it )?burns? when i (pee|urinate)\b|\bpain(ful)? when (i )?(pee|peeing|urinat\w*)\b|\bpainful (peeing|urination)\b",
+     "dysuria"),
+    (r"\b(passed out|blacked out|fainted|fainting|collapsed)\b", "syncope"),
+    (r"\bnose ?bleed(s|ing)?\b|\bbleeding from (my )?nose\b", "epistaxis"),
+    (r"\b(had a |having a )?fits?\b|\bconvulsions?\b", "seizure"),
+    (r"\bheart (is )?(racing|pounding|beating fast|fluttering|skipping)\b|\bracing heart\b", "palpitation"),
+    (r"\bheart(?!burn)\b", "chest"),
+    (r"\b(stomach|belly|tummy)( ?ache)?\b", "abd pain"),
+    (r"\b(broken|broke)\b", "fracture"),
+    (r"\b(cut|cuts)\b", "laceration"),
+    (r"\bdizzy\b", "dizziness"),
+    (r"\bpoo(p)?\b", "stool"),
+    (r"\b(pee|peeing|wee)\b", "urination"),
+    (r"\b(feel(ing)? )?(very )?(weak|tired|exhausted)\b", "general weakness"),
+    (r"\b(hurts?|hurting|aches?|aching|painful)\b", "pain"),
+    (r"\bpain (in|on) (the |my |both )?([a-z]+)", r"\3 pain"),
+]
+_FILLER = re.compile(r"\b(i|my|me|a|an|the|have|has|had|got|am|is|are|was|it|its|im|ive|been|also|very|really|so|bad|badly|"
+                     r"lot|since|for|this|that|morning|today|yesterday|tonight|all|day|days|week|weeks|hour|hours|ago|at|"
+                     r"work|home|when|after|before|of|with|feel|feeling|think|some)\b")
+
+
+def nurse_words(complaint):
+    """The complaint as the models read it: everyday words in the nurses' words, filler words left out.
+    "My heart hurts since this morning" becomes "chest pain"."""
+    text = f" {(complaint or '').lower()} "
+    for pattern, nurse in EVERYDAY_TO_NURSE:
+        text = re.sub(pattern, nurse, text)
+    text = _FILLER.sub(" ", text)
+    text = re.sub(r"\b(\w+ )?pain( pain)+\b", lambda m: (m.group(1) or "") + "pain", text)
+    text = re.sub(r"\s+", " ", text).strip(" ,.")
+    return text or (complaint or "").lower().strip()
 
 
 # ---------------------------------------------------------------- can Meddy read this complaint?
@@ -149,7 +196,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
     """Suggested urgency level for one patient, with the probability of each level."""
     vitals = {**VITAL_PRESETS["normal"], **(vitals or {})}
     row = pd.DataFrame([{
-        TEXT: (complaint or "").lower(),
+        TEXT: nurse_words(complaint),
         "Age": age,
         "Sex": 1 if sex == "Female" else 2,
         "Arrival mode": {"Walked in": 1, "Public ambulance": 2, "Private car": 3, "Private ambulance": 4}.get(arrival, 1),
@@ -166,23 +213,15 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
     # rates higher when in doubt, is kept for the second check: shown as the suggestion it rated 1 patient
     # in 3 too high.
     level = int(LEVELS[int(probabilities.argmax())])
-    # Which department? The trained model answers when it is sure enough, the key-word rule otherwise.
-    department_odds = _assignment.predict_proba(row)[0]
-    best = int(department_odds.argmax())
-    if department_odds[best] >= ASSIGN_SURE_ENOUGH:
-        department = str(_assignment.classes_[best])
-        how = f"trained model, {department_odds[best]:.0%} sure"
-    else:
-        department = department_for(complaint, injury)
-        how = f"key-word rule (the model was only {department_odds[best]:.0%} sure)"
-    # Three departments for the nurse to choose from: the one picked above, then the model's next most likely.
-    names = [str(c) for c in _assignment.classes_]
-    order = [names.index(department)] + [i for i in np.argsort(-department_odds) if names[i] != department]
+    # Which department? The trained model and the key-word rule together (see department_match).
+    match, how = department_match(complaint, injury, _assignment.predict_proba(row)[0])
+    order = sorted(match, key=match.get, reverse=True)
     return {
-        "department": department,
+        "department": order[0],
         "department_how": how,
-        "department_options": [{"department": names[i], "chance": round(float(department_odds[i]), 3)}
-                               for i in order[:3]],
+        # The best department and three more for the nurse to choose from, each with how well it matches.
+        "department_options": [{"department": name, "chance": round(match[name], 3)} for name in order[:4]],
+        "department_match": {name: round(match[name], 3) for name in order},      # every department, for the doctors
         "level": level,
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
@@ -228,6 +267,32 @@ def department_for(complaint, injury=False):
         if re.search(pattern, text):
             return name
     return "Trauma and orthopaedics" if injury else DEFAULT_DEPARTMENT
+
+
+def department_match(complaint, injury, odds):
+    """How well each department matches a complaint, from 0 to 1, and how that was decided.
+
+    Half of it is the trained model's estimate, half the key-word rule. The rule looks at the patient's words
+    and at the nurses' words they were put in; the first department it names counts fully, any other it names
+    counts half. When the rule names nothing, the model decides alone, unless it is less than 70% sure: then
+    the complaint goes to general medicine, as before (or to trauma for an injury).
+    Both together fix what each gets wrong alone: the model read "heart pain" as neurology, the rule cannot
+    weigh "chest pain and cough" between the heart and the lungs."""
+    model = {str(name): float(p) for name, p in zip(_assignment.classes_, odds)}
+    for name in DEPARTMENT_NAMES:
+        model.setdefault(name, 0.0)
+    texts = [f" {(complaint or '').lower()} ", f" {nurse_words(complaint)} "]
+    named = [name for name, pattern in DEPARTMENTS if any(re.search(pattern, t) for t in texts)]
+    if not named and (injury or max(model.values()) < ASSIGN_SURE_ENOUGH):
+        named = ["Trauma and orthopaedics" if injury else DEFAULT_DEPARTMENT]
+    best_model = max(model, key=model.get)
+    if not named:
+        return model, f"trained model, {model[best_model]:.0%} sure"
+    weight = {name: 1.0 if i == 0 else 0.5 for i, name in enumerate(named)}
+    total = sum(weight.values())
+    match = {name: 0.5 * p + 0.5 * weight.get(name, 0) / total for name, p in model.items()}
+    best = max(match, key=match.get)
+    return match, f"trained model and key words, {match[best]:.0%} match"
 
 
 # ---------------------------------------------------------------- the questionnaire
