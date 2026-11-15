@@ -1178,8 +1178,8 @@ def test_without_the_language_model_the_summary_uses_only_the_patients_words(mon
     refer(reg_no, department="Cardiology")
     said = summary_on_the_doctors_card(reg_no)["patient_said"]
     assert said["written_by"] == "code"
-    template = set("the patient a year old man woman reports they answered yes no to of every danger sign signs "
-                   "describes pain as and says it was caused by an injury".split())
+    template = set("the patient a year old man woman reports report they answered yes no to of every danger sign signs "
+                   "describe pain as and say it was caused by an injury".split())
     patients_own = set("crushing chest pain and sweating pressure or tightness".split()) | {"67", "1", "3"}
     words = set(re.findall(r"[a-z0-9]+", said["text"].lower()))
     assert words <= template | patients_own, words - template - patients_own

@@ -605,9 +605,9 @@ def plain_summary(complaint, age, sex, answers, injury=False):
         parts.append(f"answered yes to {yes} of {len(danger)} danger signs" if yes else "answered no to every danger sign")
     feel = next((a["answer"] for a in answers if a.get("topic") == PAIN_FEEL["topic"] and a.get("answer")), None)
     if feel:
-        parts.append("reports no pain" if feel == PAIN_NONE else f"describes the pain as {feel.lower()}")
+        parts.append("report no pain" if feel == PAIN_NONE else f"describe the pain as {feel.lower()}")
     if injury:
-        parts.append("says it was caused by an injury")
+        parts.append("say it was caused by an injury")
     if not parts:
         return first
     second = "They " + (parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]) + "."
