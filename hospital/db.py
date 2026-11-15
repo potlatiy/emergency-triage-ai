@@ -460,6 +460,9 @@ def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department
     now with the nurse: the visit moves on, so it shows on her list and the phone stops asking questions."""
     record = json.dumps({**vitals, "alert": alert, "pain": pain})
     with _lock, _conn:
+        before = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        if before and before["status"] == "registered":
+            _event(reg_no, "taken by the nurse", "nurse", "check-in on the phone was not finished")
         _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_advised = ?, "
                       "status = CASE WHEN status = 'registered' THEN 'nurse' ELSE status END, "
                       "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",

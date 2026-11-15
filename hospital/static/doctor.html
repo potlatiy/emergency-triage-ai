@@ -452,6 +452,7 @@ function summaryBlock(p) {
     : nurse.warnings.length ? "Warning signs in the measurements: " + nurse.warnings.join(", ") + "."
     : "No warning sign in the measurements.";
   const review = nurse.review === "approved" ? " She accepted Meddy's report after reviewing it."
+      + (nurse.against_advice ? " Meddy itself had advised checking the patient in person." : "")
     : nurse.review === "checked" ? " She checked the patient herself." : "";
   const flag = !meddy ? "" : meddy.flag === "strong" ? "▲ Meddy thinks this patient is more urgent than the nurse's level."
     : meddy.flag === "mild" ? "Meddy leaned more urgent than the nurse's level, but not strongly." : "";
