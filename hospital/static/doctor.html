@@ -195,6 +195,10 @@
   }
   @media (prefers-reduced-motion: reduce) { .live i { animation:none; } .pt { transition:none; } }
   .pick { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .pick button { min-height:48px; padding:10px 18px; border:2px solid var(--line); border-radius:16px; background:var(--card);
+                 color:var(--ink); font:inherit; font-size:1rem; text-align:left; cursor:pointer; }
+  .pick button:hover { border-color:var(--blue); background:var(--blue-tint); }
+  body.picking #queue-title, body.picking #list-title, body.picking #queue, body.picking #list, body.picking #live { display:none; }
   /* patients waiting in line for this doctor, and the question when the nurse sends one */
   #queue { list-style:none; margin:0 0 22px; padding:0; }
   #queue li { display:flex; align-items:center; gap:12px; margin-top:10px; padding:12px 14px; border:2px dashed #b9c6e8;
@@ -313,7 +317,8 @@ function chooseDoctor(next) {
   $("list").innerHTML = ""; $("card").innerHTML = "";
   check();
 }
-$("who").addEventListener("change", (event) => chooseDoctor(event.target.value));
+$("who").addEventListener("change", (event) => { document.body.classList.remove("picking"); pickerDrawn = false;
+  $("call").hidden = false; chooseDoctor(event.target.value); });
 
 // ---------------------------------------------------------------- asking the server
 
@@ -336,6 +341,7 @@ async function choosePage() {
   staff.doctors.filter((d) => d.on_duty).forEach((d) => (teams[d.department] = teams[d.department] || []).push(d));
   $("who").innerHTML = `<option value="" selected disabled>Choose your name</option>` + staff.doctors.map((d) =>
     `<option value="${esc(d.reg_no)}">${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)} — ${esc(doctorState(d))}</option>`).join("");
+  document.body.classList.add("picking");          // nothing else on the screen until a doctor is chosen
   $("me-name").textContent = "Who are you?";
   $("me-where").textContent = "Choose your name once. This device remembers it.";
   $("call").hidden = true;
@@ -344,7 +350,7 @@ async function choosePage() {
     <h3 class="sub" style="margin-top:18px">${esc(team)}</h3>
     <div class="pick">${teams[team].map((d) => `<button type="button" class="mini" data-reg="${esc(d.reg_no)}">${esc(d.name)} · ${esc(d.room)} · ${esc(doctorState(d))}</button>`).join("")}</div>`).join("");
   $("card").querySelectorAll("[data-reg]").forEach((b) => b.addEventListener("click", () => {
-    pickerDrawn = false; $("call").hidden = false; chooseDoctor(b.dataset.reg); }));
+    pickerDrawn = false; $("call").hidden = false; document.body.classList.remove("picking"); chooseDoctor(b.dataset.reg); }));
 }
 
 async function check() {
