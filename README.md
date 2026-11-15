@@ -99,10 +99,14 @@ which rebuilds itself when `main` changes.
 | Waiting room (phone) | Your place in line, updated by itself | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
 | Doctor (doctor's screen, phone) | Department and doctor. The doctor calls the next patient; the phone shows the room | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
-The internal database is one SQLite file with four tables (and a small one for counters): doctors, visits, the questionnaire answers, and a
-registry of people that keeps one open visit per insurance card. The doctors, their registration numbers and the
-patients already in the department are made up. No patient names are asked for, no card number is stored (only a
-one-way fingerprint), and the database is wiped each time the server starts.
+The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
+visits, the questionnaire answers, a log of every step of every visit (with its time and who did it), a registry
+of people that keeps one open visit per insurance card, and counters. Nothing is deleted: "Start a new day" closes
+the open visits and keeps them, and registration numbers are never given twice. Online, a copy of the file is kept
+in the Space's storage bucket every few seconds and taken back at start, so a restart or a new version of the code
+loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The doctors,
+their registration numbers and the patients already in the department are made up. No patient names are asked
+for, and no card number is stored (only a one-way fingerprint).
 
 **Two things have been tested on real data:** the urgency level and the choice of department. The questionnaire, the line and the choice of doctor are demonstrations.
 
