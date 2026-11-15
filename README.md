@@ -15,6 +15,17 @@ room (a board of ticket numbers) and the chief doctor (the day at a glance).
 > questions answered on the phone, a report the nurse accepts or checks in person, a line ordered by urgency, and
 > the right doctor.
 >
+> **Fewer hand-offs from the door to the doctor.** The patient registers and answers the history questions on their
+> own phone, so nobody types them in at a desk and the nurse does not ask them again. The nurse sends the patient
+> to a chosen doctor in one tap, the doctor's screen asks "are you free now?", and the phone and the waiting-room
+> board tell the patient which room to go to: nobody walks out to call names or carries a file between rooms. The
+> doctor already has a summary of what the patient said, what the nurse found and what Meddy suggested.
+>
+> **Less time to the doctor, in a simulation.** With timings we assumed (the data has none), the average time from
+> the door to the doctor falls from 104 to 55 minutes, and from 29 to 17 for the most urgent patients. Most of that
+> saving comes from one assumption, a doctor saving one minute per patient because the answers are already there;
+> without it the saving is 7 minutes ([section 5](#5-does-the-whole-chain-save-time-a-simulation-with-assumed-timings)).
+>
 > **What we do not claim:** that the department gets faster. Ordering the line by urgency moves waiting time
 > rather than removing it. In our simulation the most urgent patients wait 13 minutes instead of 88, everyone else
 > waits about 109 instead of 88, and the average stays about the same (88 and 90). Whether the whole chain saves time
