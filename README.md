@@ -38,6 +38,9 @@ room (a board of ticket numbers) and the chief doctor (the day at a glance).
 
 **Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
 
+**The back end in ten slides:** https://potlatiy.github.io/emergency-triage-ai/backend-presentation.html
+(press N for the speaker's notes in a second window, S for the whole script; the file is `docs/backend-presentation.html`)
+
 **Try it online:** [the patient's phone](https://darkshdws-meddy.hf.space) ·
 [the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor) ·
 [the waiting room's board](https://darkshdws-meddy.hf.space/board) · [the chief doctor's panel](https://darkshdws-meddy.hf.space/chief).
