@@ -2406,3 +2406,7 @@ def test_the_short_list_offers_no_department_that_does_not_fit():
     choices = db.doctor_choices(match)
     assert {d["department"] for d in [choices["suggested"], *choices["others"]]} <= {"Gastroenterology and surgery",
                                                                                      "General medicine"}
+
+
+def test_the_waiting_room_tickets_start_at_a001_each_day():
+    assert sorted(p["ticket"] for p in db.line()["patients"]) == ["A001", "A002", "A003", "A004", "A005"]

@@ -250,7 +250,7 @@ def _start_day():
     departments = {reg_no: department for reg_no, _, department, _, _ in SEED_DOCTORS}
     for doctor, complaint, age, sex, level, preset, pain, alert, minutes_ago in SEED_WITH_DOCTOR:
         _made_up_visit(complaint, age, sex, level, preset, pain, alert, START_CLOCK - minutes_ago,
-                       departments[doctor], doctor)
+                       departments[doctor], doctor, series="B")      # already with a doctor: not the line's tickets
         _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor,))
     for complaint, level, minutes_ago in SEED_WAITING:
         _made_up_visit(complaint, 40, "Female", level, "normal", 3, "Alert", START_CLOCK - minutes_ago)
