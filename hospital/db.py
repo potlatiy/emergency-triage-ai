@@ -193,6 +193,15 @@ def _meta(key, value=None):
                   (key, value))
 
 
+def _clock():
+    """Minutes on the hospital's clock: real minutes since the day started, plus any jumps from "15 minutes pass".
+    Waiting times, moving up the line and re-check times all run on it, so a patient who has really waited half
+    an hour has waited 30 minutes, and the doctors' busy times (real time) agree with the line."""
+    started = _setting("day_started", None)
+    real = int((time.time() - started) // 60) if started else 0
+    return _meta("clock") + real
+
+
 def _next_number(key):
     number = _meta(key) + 1
     _meta(key, number)
@@ -207,7 +216,7 @@ def _now():
 def _event(reg_no, what, who=None, detail=None):
     """Write one step of a visit into the log. The caller holds the lock and the transaction."""
     _conn.execute("INSERT INTO events (visit_reg, day, clock, at, what, who, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (reg_no, _meta("day"), _meta("clock"), _now(), what, who, detail))
+                  (reg_no, _meta("day"), _clock(), _now(), what, who, detail))
 
 
 def _seed_staff():
@@ -222,8 +231,10 @@ def _start_day():
     """The parts of a day that start again: the demo clock, the tickets, the doctors' shifts, and the made-up
     patients (already with doctors, and five in the waiting room). The caller holds the lock and the transaction."""
     _meta("clock", START_CLOCK)
+    _meta("day_started", int(time.time()))      # the clock runs in real minutes from here
     _meta("day", secrets.randbelow(10**9))      # a phone keeps this next to its number, to tell days apart
     _meta("ticket", 0)                          # tickets start at A001 each day; registration numbers never do
+    _meta("sim_ticket", 0)                      # and the simulated patients' at B001
     _meta("arrivals", 0)
     _conn.execute("UPDATE doctors SET waiting = 0, on_duty = CASE WHEN shift = 'night' THEN 0 ELSE 1 END")
     departments = {reg_no: department for reg_no, _, department, _, _ in SEED_DOCTORS}
@@ -265,7 +276,7 @@ def new_day():
     return {"closed": len(open_visits)}
 
 
-def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, department=None, doctor=None):
+def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, department=None, doctor=None, series="A"):
     """Write one made-up patient, already assessed: the nurse's level is invented, Meddy's level and its
     second check are really computed. With a doctor the visit is 'with doctor', otherwise it is waiting.
     The caller holds the lock and the transaction."""
@@ -276,7 +287,14 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
         _seed_levels[who] = (result["level"], [result["probabilities"][str(l)] for l in core.LEVELS])
     ai_level, odds = _seed_levels[who]
     number = _next_number("visit")
-    reg_no, ticket = f"P-2026-{number:04d}", f"A{_next_number('ticket'):03d}"
+    # The simulated patients of other nurses get tickets of their own (B001, B002 ...), so the tickets of the
+    # patients in the waiting room stay in step with the line: A079 with only five people waiting was confusing.
+    if series == "A":
+        ticket = f"A{_next_number('ticket'):03d}"
+    else:
+        _meta("sim_ticket", _setting("sim_ticket", 0) + 1)
+        ticket = f"{series}{_meta('sim_ticket'):03d}"
+    reg_no = f"P-2026-{number:04d}"
     _conn.execute(
         "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, ai_odds, second_check, vitals, arrived, "
         "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at, first_name, last_name, "
@@ -382,7 +400,7 @@ def check_in(reg_no, arrival, injury, pain, answers):
                           [(reg_no, a["question"], a.get("answer"), a["kind"], a.get("topic")) for a in answers])
         _conn.execute("UPDATE visits SET arrival = ?, injury = ?, pain = ?, status = 'nurse', "
                       "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
-                      (arrival, int(injury), pain, _meta("clock"), reg_no))
+                      (arrival, int(injury), pain, _clock(), reg_no))
         _event(reg_no, "checked in", "patient's phone", f"{len(answers)} answers")
     return code_for(reg_no)
 
@@ -396,7 +414,7 @@ def nurse_patients():
     """The nurse's list: everyone who finished check-in and waits for her. A patient who answered yes to a
     danger sign comes first, then whoever has waited longest. No level yet: nothing has been measured."""
     with _lock:
-        clock = _meta("clock")
+        clock = _clock()
         rows = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE status = 'nurse'")]
         for row in rows:
             row["danger"] = _danger_yes(row["reg_no"])
@@ -429,7 +447,7 @@ def nurse_card(reg_no):
     if visit is None:
         return None
     with _lock:
-        clock = _meta("clock")
+        clock = _clock()
     return {"reg_no": reg_no, "code": code_for(reg_no), "status": visit["status"], "complaint": visit["complaint"],
             "complaint_read": core.spelling(visit["complaint"]),     # with typing slips put right, as the models read it
             "first_name": visit["first_name"], "last_name": visit["last_name"], "patient": full_name(visit),
@@ -510,7 +528,7 @@ def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department
             return
         if before["status"] == "registered":
             _event(reg_no, "taken by the nurse", "nurse", "check-in on the phone was not finished")
-        clock = _meta("clock")
+        clock = _clock()
         # A patient who is already in the line is being measured again (a re-check) and the nurse has not decided yet:
         #   remeasured     says so, for the doctor, should the patient reach one before she decides
         #   held_at        keeps the patient with the nurse: no doctor calls them for HOLD_FOR minutes
@@ -583,7 +601,7 @@ def _choose_doctor(reg_no, doctor_reg):
 def _join(reg_no, level, danger, department, department_how, review, doctor_reg=None):
     visit = _still_at_the_desk(reg_no)
     ticket = (visit and visit["ticket"]) or f"A{_next_number('ticket'):03d}"
-    clock = _meta("clock")
+    clock = _clock()
     arrived = visit["arrived"] if visit and visit["arrived"] is not None else clock
     waiting = bool(visit and visit["status"] == "waiting")
     # A re-check: the patient is already in the line AND the nurse measured them again. Joining again without
@@ -630,7 +648,7 @@ def feel_worse(reg_no):
             raise NotWaiting(reg_no)
         if visit["worse_at"] is None:
             _conn.execute("UPDATE visits SET worse_at = ?, worse_said = COALESCE(worse_said, 0) + 1 WHERE reg_no = ?",
-                          (_meta("clock"), reg_no))
+                          (_clock(), reg_no))
             _event(reg_no, "said they feel worse", "patient's phone",
                    "waiting for the nurse" if visit["status"] == "nurse" else "in the waiting room")
         return visit["status"]
@@ -656,7 +674,7 @@ def admit(reg_no, level, danger, department=None, department_how=None, review=No
         if level > 2:
             return ticket, None
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
-        return ticket, _called(patient, _meta("clock"))
+        return ticket, _called(patient, _clock())
 
 
 def _called(patient, clock):
@@ -682,7 +700,7 @@ def _with_nurse(patient, clock):
 
 
 def _waiting():
-    clock = _meta("clock")
+    clock = _clock()
     rows = [dict(r) for r in _conn.execute("SELECT * FROM visits WHERE status = 'waiting'")]
     rows.sort(key=lambda p: core.place(p, clock))
     return clock, rows
@@ -732,7 +750,7 @@ def where_is(reg_no):
 
 def wait(minutes=15):
     with _lock, _conn:
-        _meta("clock", _meta("clock") + minutes)
+        _meta("clock", _meta("clock") + minutes)      # "15 minutes pass": the clock jumps ahead
 
 
 def pass_time(minutes=15):
@@ -744,7 +762,7 @@ def pass_time(minutes=15):
     with _lock, _conn:
         turn = _next_number("arrivals")
         complaint, age, sex, level, preset, pain = SEED_ARRIVALS[(turn - 1) % len(SEED_ARRIVALS)]
-        reg_no, ticket = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _meta("clock"))
+        reg_no, ticket = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _clock())
     return {"called": called, "arrived": {"reg_no": reg_no, "ticket": ticket, "who": complaint, "level": level}}
 
 
@@ -816,7 +834,7 @@ def refer(reg_no, level, reason, department=None, note=None, summary_ok=True, ke
         if visit is None:
             return None
         ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
-        clock = _meta("clock")
+        clock = _clock()
         again = visit["status"] == "waiting"           # sent in from the waiting room: that is a re-check too
         # Sending a patient straight in is always the nurse's own check, never a quick acceptance. She has seen
         # the patient now, so an "I feel worse" is answered.
@@ -1000,7 +1018,7 @@ def doctor_patients(doctor_reg):
                                (doctor_reg,)).fetchone()
         if doctor is None:
             return None
-        clock = _meta("clock")
+        clock = _clock()
         rows = [dict(r) for r in _conn.execute(
             "SELECT * FROM visits WHERE status = 'with doctor' AND doctor_reg = ?", (doctor_reg,))]
         for row in rows:
@@ -1105,6 +1123,8 @@ def _upgrade():
                     _conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}" + (f" DEFAULT {default}" if default else ""))
         _seed_staff()
         fresh = _conn.execute("SELECT COUNT(*) AS n FROM meta WHERE key = 'clock'").fetchone()["n"] == 0
+        if not fresh and _setting("day_started", None) is None:      # a file from before the clock ran in real time
+            _meta("day_started", int(time.time()))
         if not fresh:       # visits from before days were written down belong to the day that is open now
             _conn.execute("UPDATE visits SET day = (SELECT value FROM meta WHERE key = 'day') WHERE day IS NULL")
     model.close()
@@ -1251,8 +1271,8 @@ def simulate(rng=None, now=None):
             if doctor["reg_no"] in watched or rng.random() >= SIM_NEW_PATIENT:
                 continue
             complaint, age, sex, level, preset, pain = rng.choice(SIM_PATIENTS[doctor["department"]])
-            reg_no, _ = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _meta("clock"),
-                                       doctor["department"], doctor["reg_no"])
+            reg_no, _ = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _clock(),
+                                       doctor["department"], doctor["reg_no"], series="B")
             _conn.execute("UPDATE visits SET sim_until = ?, seen_from = ? WHERE reg_no = ?",
                           (now + rng.uniform(*SIM_SEEN), now, reg_no))
             _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))

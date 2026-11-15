@@ -281,7 +281,7 @@ def kind_of_complaint(complaint, injury=False):
     finds no word it knows. It lets a patient who writes in everyday words find the patients the data describes
     in clinical words."""
     kind = department_for(complaint, injury)
-    recognised = bool(_SYMPTOM_RULES.search(f" {(complaint or '').lower()} ")) or injury
+    recognised = bool(_SYMPTOM_RULES.search(f" {spelling(complaint).lower()} ")) or injury
     return kind if recognised else None
 
 
@@ -654,7 +654,16 @@ def questionnaire(complaint, injury=False, use_model=True):
     extra = follow_up(complaint, injury) if use_model else {"source": "list", "questions": []}
     return {"topic": department, "source": extra["source"],
             "questions": [{"question": q, "kind": "danger"} for q in DANGER_QUESTIONS[department]] + extra["questions"],
-            "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL}}
+            "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL, "mentioned": mentions_pain(complaint)}}
+
+
+_PAIN_WORDS = re.compile(r"\b(pain\w*|hurt\w*|ach(e|es|ing)|\w+ache|sore|burn\w*|cramp\w*|sting\w*|tender|throb\w*)\b", re.I)
+
+
+def mentions_pain(complaint):
+    """Does the complaint speak of pain? Then the phone asks straight away what it feels like. Otherwise it first
+    asks whether there is any pain at all: "What does the pain feel like?" puzzled a patient with breathing problems."""
+    return bool(_PAIN_WORDS.search(spelling(complaint)))
 
 
 # ---------------------------------------------------------------- the nurse's summary (language model)
@@ -679,7 +688,10 @@ _GUESSES = re.compile(r"\b(likely|probably|possibly|perhaps|due to|suggest\w*|in
 # A small model copies words from its instructions or invents them: with an example in the prompt, Gemma 3 1B told
 # the nurse that a patient with knee pain had pain "spreading to the arm, jaw and back". A sentence that names a
 # part of the body or a symptom the patient never mentioned is dropped.
-_BODY_AND_SYMPTOMS = re.compile(r"\b(arms?|jaw|back|chest|head|neck|legs?|knees?|ankles?|feet|foot|hands?|fingers?|wrists?|hips?|shoulders?|stomach|belly|abdom\w*|eyes?|ears?|nose|throat|skin|breath\w*|bleed\w*|blood|vomit\w*|fever|faint\w*|dizz\w*|numb\w*|rash|swell\w*|swollen|cough\w*|sweat\w*|nause\w*|seiz\w*|speech|slurred|confus\w*)\b", re.I)
+_BODY_AND_SYMPTOMS = re.compile(r"\b(arms?|jaw|back|chest|head|neck|legs?|knees?|ankles?|feet|foot|hands?|fingers?|wrists?|hips?|shoulders?|stomach|belly|abdom\w*|eyes?|ears?|nose|throat|skin|breath\w*|bleed\w*|blood|vomit\w*|fever|faint\w*|dizz\w*|numb\w*|rash|swell\w*|swollen|cough\w*|sweat\w*|nause\w*|seiz\w*|speech|slurred|confus\w*|sharp|stab\w*|dull|ach(e|ing)|burn\w*|throb\w*|pressure|tight\w*|cramp\w*|persist\w*|constant|intermittent|severe|mild|moderate|intense|excruciating|unbearable|sudden\w*|gradual\w*|radiat\w*|spread\w*)\b", re.I)
+# The last group came from the live site: for "hurt pain for one hour", with no answer about the pain, the model
+# wrote "a sharp, persistent pain". How the pain feels is the patient's to say; a word for it they did not use is
+# made up, and the sentence is dropped.
 
 
 # How serious it is, is the nurse's call: "with no signs of a serious condition" (seen on the live site) is dropped.
@@ -697,7 +709,8 @@ def _without_guess(sentence):
 
 
 # The same thing in other words counts as said: "stomach pain" summed up as "abdominal pain" is not invented.
-_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"ches", "hear"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
+_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"ches", "hear"}, {"shar", "stab"}, {"dull", "achi", "ache"},
+               {"pres", "tigh"}, {"seve", "inte", "exce", "unbe"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
                {"blee", "bloo"}, {"swel", "swol"}, {"dizz", "ligh"}, {"numb", "ting"}]
 
 

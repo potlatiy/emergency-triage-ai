@@ -10,13 +10,15 @@ Everything is kept in the internal database, hospital.db (see db.py).
 """
 
 import hashlib
+import hmac
 import os
 import socket
+import time
 from pathlib import Path
 from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,11 +40,35 @@ PUBLIC_URL = os.environ.get("MEDDY_PUBLIC_URL") or None
 app = FastAPI(title="Digital hospital")
 
 
+# ---------------------------------------------------------------- staff only
+# The nurse's and the doctor's screens show patients' names and complaints, and their buttons can close every
+# visit. Online they are locked with a staff PIN, set as the Space secret MEDDY_STAFF_PIN. Without it (on a
+# laptop, in the tests) the screens are open as before. The patient's phone never needs the PIN: it may only
+# register, answer, and ask about its own visit.
+STAFF_PIN = os.environ.get("MEDDY_STAFF_PIN") or None
+STAFF_COOKIE = "meddy_staff"
+FOR_PATIENTS = ("/api/register", "/api/follow-up/", "/api/checkin", "/api/worse", "/api/me/", "/api/version",
+                "/api/spelling", "/api/address", "/api/waiting-room", "/api/staff/login", "/api/staff/session")
+_wrong_pins = {}            # address -> (wrong tries, refused until)
+
+
+def _staff_token():
+    return hmac.new(STAFF_PIN.encode(), b"meddy staff screens", hashlib.sha256).hexdigest()
+
+
+def is_staff(request):
+    return STAFF_PIN is None or hmac.compare_digest(request.cookies.get(STAFF_COOKIE, ""), _staff_token())
+
+
 @app.middleware("http")
 async def watched(request, call_next):
-    """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching."""
-    if request.url.path.startswith("/api/"):
+    """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching.
+    A request for a staff screen's data without the staff PIN is refused."""
+    path = request.url.path
+    if path.startswith("/api/"):
         db.seen()
+        if not path.startswith(FOR_PATIENTS) and not is_staff(request):
+            return JSONResponse({"detail": "Staff only: enter the staff PIN."}, status_code=401)
     return await call_next(request)
 
 
@@ -188,6 +214,10 @@ class Simulation(BaseModel):
     on: bool
 
 
+class Login(BaseModel):
+    pin: str = Field(min_length=1, max_length=40)
+
+
 class Matching(BaseModel):
     match: dict[str, float] = Field(max_length=20)
 
@@ -311,6 +341,45 @@ def nurse_patients():
     """The nurse's list: patients who finished check-in and wait for her (someone who feels worse first, then
     danger signs), and "recheck": patients in the waiting room who need her again."""
     return db.nurse_patients()
+
+
+@app.get("/api/staff/session")
+def staff_session(request: Request):
+    """Does this browser still need the staff PIN?"""
+    return {"locked": not is_staff(request)}
+
+
+@app.post("/api/staff/login")
+def staff_login(body: Login, request: Request):
+    """The staff PIN opens the nurse's and the doctor's screens on this browser for 12 hours. After five wrong
+    tries from one address, it waits a minute before trying again."""
+    if STAFF_PIN is None:
+        return {"locked": False}
+    who = request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip()
+    tries, until = _wrong_pins.get(who, (0, 0))
+    if until > time.time():
+        raise HTTPException(429, "Too many wrong tries. Wait a minute.")
+    if not hmac.compare_digest(body.pin.strip(), STAFF_PIN):
+        _wrong_pins[who] = (0, time.time() + 60) if tries + 1 >= 5 else (tries + 1, 0)
+        raise HTTPException(401, "That is not the staff PIN.")
+    _wrong_pins.pop(who, None)
+    answer = JSONResponse({"locked": False})
+    answer.set_cookie(STAFF_COOKIE, _staff_token(), max_age=12 * 3600, httponly=True, samesite="lax",
+                      secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
+    return answer
+
+
+@app.post("/api/staff/logout")
+def staff_logout():
+    answer = JSONResponse({"locked": STAFF_PIN is not None})
+    answer.delete_cookie(STAFF_COOKIE)
+    return answer
+
+
+@app.get("/api/waiting-room")
+def waiting_room():
+    """How many people wait, for the seats on the phone's floor plan. Nothing else: the staff list is staff only."""
+    return {"waiting": db.staff()["visits"]["waiting"]}
 
 
 @app.get("/api/version")

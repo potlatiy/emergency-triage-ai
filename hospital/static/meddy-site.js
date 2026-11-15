@@ -186,6 +186,46 @@
   const covering = () => el.classList.contains("cover");     // held over a screen that is restoring itself
   window.MeddyCurtain = { play, go, hold, release, covering };
 
+  // Staff screens: locked with the staff PIN when the hospital has one. Any staff request refused with 401
+  // (a first visit, or the 12 hours are over) puts the PIN screen in front of the page.
+  const staffPage = /^\/(nurse|doctor)\/?$/.test(location.pathname);
+  let lockShown = false;
+  function showLock() {
+    if (lockShown) return;
+    lockShown = true;
+    const lock = document.createElement("div");
+    lock.id = "staff-lock";
+    lock.style.cssText = "position:fixed;inset:0;z-index:1200;display:grid;place-items:center;background:rgba(243,246,242,.97)";
+    lock.innerHTML = '<form style="width:min(360px,90vw);padding:28px;border-radius:20px;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.12);text-align:center">' +
+      '<img src="/static/meddy-logo.webp" alt="Meddy" width="120" height="40" style="height:40px;width:auto">' +
+      '<h2 style="margin:14px 0 6px">Staff only</h2><p style="margin:0 0 16px;color:#45555b">Enter the staff PIN.</p>' +
+      '<input id="staff-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="40" aria-label="Staff PIN" ' +
+      'style="width:100%;min-height:56px;padding:12px 16px;border:2px solid #aab8b0;border-radius:16px;font:inherit;font-size:1.3rem;text-align:center">' +
+      '<p id="staff-pin-error" role="alert" style="min-height:1.4em;margin:8px 0;color:#b4302f"></p>' +
+      '<button class="go" type="submit" style="width:100%">Open</button></form>';
+    document.body.appendChild(lock);
+    const pin = lock.querySelector("#staff-pin");
+    pin.focus();
+    lock.querySelector("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const response = await realFetch("/api/staff/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pin.value }) }).catch(() => null);
+      if (response && response.ok) { location.reload(); return; }
+      lock.querySelector("#staff-pin-error").textContent = !response ? "The hospital server does not answer."
+        : response.status === 429 ? "Too many wrong tries. Wait a minute." : "That is not the staff PIN.";
+      pin.value = ""; pin.focus();
+    });
+  }
+  const realFetch = window.fetch.bind(window);
+  if (staffPage) {
+    window.fetch = async (...args) => {
+      const response = await realFetch(...args);
+      if (response.status === 401 && String(args[0]).startsWith("/api/")) showLock();
+      return response;
+    };
+    realFetch("/api/staff/session", { cache: "no-store" }).then((r) => r.json()).then((s) => { if (s.locked) showLock(); }).catch(() => {});
+  }
+
   // A new version online: an open tab keeps its old screens until it is reloaded, so it says so.
   let first = null;
   const checkVersion = async () => {
@@ -195,7 +235,7 @@
       if (version === first || document.getElementById("new-version")) return;
       const bar = document.createElement("div");
       bar.id = "new-version"; bar.setAttribute("role", "status");
-      bar.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:50;display:flex;gap:12px;" +
+      bar.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:1150;display:flex;gap:12px;" +
         "align-items:center;padding:12px 18px;border-radius:999px;background:#173f9c;color:#fff;font-weight:700;" +
         "box-shadow:0 8px 24px rgba(0,0,0,.2)";
       bar.innerHTML = 'Meddy was updated. <button type="button" style="font:inherit;border:0;border-radius:999px;' +
