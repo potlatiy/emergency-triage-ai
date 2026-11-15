@@ -478,6 +478,12 @@ def board_page():
     return FileResponse(STATIC / "board.html", headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/privacy")
+def privacy_page():
+    """Privacy and cookies (static/privacy.html): what Meddy keeps, for how long, and every cookie it sets."""
+    return FileResponse(STATIC / "privacy.html", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/chief")
 def chief_page():
     """The chief doctor's panel (static/chief.html): the whole department at a glance."""

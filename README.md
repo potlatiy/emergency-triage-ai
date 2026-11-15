@@ -45,6 +45,8 @@ room (a board of ticket numbers) and the chief doctor (the day at a glance).
 [the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor) ·
 [the waiting room's board](https://darkshdws-meddy.hf.space/board) · [the chief doctor's panel](https://darkshdws-meddy.hf.space/chief).
 **Judges: the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md).**
+**Privacy:** no tracking and only the cookies the site needs; the AI runs on our own server. Details in
+[PRIVACY.md](PRIVACY.md) and on the site at [/privacy](https://darkshdws-meddy.hf.space/privacy).
 Open the three side by side: check in as a patient, open your code on the nurse's screen and choose a doctor, then
 accept yourself on that doctor's screen ("New patient for you: are you free now?"). The phone follows by itself, to
 the room and to a thank-you when the doctor finishes. The nurse's and the doctor's screens ask for a staff PIN (see

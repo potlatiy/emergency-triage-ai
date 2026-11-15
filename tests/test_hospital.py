@@ -2621,3 +2621,20 @@ def test_plain_code_puts_right_slips_of_common_note_words():
 def test_a_tight_chest_counts_as_pain():
     assert core.mentions_pain("my chest feels tight when i walk upstairs")
     assert core.mentions_pain("pressure in my chest")
+
+
+def test_the_privacy_page_names_every_cookie_and_browser_item_the_site_sets():
+    """/privacy is open to everyone and lists every cookie the server sets and every item the pages save in the
+    browser, so the page cannot quietly fall behind the code. Every screen links to it."""
+    page = client.get("/privacy")
+    assert page.status_code == 200 and "Privacy and cookies" in page.text
+    static = server.STATIC
+    code = "".join(p.read_text(encoding="utf-8") for p in static.glob("*.html")) + (static / "meddy-site.js").read_text(encoding="utf-8")
+    for cookie in (server.STAFF_COOKIE, server.CHIEF_COOKIE):
+        assert cookie in page.text
+    saved = set(re.findall(r'(?:const \w+ = |Storage\.setItem\()"(meddy-[a-z-]+)"', code)) | {"meddy-offered-"}
+    assert saved >= {"meddy-visit", "meddy-doctor", "meddy-large", "meddy-curtain", "meddy-privacy-seen"}
+    for item in saved:
+        assert item in page.text, item
+    for screen in ("index", "nurse", "doctor", "board", "chief"):
+        assert 'href="/privacy"' in (static / f"{screen}.html").read_text(encoding="utf-8"), screen

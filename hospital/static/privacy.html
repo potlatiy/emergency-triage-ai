@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meddy · Privacy and cookies</title>
+<link rel="icon" type="image/png" href="/static/meddy-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
+<style>
+  /* What Meddy keeps, where, for how long, and every cookie and browser item it sets. Plain, short, true. */
+  :root { --ink:#16252a; --soft:#45555b; --line:#dce3dd; --blue:#2152c4; --mint:#1d7a52; --mint-tint:#e8f6ee;
+          --font:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",ui-sans-serif,system-ui,sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:linear-gradient(160deg,#eef4f1 0%,#e9eef8 100%); color:var(--ink); font-family:var(--font);
+         font-size:17px; line-height:1.55; }
+  .wrap { max-width:860px; margin:0 auto; padding:28px 18px 48px; }
+  header { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header img { height:40px; width:auto; }
+  header a { margin-left:auto; color:var(--blue); font-weight:700; }
+  h1 { margin:22px 0 4px; font-size:2rem; line-height:1.2; }
+  .updated { margin:0 0 18px; color:var(--soft); }
+  .card { background:#fff; border-radius:22px; padding:22px 24px; margin:16px 0; box-shadow:0 10px 30px rgba(22,37,42,.06); }
+  .short { background:var(--mint-tint); border:2px solid #bfe3cf; }
+  .short ul { margin:8px 0 0; padding-left:22px; } .short li { margin:6px 0; }
+  h2 { margin:0 0 8px; font-size:1.3rem; }
+  p { margin:8px 0; }
+  a { color:var(--blue); }
+  .scroll { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.95rem; min-width:520px; }
+  th, td { text-align:left; vertical-align:top; padding:9px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--soft); font-weight:700; }
+  code { font-size:.92em; background:#f1f4f2; padding:1px 6px; border-radius:6px; }
+  .tag { display:inline-block; padding:1px 9px; border-radius:999px; background:var(--mint-tint); color:var(--mint); font-weight:700; font-size:.85rem; }
+  footer { color:var(--soft); margin-top:24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="/static/meddy-logo.webp" alt="Meddy" width="122" height="40">
+    <a href="/">Back to Meddy</a>
+  </header>
+
+  <h1>Privacy and cookies</h1>
+  <p class="updated">Last updated: 15 November 2026</p>
+
+  <section class="card short" aria-labelledby="short">
+    <h2 id="short">The short version</h2>
+    <ul>
+      <li><b>Meddy is a hackathon prototype, not a real hospital service.</b> Please use made-up names and details,
+        never real health or insurance information.</li>
+      <li><b>No advertising, analytics or tracking.</b> The only cookies are the two that keep staff signed in after
+        they type a PIN. Patients get no cookies at all.</li>
+      <li><b>The AI runs on our own server.</b> What you type is not sent to any AI company.</li>
+      <li><b>Nothing is sold or shared,</b> and the demonstration is erased regularly.</li>
+    </ul>
+  </section>
+
+  <section class="card" aria-labelledby="who">
+    <h2 id="who">Who runs Meddy</h2>
+    <p>Meddy is a student project made by Koch Team (Yegor, Denys and Ostap) for the Veritas AI High School Hackathon
+      2026. It is a demonstration of how an emergency department could work and is not medical advice. Questions or a
+      request to erase something: open an issue on
+      <a href="https://github.com/potlatiy/emergency-triage-ai/issues">our GitHub page</a>.</p>
+  </section>
+
+  <section class="card" aria-labelledby="what">
+    <h2 id="what">What Meddy keeps, and why</h2>
+    <p><b>From the patient's phone:</b> first and last name, age, sex, how you arrived, what is wrong in your own
+      words, your answers to the questions, and your pain score. For insurance Meddy keeps only a one-way fingerprint
+      of the card number and its last four characters, never the number itself, and a card can have one open visit.</p>
+    <p><b>From the staff:</b> vital signs, the urgency level, the nurse's and the doctor's notes, which doctor and
+      room, and the times of each step.</p>
+    <p><b>Why:</b> only to run the visit: the line, the right doctor, the phone telling you what happens next, and
+      the chief doctor's summary of the day. The waiting-room board shows ticket numbers and rooms only, never names,
+      complaints or levels. Nothing you type is used to train Meddy's models; they were trained on a published
+      research dataset.</p>
+  </section>
+
+  <section class="card" aria-labelledby="where">
+    <h2 id="where">Where it is kept and for how long</h2>
+    <p>In one database file on our server, hosted on Hugging Face Spaces, with a copy in the Space's private storage
+      so a restart loses nothing. It stays there until the demonstration is erased ("Erase everything" on the chief
+      doctor's panel), which we do regularly. "Start a new day" closes open visits but does not delete them.</p>
+    <p><b>The AI:</b> Meddy's urgency model and the Gemma 3 language model (which writes the follow-up questions,
+      the nurse's summary and tidies the doctor's note) both run inside this server. Nothing is sent to OpenAI,
+      Google, Anthropic or any other AI service.</p>
+  </section>
+
+  <section class="card" aria-labelledby="cookies">
+    <h2 id="cookies">Cookies</h2>
+    <p>Meddy sets only cookies that are strictly necessary for the site to work, so it does not ask for consent.
+      There are no advertising, analytics or third-party cookies.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Name</th><th>What it does</th><th>Who gets it</th><th>Lasts</th><th>Type</th></tr></thead>
+      <tbody>
+        <tr><td><code>meddy_staff</code></td><td>Remembers that the nurse or doctor typed the staff PIN on this browser</td>
+          <td>Nurse and doctor screens</td><td>12 hours, or until "Lock this screen"</td><td><span class="tag">Necessary</span></td></tr>
+        <tr><td><code>meddy_chief</code></td><td>The same for the chief doctor's panel, which has its own PIN</td>
+          <td>Chief doctor's panel</td><td>12 hours, or until "Lock this screen"</td><td><span class="tag">Necessary</span></td></tr>
+      </tbody>
+    </table></div>
+    <p>Both are <code>HttpOnly</code> (page scripts cannot read them) and hold only a signed token, never the PIN.</p>
+  </section>
+
+  <section class="card" aria-labelledby="storage">
+    <h2 id="storage">Items saved in your browser</h2>
+    <p>A few small items are saved in your browser's own storage so a screen keeps working after a reload. They stay
+      on your device and are not sent anywhere.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Name</th><th>What it does</th><th>Lasts</th></tr></thead>
+      <tbody>
+        <tr><td><code>meddy-visit</code></td><td>The patient's own visit number and step, so the phone can carry on after a reload</td><td>Until the visit ends</td></tr>
+        <tr><td><code>meddy-doctor</code></td><td>Which doctor's screen is open on this computer</td><td>Until another doctor is chosen</td></tr>
+        <tr><td><code>meddy-offered-…</code></td><td>Which new patients this doctor was already asked about, so the question is not repeated</td><td>Until the site data is cleared</td></tr>
+        <tr><td><code>meddy-large</code></td><td>Whether you chose larger text</td><td>Until changed</td></tr>
+        <tr><td><code>meddy-curtain</code></td><td>The caption shown while moving between screens</td><td>Removed as soon as the next screen opens</td></tr>
+        <tr><td><code>meddy-privacy-seen</code></td><td>That you closed the privacy note, so it is not shown again</td><td>Until the site data is cleared</td></tr>
+      </tbody>
+    </table></div>
+    <p>You can remove all of them at any time by clearing this site's data in your browser's settings.</p>
+  </section>
+
+  <section class="card" aria-labelledby="others">
+    <h2 id="others">Other services the pages use</h2>
+    <p><b>Hugging Face</b> hosts the site. Like any host, it sees your IP address and keeps technical logs:
+      <a href="https://huggingface.co/privacy">Hugging Face privacy policy</a>.</p>
+    <p><b>Google Fonts</b> provides the typeface (Atkinson Hyperlegible Next), so your browser asks Google for it and
+      Google sees your IP address: <a href="https://policies.google.com/privacy">Google privacy policy</a>.</p>
+    <p>Links to GitHub open GitHub's own site.</p>
+  </section>
+
+  <section class="card" aria-labelledby="real">
+    <h2 id="real">If Meddy were used in a real hospital</h2>
+    <p>Health information is a special category of personal data (Article 9 of the GDPR). A real hospital would be
+      responsible for the data, would run Meddy on its own systems, and would need a legal basis for health data, a
+      data protection impact assessment, real accounts for staff instead of a shared PIN, and its own retention rules.
+      This demonstration does none of that, which is why we ask you to use made-up details.</p>
+  </section>
+
+  <footer>Prototype, not medical advice. Meddy never gives a diagnosis.</footer>
+</div>
+</body>
+</html>

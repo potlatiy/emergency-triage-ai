@@ -272,4 +272,28 @@
   };
   checkVersion();
   setInterval(checkVersion, 60000);
+
+  // Privacy: a short note on the first visit. Meddy sets only the cookies a screen needs (the staff PIN), so it
+  // asks for no consent; it says so once, asks for made-up details, and links to /privacy. "OK" hides it for good.
+  const SEEN = "meddy-privacy-seen";
+  let seen = false;
+  try { seen = localStorage.getItem(SEEN) === "1"; } catch (e) {}
+  if (!seen) {
+    const note = document.createElement("div");
+    note.id = "privacy-note";
+    note.setAttribute("role", "region");
+    note.setAttribute("aria-label", "Privacy and cookies");
+    note.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:1150;max-width:min(440px,calc(100vw - 32px));" +
+      "display:flex;gap:14px;align-items:center;padding:14px 16px;border-radius:18px;background:#16252a;color:#fff;" +
+      "font-size:.95rem;line-height:1.4;box-shadow:0 18px 40px -16px rgba(0,0,0,.45)";
+    note.innerHTML = '<span>Meddy is a demo: please use made-up details. Only the cookies the site needs, no tracking. ' +
+      '<a href="/privacy" style="color:#bcd0ff;font-weight:700">Privacy &amp; cookies</a></span>' +
+      '<button type="button" style="flex:none;font:inherit;font-weight:800;border:0;border-radius:999px;padding:8px 18px;' +
+      'background:#fff;color:#16252a;cursor:pointer">OK</button>';
+    note.querySelector("button").addEventListener("click", () => {
+      try { localStorage.setItem(SEEN, "1"); } catch (e) {}
+      note.remove();
+    });
+    document.body.appendChild(note);
+  }
 })();
