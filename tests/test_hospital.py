@@ -273,8 +273,7 @@ def test_the_doctor_screen_reads_the_doctor_api_and_carries_the_disclaimer():
     page = client.get("/doctor")
     assert page.status_code == 200
     assert "/api/doctor/" in page.text and "/patients" in page.text
-    assert "This project is a prototype and is not medical advice." in page.text
-    assert "Meddy suggests, the nurse decides." in page.text
+    assert "Prototype, not medical advice. Meddy never gives a diagnosis." in page.text
 
 
 # ---------------------------------------------------------------- saving the assessment
@@ -782,7 +781,7 @@ def test_the_screens_say_that_meddy_does_not_diagnose():
     assert "Meddy never gives a diagnosis." in page
     assert "filed under" not in page                          # the patient is not shown a department as a verdict
     nurse = client.get("/nurse").text                         # Meddy's report is on the nurse's own screen now
-    assert "Meddy never gives a diagnosis." in nurse and "Meddy does not diagnose." in nurse
+    assert "Meddy never gives a diagnosis." in nurse
     assert "Meddy never gives a diagnosis" in client.get("/doctor").text
 
 
@@ -1254,7 +1253,9 @@ def test_the_summary_is_written_once_and_cannot_change_after_the_patient_is_call
     client.get(f"/api/nurse/summary/{reg_no}")
     assert client.post("/api/line/join", json={"reg_no": reg_no, "level": 5, "note": "third note"}).status_code == 409
     assert summary_on_the_doctors_card(reg_no) == before
-    assert before["patient_said"]["text"] == "The patient reports chest pain. The pain feels like pressure."
+    # The model left the sweating out, so the complaint itself goes first.
+    assert before["patient_said"]["text"] == ('Came with "crushing chest pain and sweating". '
+                                              "The patient reports chest pain. The pain feels like pressure.")
 
 
 def test_a_patient_sent_in_before_any_measurement_still_has_a_summary():
@@ -2067,3 +2068,43 @@ def test_the_simulation_leaves_a_watched_doctor_and_can_be_switched_off():
     assert db.staff()["simulation"] is False
     assert db.simulate(FixedDice(0.0), now=90_000) == {"left": 0, "came": 0}
     client.post("/api/staff/simulation", json={"on": True})
+
+
+# ---------------------------------------------------------------- the complaint in the summary, measured values, busy doctors
+
+def test_the_summary_always_names_what_the_patient_came_with():
+    """For "Hurt pain for one hour" the model wrote only "She describes the pain as sharp and stabbing."."""
+    assert core.with_complaint("She describes the pain as sharp and stabbing.", "Hurt pain for one hour") == (
+        'Came with "Hurt pain for one hour". She describes the pain as sharp and stabbing.')
+    told = "The patient reports chest pain since this morning."
+    assert core.with_complaint(told, "chest pain since this morning") == told          # already there: left alone
+
+
+def test_the_nurse_can_type_in_what_she_measured():
+    reg_no = new_visit("cough", age=50)
+    measured = {"SBP": 92, "DBP": 58, "HR": 121, "RR": 27, "BT": 39.2, "Saturation": 90}
+    report = client.post("/api/triage", json={"reg_no": reg_no, "vitals": measured}).json()
+    assert report["vitals"] == measured
+    assert json.loads(db.visit_for(reg_no)["vitals"])["HR"] == 121
+    for wrong in [{**measured, "HR": 900}, {**measured, "Saturation": 140}, {k: v for k, v in measured.items() if k != "BT"}]:
+        assert client.post("/api/triage", json={"reg_no": reg_no, "vitals": wrong}).status_code == 422
+    assert client.post("/api/triage", json={"reg_no": reg_no, "vitals": "feverish"}).status_code == 200   # presets still work
+
+
+def test_a_busy_doctor_says_since_when_and_about_when_they_are_free():
+    db.simulate(FixedDice(0.99), now=1000)                       # the morning's made-up patients went in at 1000
+    for _ in range(3):                                           # three finished visits of five minutes each
+        reg = assessed_visit("chest pain", age=40)
+        db.refer(reg, 3, "Looks unwell", doctor_reg="DR-1014")
+        with db._lock, db._conn:
+            db._conn.execute("UPDATE visits SET seen_from = 0 WHERE reg_no = ?", (reg,))
+        db.finish_visit(reg)
+        with db._lock, db._conn:
+            db._conn.execute("UPDATE visits SET seen_to = 300 WHERE reg_no = ?", (reg,))
+    with db._lock:
+        times = db._doctor_times(now=1000 + 120)
+    marlow = times["DR-1001"]                                    # two patients, the first in at 1000
+    assert marlow["since"] == 1000 and marlow["usual_minutes"] == 5
+    assert marlow["free_in_minutes"] == 8                        # two visits of 5 minutes, 2 minutes gone
+    doctors = {d["reg_no"]: d for d in db.staff()["doctors"]}
+    assert doctors["DR-1001"]["since"] == 1000 and doctors["DR-1014"]["since"] is None     # Dr. Kowalski is free

@@ -700,6 +700,23 @@ def checked_summary(text, complaint="", report=None):
     return text
 
 
+_NUMBER_WORDS = set("one two three four five six seven eight nine ten half few couple".split())
+
+
+def with_complaint(text, complaint):
+    """The summary, opened with the patient's own complaint when the model left part of it out.
+
+    A small model sometimes skips the complaint and writes only about an answer: for "Hurt pain for one hour" it
+    wrote just "She describes the pain as sharp and stabbing." The nurse must always see what the patient came
+    with, so then the complaint, word for word, goes first."""
+    complaint = " ".join(str(complaint or "").split()).strip(" .")
+    words = [w for w in _words(complaint) if w not in _NOT_A_SYMPTOM and w not in _NUMBER_WORDS]
+    said = text.lower()
+    if complaint and any(not re.search(r"\b" + re.escape(w[:4]), said) for w in words):
+        return f'Came with "{complaint}". {text}'
+    return text
+
+
 def _report_for_summary(complaint, age, sex, answers, injury=False):
     """What the patient reported, as plain lines for the model. Only answers the patient actually gave."""
     lines = [f'Complaint, in the patient\'s words: "{complaint}"', f"Age {age:g}, {str(sex).lower()}"]
@@ -732,7 +749,7 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             written = json.loads(response.read())["message"]["content"]
-        result = {"source": "ai", "text": checked_summary(written, complaint, report)}
+        result = {"source": "ai", "text": with_complaint(checked_summary(written, complaint, report), complaint)}
     except Exception:
         return {"source": "none", "text": None}          # not kept: the next look may find the model ready
     if len(_summaries) >= 500:
