@@ -49,6 +49,7 @@ STAFF_PIN = os.environ.get("MEDDY_STAFF_PIN") or None
 STAFF_COOKIE = "meddy_staff"
 FOR_PATIENTS = ("/api/register", "/api/follow-up/", "/api/checkin", "/api/worse", "/api/me/", "/api/version",
                 "/api/spelling", "/api/address", "/api/waiting-room", "/api/staff/login", "/api/staff/session",
+                "/api/staff/logout",
                 "/api/board")
 _wrong_pins = {}            # address -> (wrong tries, refused until)
 
@@ -414,8 +415,10 @@ def todays_patients():
 
 @app.get("/api/staff/session")
 def staff_session(request: Request, role: Literal["staff", "chief"] = "staff"):
-    """Does this browser still need the staff PIN (or, for the chief doctor's panel, the chief's)?"""
-    return {"locked": not (is_chief(request) if role == "chief" else is_staff(request))}
+    """Does this browser still need the staff PIN (or, for the chief doctor's panel, the chief's)? "pin": whether
+    there is a PIN at all, so the page knows whether to offer "Lock this screen"."""
+    return {"locked": not (is_chief(request) if role == "chief" else is_staff(request)),
+            "pin": (CHIEF_PIN or STAFF_PIN if role == "chief" else STAFF_PIN) is not None}
 
 
 @app.post("/api/staff/login")
@@ -441,7 +444,7 @@ def staff_login(body: Login, request: Request):
     return answer
 
 
-@app.post("/api/staff/logout")
+@app.post("/api/staff/logout")       # open to anyone: locking a screen needs no PIN
 def staff_logout():
     answer = JSONResponse({"locked": STAFF_PIN is not None})
     answer.delete_cookie(STAFF_COOKIE)

@@ -23,11 +23,12 @@
   header h1 { margin:0; font-size:1.6rem; font-weight:800; }
   header .when { margin-left:auto; color:var(--soft); font-size:.95rem; }
   header nav a { color:var(--blue); font-weight:700; margin-left:14px; }
-  .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:14px; margin-top:22px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:14px; margin-top:22px; }
   .tile { background:var(--card); border-radius:var(--round); padding:16px 18px; box-shadow:0 6px 20px rgba(22,37,42,.05); }
   .tile b { display:block; font-size:2.2rem; line-height:1.1; font-variant-numeric:tabular-nums; }
   .tile span { color:var(--soft); font-size:.95rem; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:18px; margin-top:18px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr)); gap:18px; margin-top:18px; }
+  .card { min-width:0; } .scroll { overflow-x:auto; }
   .card { background:var(--card); border-radius:var(--round); padding:20px 22px; box-shadow:0 6px 20px rgba(22,37,42,.05); }
   .card h2 { margin:0 0 4px; font-size:1.2rem; }
   .card .sub { margin:0 0 14px; color:var(--soft); font-size:.92rem; }
@@ -44,7 +45,7 @@
   .fact b { display:block; font-size:1.6rem; font-variant-numeric:tabular-nums; }
   .fact span { color:var(--soft); font-size:.9rem; }
   .foot { margin-top:18px; color:var(--soft); font-size:.9rem; }
-  @media (max-width: 520px) { .grid { grid-template-columns:1fr; } .wrap { padding:14px; } }
+  @media (max-width: 520px) { .wrap { padding:14px; } .tile b { font-size:1.8rem; } th, td { padding:7px 5px; } }
 </style>
 </head>
 <body>
@@ -62,15 +63,15 @@
     <section class="card" aria-labelledby="levels-title">
       <h2 id="levels-title">Waiting, by urgency level</h2>
       <p class="sub">Now in the waiting room, and today from registering on the phone to a doctor.</p>
-      <table><thead><tr><th>Level</th><th class="num">In line</th><th class="num">Longest now</th>
+      <div class="scroll"><table><thead><tr><th>Level</th><th class="num">In line</th><th class="num">Longest now</th>
         <th class="num">Seen today</th><th class="num">Door to doctor (median)</th><th class="num">Longest</th></tr></thead>
-        <tbody id="levels"></tbody></table>
+        <tbody id="levels"></tbody></table></div>
     </section>
     <section class="card" aria-labelledby="teams-title">
       <h2 id="teams-title">Doctors, by department</h2>
       <p class="sub">Who is on duty and busy now, and how many wait for each department.</p>
-      <table><thead><tr><th>Department</th><th class="num">On duty</th><th>Busy</th><th class="num">In line</th><th class="num">A visit</th></tr></thead>
-        <tbody id="teams"></tbody></table>
+      <div class="scroll"><table><thead><tr><th>Department</th><th class="num">On duty</th><th>Busy</th><th class="num">In line</th><th class="num">A visit</th></tr></thead>
+        <tbody id="teams"></tbody></table></div>
     </section>
     <section class="card" aria-labelledby="meddy-title">
       <h2 id="meddy-title">Meddy and the nurses</h2>
@@ -80,7 +81,7 @@
   </div>
   <p class="foot" id="foot"></p>
 </div>
-<script src="/static/meddy-site.js?v=15"></script>
+<script src="/static/meddy-site.js?v=16"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));

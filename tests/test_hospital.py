@@ -312,7 +312,7 @@ def test_the_patient_phone_never_shows_the_level():
     reg = assessed_visit("headache", 30, "Female")
     client.post("/api/line/join", json={"reg_no": reg, "level": 4})
     me = client.get(f"/api/me/{reg}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed", "estimate", "note"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed", "estimate", "note", "doctor_busy"}
     assert not all_keys(me) & HIDDEN_FROM_PATIENT
     in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
     assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
@@ -1284,7 +1284,7 @@ def test_the_summary_never_reaches_the_patients_phone_and_is_never_called_a_diag
     client.post("/api/triage", json={"reg_no": reg_no})
     refer(reg_no, department="Cardiology", reason="Looks unwell")
     me = client.get(f"/api/me/{reg_no}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed", "estimate", "note"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed", "estimate", "note", "doctor_busy"}
     summary = summary_on_the_doctors_card(reg_no)
     assert not any("diagnos" in key.lower() for key in all_keys(summary))
     assert "diagnos" not in json.dumps(summary).lower()
@@ -2180,10 +2180,10 @@ def test_with_a_staff_pin_the_staff_screens_need_it_and_the_phone_does_not(staff
     for path, body in [("/api/reset", {}), ("/api/line/wait", {}), ("/api/triage", {"reg_no": reg}),
                        ("/api/staff/duty", {"reg_no": "DR-1001", "on_duty": False})]:
         assert client.post(path, json=body).status_code == 401, path
-    assert client.get("/api/staff/session").json() == {"locked": True}
+    assert client.get("/api/staff/session").json() == {"locked": True, "pin": True}
     assert client.post("/api/staff/login", json={"pin": "0000"}).status_code == 401
     assert client.post("/api/staff/login", json={"pin": "4821"}).status_code == 200
-    assert client.get("/api/staff/session").json() == {"locked": False}
+    assert client.get("/api/staff/session").json() == {"locked": False, "pin": True}
     assert client.get("/api/nurse/patients").status_code == 200
     client.post("/api/staff/logout")
     assert client.get("/api/nurse/patients").status_code == 401
@@ -2197,7 +2197,7 @@ def test_guessing_the_staff_pin_is_slowed_down(staff_pin):
 
 def test_without_a_staff_pin_the_screens_stay_open():
     assert server.STAFF_PIN is None
-    assert client.get("/api/staff/session").json() == {"locked": False}
+    assert client.get("/api/staff/session").json() == {"locked": False, "pin": False}
     assert client.get("/api/nurse/patients").status_code == 200
 
 
@@ -2478,7 +2478,7 @@ def test_the_chief_doctors_panel_has_its_own_pin(staff_pin, monkeypatch):
     client.post("/api/staff/login", json={"pin": "4821"})                      # a nurse is signed in
     assert client.get("/api/nurse/patients").status_code == 200
     assert client.get("/api/chief/report").status_code == 401                 # the staff PIN does not open the panel
-    assert client.get("/api/staff/session", params={"role": "chief"}).json() == {"locked": True}
+    assert client.get("/api/staff/session", params={"role": "chief"}).json() == {"locked": True, "pin": True}
     assert client.post("/api/staff/login", json={"pin": "4821", "role": "chief"}).status_code == 401
     assert client.post("/api/staff/login", json={"pin": "9911", "role": "chief"}).status_code == 200
     report = client.get("/api/chief/report").json()
@@ -2502,3 +2502,32 @@ def test_the_chief_doctor_sees_how_the_day_went():
     assert report["registered"] == 2 and report["flow"]["seen and finished"] == 1 and report["flow"]["removed by the nurse"] == 1
     assert report["levels"][2]["seen"] == 1 and report["levels"][2]["door_median"] is not None
     assert report["meddy"]["assessed"] == 1
+
+
+# ---------------------------------------------------------------- anal pain, the tidy check, the waiting patient
+
+@pytest.mark.parametrize("complaint", ["anal pain", "rectal bleeding", "hemorrhoids", "piles", "bleeding from my anus"])
+def test_the_bottom_end_of_the_gut_goes_to_gastroenterology_and_surgery(complaint):
+    """"anal pain" went to general medicine and "rectal bleeding" to trauma (because of "bleeding")."""
+    assert core.department_for(complaint) == core.GUT == core.assess(complaint, 40)["department"]
+    assert core.department_for("analysis of my blood") != core.GUT          # whole words only
+
+
+def test_meddy_may_put_a_typo_right_but_not_drop_a_word():
+    assert core.checked_tidy("Take a rest.", "taka a rest") == "Take a rest."
+    assert core.checked_tidy("Do not drive today.", "do not drive today") == "Do not drive today."
+    for wrong, note in [("Drive today.", "do not drive today"),
+                        ("Ice the ankle for 2 days.", "no fracture. ice the ankle and keep it up for 2 days"),
+                        ("Take a rest and see a cardiologist.", "taka a rest")]:
+        with pytest.raises(ValueError):
+            core.checked_tidy(wrong, note)
+
+
+def test_a_patient_next_for_a_busy_doctor_is_told_so():
+    reg = assessed_visit("chest tightness", age=40)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 5, "doctor_reg": "DR-1001"})    # Dr. Marlow has patients
+    me = client.get(f"/api/me/{reg}").json()
+    assert me["doctor"] == "Dr. Marlow" and me["doctor_busy"] is True
+    for p in db.doctor_patients("DR-1001")["patients"]:
+        db.finish_visit(p["reg_no"])
+    assert client.get(f"/api/me/{reg}").json()["doctor_busy"] is False
