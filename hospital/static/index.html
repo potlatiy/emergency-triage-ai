@@ -229,6 +229,8 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   .tips .section-head h3 { color:#155c3d; }
   .tips ul { margin:14px 0 0; padding-left:26px; font-size:1.12rem; line-height:1.5; }
   .tips li { margin:8px 0; }
+  details.resume { margin-top:18px; } details.resume summary { cursor:pointer; color:var(--blue); font-weight:700; }
+  details.resume .row-inline { display:flex; gap:10px; } details.resume input { flex:1; min-width:0; }
   details.tips > summary { cursor:pointer; list-style:none; } details.tips > summary::-webkit-details-marker { display:none; }
   details.tips > summary::after { content:"Show"; margin-left:auto; font-weight:700; color:#155c3d; }
   details.tips[open] > summary::after { content:"Hide"; }
@@ -616,7 +618,12 @@ function welcomeBack() {
 }
 async function restoreVisit() {
   const saved = kept(sessionStorage), elsewhere = saved ? null : kept(localStorage);
-  if (elsewhere && elsewhere.me && elsewhere.me.reg) { entrance(); offerToContinue(elsewhere); return; }
+  // A visit kept on this device (the link opened again, or the phone dropped the tab) carries on by itself. The
+  // entrance with a "Continue my visit" button looked as if the visit was lost.
+  if (elsewhere && elsewhere.me && elsewhere.me.reg) {
+    try { sessionStorage.setItem(KEPT, JSON.stringify(elsewhere)); } catch (e) {}
+    return restoreVisit();
+  }
   if (!(saved && saved.me && saved.me.reg)) {
     if (saved && saved.me) me = { ...fresh(), ...saved.me };     // what was typed at the entrance before a reload
     entrance(); return;
@@ -644,6 +651,21 @@ async function restoreVisit() {
   startOver();
 }
 
+// The visit's code (the last digits of its number) brings it back on any phone. The phone shows only what any
+// phone may show (ticket, place, room): no name, complaint or level.
+async function resumeWithCode() {
+  const typed = document.getElementById("resume-code").value.replace(/\D/g, ""), error = document.getElementById("resume-error");
+  if (!typed) { error.textContent = "Type the code your phone showed, for example 0123."; return; }
+  const reg = "P-2026-" + typed.padStart(4, "0");
+  let now;
+  try { now = await api("/api/me/" + encodeURIComponent(reg)); }
+  catch (e) { error.textContent = e.status === 404 ? "No visit with this code today." : "Meddy can't reach the hospital. Try again."; return; }
+  if (now.status === "finished") { error.textContent = "This visit is already finished."; return; }
+  if (now.status === "registered") { error.textContent = "This check-in was not finished. Please register again, or ask at the desk."; return; }
+  me = { ...fresh(), reg, code: now.code, day: now.day };
+  try { sessionStorage.setItem(KEPT, JSON.stringify({ me, step: "resumed", called: null })); } catch (e) {}
+  restoreVisit();
+}
 function offerToContinue(other) {
   const box = document.createElement("div");
   box.className = "note"; box.style.margin = "0 0 18px";
@@ -848,7 +870,13 @@ function entrance() {
     </div>
     <p class="hint" id="no-insurance" ${me.insurance === "none" ? "" : "hidden"}>You will be seen all the same.</p>
     <p class="error" id="error" role="alert"></p>
-    <button class="go" id="go">Register and go to check-in</button>`;
+    <button class="go" id="go">Register and go to check-in</button>
+    <details class="resume"><summary>Already checked in on another phone or browser?</summary>
+      <form id="resume" autocomplete="off"><label for="resume-code">Your code</label>
+        <div class="row-inline"><input type="text" id="resume-code" inputmode="numeric" maxlength="4" placeholder="0123">
+          <button type="submit" class="mini">Continue</button></div>
+        <p class="error" id="resume-error" role="alert"></p></form></details>`;
+  document.getElementById("resume").addEventListener("submit", (event) => { event.preventDefault(); resumeWithCode(); });
   bindChoice("sex", (v) => {
     me.sex = v;
     // A made-up name follows the sex: "Anna Keller" becomes a man's made-up name when "Male" is tapped after it.
@@ -1151,6 +1179,14 @@ function tipsCard() {
     <p class="source">General first-aid comfort tips, not checked by a clinician. Not medical advice.</p>
   </details>`;
 }
+// What to do now, in one sentence: a patient who is "next" for a busy doctor did not know whether to go in.
+function nowWhat(mine) {
+  if (mine.ahead === 0 && mine.doctor && mine.doctor_busy)
+    return `You are next for ${mine.doctor}, who is with another patient right now. Please wait here: when they are free, this screen shows your room.`;
+  if (mine.ahead === 0 && mine.doctor) return `You are next. ${mine.doctor} will call you in a moment: this screen will show your room.`;
+  if (mine.ahead === 0) return "You are next. When a doctor is free, this screen shows your room.";
+  return "Please wait here. When it is your turn, this screen shows the room to go to. You do not need to do anything until then.";
+}
 // The patient's phone shows only what GET /api/me sends: the ticket and the place in line. Never the level,
 // a colour or a promised time. The whole line with levels is the nurse's screen, kept in a closed drawer.
 async function waiting(message) {
@@ -1186,7 +1222,7 @@ async function waiting(message) {
     ${mine.estimate ? `<div class="note estimate"><b>Estimated wait: ${mine.estimate.low === 0 ? `under ${mine.estimate.high} min`
       : `about ${mine.estimate.low}–${mine.estimate.high} min`}</b>
       <span class="hint">An estimate from how busy the doctors are right now, not a promise: a more urgent patient may go first.</span></div>` : ""}
-    <p class="lede">Please wait until your ticket is called. This screen updates by itself.</p>
+    <div class="note now-what" role="status"><b>${esc(nowWhat(mine))}</b></div>
     <div id="worse-box"></div>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
@@ -1202,6 +1238,10 @@ async function waiting(message) {
         waiting(now.status === "called" ? "" : checked ? "The nurse has checked you again." : "The line moved.");
       else if (Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) {
         mine.worse = now.worse; drawWorse(now.worse, checked ? "The nurse has checked you again." : "");
+      }
+      else if (now.doctor_busy !== mine.doctor_busy) {          // the chosen doctor became free, or busy again
+        mine.doctor_busy = now.doctor_busy;
+        const box = document.querySelector(".now-what b"); if (box) box.textContent = nowWhat(mine);
       }
       else if (JSON.stringify(now.estimate) !== JSON.stringify(mine.estimate)) {      // the doctors got busier or freer
         const box = document.querySelector(".estimate b");

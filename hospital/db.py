@@ -753,10 +753,11 @@ def where_is(reg_no):
         _, rows = _waiting()            # the same order as the line the nurse sees
         estimate = _estimate(dict(visit), rows) if visit["status"] == "waiting" else None
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
-        wanted = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["wanted_doctor"],)).fetchone()
+        wanted = _conn.execute("SELECT name, room, waiting FROM doctors WHERE reg_no = ?", (visit["wanted_doctor"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
-          "day": today, "code": code_for(reg_no), "worse": False, "closed": None, "estimate": None, "note": None}
+          "day": today, "code": code_for(reg_no), "worse": False, "closed": None, "estimate": None, "note": None,
+          "doctor_busy": None}
     if visit["status"] == "nurse":
         # check-in done: the phone shows the code for the nurse. "worse": the nurse has been told they feel worse.
         me.update(status="nurse", worse=visit["worse_at"] is not None)
@@ -764,8 +765,8 @@ def where_is(reg_no):
         position = [p["reg_no"] for p in rows].index(reg_no) + 1
         me.update(status="waiting", position=position, ahead=position - 1, worse=visit["worse_at"] is not None,
                   estimate=estimate)
-        if wanted:          # the nurse chose the doctor: the patient knows whom they wait for
-            me.update(doctor=wanted["name"], room=wanted["room"])
+        if wanted:          # the nurse chose the doctor: the patient knows whom they wait for, and whether they are busy
+            me.update(doctor=wanted["name"], room=wanted["room"], doctor_busy=wanted["waiting"] > 0)
     elif visit["status"] == "with doctor":
         me.update(status="called", doctor=doctor["name"], room=doctor["room"])
     elif visit["status"] == "done":
