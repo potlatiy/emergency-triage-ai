@@ -656,6 +656,11 @@ def follow_up(complaint, injury=False, use_model=True):
         except Exception:
             pass                      # model switched off, too slow, or broke the rules
     questions = questions or standard_questions(complaint, skip)
+    # When it started is the first thing a doctor asks. Gemma 3 1B copied the example in its prompt and chose
+    # "doing, before, medicine" for almost every complaint on the live site, so when the complaint does not say
+    # when, "When did it start?" takes the place of its last question.
+    if "onset" not in skip and all(q["topic"] != "onset" for q in questions):
+        questions = [{"question": TOPICS["onset"]["ask"], "topic": "onset"}] + list(questions)[:FOLLOW_UPS - 1]
     return {"source": source, "questions": [
         {**q, "kind": "extra", "label": TOPICS[q["topic"]]["label"], "choices": TOPICS[q["topic"]]["choices"]}
         for q in questions]}
@@ -777,16 +782,30 @@ def checked_summary(text, complaint="", report=None):
 _NUMBER_WORDS = set("one two three four five six seven eight nine ten half few couple".split())
 
 
+# Words that say little about what is wrong: a summary need not repeat them ("bad", "problems", "pain" alone).
+_SAYS_LITTLE = set("pain pains painful ache aches hurt hurts hurting bad really problem problems issue issues trouble "
+                   "since last night morning today hour hours day days week weeks".split())
+
+
 def with_complaint(text, complaint):
-    """The summary, opened with the patient's own complaint when the model left part of it out.
+    """The summary, opened with the patient's own complaint when the model left out what the patient came with.
 
     A small model sometimes skips the complaint and writes only about an answer: for "Hurt pain for one hour" it
-    wrote just "She describes the pain as sharp and stabbing." The nurse must always see what the patient came
-    with, so then the complaint, word for word, goes first."""
+    wrote just "She describes the pain as sharp and stabbing." Then the complaint, word for word, goes first.
+    The summary is compared with the complaint as Meddy read it (typing slips put right), the same thing in other
+    words counts ("stomach" summed up as "abdominal"), and words that say little are not looked for: half of the
+    words that matter is enough. (The first version wanted every word, and the line was added to almost every
+    summary: "Came with "crushing chest pain and sweating"" above "The patient reported chest pain and sweating".)"""
     complaint = " ".join(str(complaint or "").split()).strip(" .")
-    words = [w for w in _words(complaint) if w not in _NOT_A_SYMPTOM and w not in _NUMBER_WORDS]
+    words = [w for w in _words(spelling(complaint))
+             if w not in _NOT_A_SYMPTOM and w not in _NUMBER_WORDS and w not in _SAYS_LITTLE]
     said = text.lower()
-    if complaint and any(not re.search(r"\b" + re.escape(w[:4]), said) for w in words):
+
+    def found(word):
+        stem = word[:4]
+        stems = next((group for group in _SAME_THING if stem in group), {stem})
+        return any(re.search(r"\b" + re.escape(s), said) for s in stems)
+    if complaint and words and sum(found(w) for w in words) * 2 < len(words):
         return f'Came with "{complaint}". {text}'
     return text
 

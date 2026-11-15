@@ -254,7 +254,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=12"></script>
+<script src="/static/meddy-site.js?v=14"></script>
 <script>
 // The doctor's screen asks the server every 5 seconds for the patients now with this doctor:
 //   GET /api/doctor/{reg_no}/patients   (the full card: level, Meddy's level, vital signs, answers, referral)
@@ -325,7 +325,7 @@ async function choosePage() {
   if (!staff || reg) return;
   pickerDrawn = true;
   const teams = {};
-  staff.doctors.filter((d) => d.on_duty && d.reg_no !== "DR-1000").forEach((d) => (teams[d.department] = teams[d.department] || []).push(d));
+  staff.doctors.filter((d) => d.on_duty).forEach((d) => (teams[d.department] = teams[d.department] || []).push(d));
   $("who").innerHTML = `<option value="" selected disabled>Choose your name</option>` + staff.doctors.map((d) =>
     `<option value="${esc(d.reg_no)}">${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)} — ${esc(doctorState(d))}</option>`).join("");
   $("me-name").textContent = "Who are you?";
