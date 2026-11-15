@@ -175,10 +175,20 @@ SEED_ARRIVALS = [
     ("ear pain", 19, "Female", 5, "normal", 4),
 ]
 # Names of the made-up patients: made up, and given in turn.
-MADE_UP_NAMES = [("Anna", "Keller"), ("Omar", "Haddad"), ("Lena", "Moretti"), ("Yusuf", "Demir"), ("Clara", "Nilsson"),
-                 ("Mateo", "Ruiz"), ("Ines", "Barros"), ("Tomas", "Novak"), ("Mia", "Laurent"), ("Daniel", "Okoro"),
-                 ("Sara", "Lindgren"), ("Ivan", "Petrenko"), ("Hana", "Sato"), ("Leo", "Fischer"), ("Eva", "Kowalska"),
-                 ("Noah", "Brennan"), ("Amira", "Saleh"), ("Jonas", "Weber"), ("Rosa", "Pires"), ("Felix", "Dumont")]
+# A woman gets a woman's name and a man a man's, and no patient shares a surname with a doctor ("Omar Haddad" with
+# Dr. Haddad, "Leo Fischer" with Dr. Fischer, and "Clara Nilsson, male" were seen in the demonstration).
+MADE_UP_WOMEN = [("Anna", "Keller"), ("Lena", "Moretti"), ("Clara", "Nilsson"), ("Ines", "Barros"), ("Mia", "Laurent"),
+                 ("Sara", "Lindgren"), ("Hana", "Sato"), ("Eva", "Kowal"), ("Amira", "Saleh"), ("Rosa", "Pires"),
+                 ("Julia", "Berg"), ("Nora", "Quist")]
+MADE_UP_MEN = [("Omar", "Rahimi"), ("Yusuf", "Demir"), ("Mateo", "Ruiz"), ("Tomas", "Hrabal"), ("Daniel", "Okoro"),
+               ("Ivan", "Petrenko"), ("Leo", "Marchetti"), ("Noah", "Whitlock"), ("Jonas", "Weber"), ("Felix", "Dumont"),
+               ("Karl", "Eklund"), ("Hugo", "Lemaire")]
+MADE_UP_NAMES = MADE_UP_WOMEN + MADE_UP_MEN
+
+
+def _made_up_name(sex, number):
+    names = MADE_UP_WOMEN if sex == "Female" else MADE_UP_MEN
+    return names[number % len(names)]
 # Insurance of the made-up patients (type, last four characters of the card): made up as well.
 MADE_UP_INSURANCE = [("public", "4471"), ("private", "0932"), ("public", "7715"), ("none", None), ("public", "2208")]
 # Patients already in the waiting room when the demonstration starts: (complaint, level, minutes ago)
@@ -286,7 +296,10 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
         result = core.assess(complaint, age, sex, alert=alert, pain=pain, vitals=vitals)
         _seed_levels[who] = (result["level"], [result["probabilities"][str(l)] for l in core.LEVELS])
     ai_level, odds = _seed_levels[who]
-    number = _next_number("visit")
+    # Made-up patients are numbered apart (S-2026-...), so a real patient's registration number and phone code count
+    # real patients only: the simulation used to push them to P-2026-0716 within an afternoon.
+    _meta("made_up_visit", _setting("made_up_visit", 0) + 1)
+    number = _meta("made_up_visit")
     # The simulated patients of other nurses get tickets of their own (B001, B002 ...), so the tickets of the
     # patients in the waiting room stay in step with the line: A079 with only five people waiting was confusing.
     if series == "A":
@@ -294,7 +307,7 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
     else:
         _meta("sim_ticket", _setting("sim_ticket", 0) + 1)
         ticket = f"{series}{_meta('sim_ticket'):03d}"
-    reg_no = f"P-2026-{number:04d}"
+    reg_no = f"S-2026-{number:05d}"
     _conn.execute(
         "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, ai_odds, second_check, vitals, arrived, "
         "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at, first_name, last_name, "
@@ -302,7 +315,7 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
         (reg_no, ticket, complaint, age, sex, level, ai_level, json.dumps(odds), core.second_check(odds, level),
          json.dumps({**vitals, "alert": alert, "pain": pain}), arrived, department,
          "made-up patient" if department else None, *MADE_UP_INSURANCE[number % len(MADE_UP_INSURANCE)],
-         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now(), *MADE_UP_NAMES[number % len(MADE_UP_NAMES)],
+         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now(), *_made_up_name(sex, number),
          time.time() if doctor else None))
     _event(reg_no, "made up", "system", "with " + doctor if doctor else "in the waiting room")
     return reg_no, ticket
@@ -424,7 +437,9 @@ def nurse_patients():
     # Patients already in the waiting room who need the nurse again: first those who pressed "I feel worse"
     # (who asked first comes first), then those who have waited longer than their level allows (the more
     # urgent level first, then who has gone longest without a look).
-    again = [p for p in line_now if p["worse_at"] is not None or core.recheck_due(p, clock)]
+    # Real patients only: the made-up patients of the waiting room are there to fill the line, and a list of them
+    # all "due a re-check" was the first thing the demonstration showed.
+    again = [p for p in line_now if p["you"] and (p["worse_at"] is not None or core.recheck_due(p, clock))]
     again.sort(key=lambda p: (p["worse_at"] is None, p["worse_at"] if p["worse_at"] is not None else 0, p["level"],
                               p["seen_at"] if p["seen_at"] is not None else p["arrived"]))
     return {"clock": clock, "patients": [
@@ -1015,6 +1030,9 @@ def _times_of(times, doctor):
     return times.get(doctor["reg_no"], {"since": None, "usual_minutes": None, "free_in_minutes": None})
 
 
+SHORT_LIST_FIT = 0.10
+
+
 def doctor_choices(match, others=3):
     """The doctors the nurse can choose from for one patient: the best one, and a short list of three more.
 
@@ -1041,7 +1059,12 @@ def doctor_choices(match, others=3):
                 "queue": queue.get(d["reg_no"], 0), "busy": d["waiting"] > 0, **_times_of(times, d)}
 
     best = teams[ranked[0]]
-    short = best[1:2] + [teams[name][0] for name in ranked[1:]]
+    # Another department only when it really fits (10% or more): urology at 2% for stomach pain was offered when
+    # both gastroenterologists were busy. General medicine covers everyone, so it may always close the list.
+    fitting = [name for name in ranked[1:] if match.get(name, 0) >= SHORT_LIST_FIT]
+    short = best[1:3] + [teams[name][0] for name in fitting]
+    if core.DEFAULT_DEPARTMENT in teams and all(d["department"] != core.DEFAULT_DEPARTMENT for d in [best[0], *short]):
+        short.append(teams[core.DEFAULT_DEPARTMENT][0])
     return {"suggested": card(best[0]), "others": [card(d) for d in short[:others]]}
 
 
@@ -1317,6 +1340,10 @@ SIM_PATIENTS = {
 SIM_EVERY = 15                  # seconds between two steps
 SIM_SEEN = (120, 420)           # a simulated visit lasts 2 to 7 minutes
 SIM_NEW_PATIENT = 0.12          # at each step, the chance that a free doctor gets a patient from another nurse
+SIM_LINE_WAIT = 20              # a made-up patient in the waiting room may be called in after 20 minutes
+SIM_CALLED = 0.15               # ... with this chance at each step, when a doctor of their department is free
+SIM_LINE_KEEP = 3               # fewer made-up patients than this in the waiting room: one may walk in
+SIM_WALK_IN = 0.06              # ... with this chance at each step
 SIM_WATCHED = 90                # a doctor whose screen asked for their list in the last 90 seconds is left alone
 SIM_AWAKE = 600                 # the simulation sleeps when no screen asked for anything in the last 10 minutes
 _watched = {}                   # doctor -> when their screen last asked for their list
@@ -1372,10 +1399,32 @@ def simulate(rng=None, now=None):
                 _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
                 _event(visit["reg_no"], "finished", visit["doctor_reg"], "simulated")
                 left += 1
-        free = _conn.execute("SELECT reg_no, department FROM doctors WHERE on_duty = 1 AND waiting = 0 "
-                             "AND department != 'Resuscitation team' ORDER BY reg_no").fetchall()
+        free = [dict(r) for r in _conn.execute("SELECT reg_no, department FROM doctors WHERE on_duty = 1 AND waiting = 0 "
+                                               "AND department != 'Resuscitation team' ORDER BY reg_no")]
+        free = [d for d in free if d["reg_no"] not in watched]
+        # Made-up patients in the waiting room do not wait for ever: after a while a free doctor of their department
+        # (or general medicine) calls them in. Real patients are never called by the simulation.
+        clock = _clock()
+        for patient in _conn.execute("SELECT * FROM visits WHERE status = 'waiting' AND you = 0").fetchall():
+            if clock - patient["arrived"] < SIM_LINE_WAIT or rng.random() >= SIM_CALLED:
+                continue
+            department = patient["department"] or core.department_for(patient["complaint"])
+            doctor = next((d for d in free if d["department"] == department), None) or \
+                next((d for d in free if d["department"] == core.DEFAULT_DEPARTMENT), None)
+            if doctor is None:
+                continue
+            free.remove(doctor)
+            _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ?, seen_from = ?, sim_until = ? "
+                          "WHERE reg_no = ?", (doctor["reg_no"], now, now + rng.uniform(*SIM_SEEN), patient["reg_no"]))
+            _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
+            _event(patient["reg_no"], "called by the doctor", doctor["reg_no"], "simulated")
+        # And now and then a made-up patient walks into the waiting room, so the line is never empty in a demo.
+        in_line = _conn.execute("SELECT COUNT(*) AS n FROM visits WHERE status = 'waiting' AND you = 0").fetchone()["n"]
+        if in_line < SIM_LINE_KEEP and rng.random() < SIM_WALK_IN:
+            complaint, age, sex, level, preset, pain = rng.choice(SEED_ARRIVALS)
+            _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", clock)
         for doctor in free:
-            if doctor["reg_no"] in watched or rng.random() >= SIM_NEW_PATIENT:
+            if rng.random() >= SIM_NEW_PATIENT:
                 continue
             complaint, age, sex, level, preset, pain = rng.choice(SIM_PATIENTS[doctor["department"]])
             reg_no, _ = _made_up_visit(complaint, age, sex, level, preset, pain, "Alert", _clock(),

@@ -498,7 +498,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=12"></script>
+<script src="/static/meddy-site.js?v=14"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -775,9 +775,12 @@ const regTag = () => `<span class="regno">Registration no. ${esc(me.reg)}${me.ti
 // ---------------------------------------------------------------- 1. entrance
 // A name in any alphabet: letters, with single spaces, hyphens or apostrophes between them (the server checks the same).
 const NAME = /^\p{L}+(?:[ '\-]\p{L}+)*$/u;
-const MADE_UP_NAMES = [["Anna", "Keller"], ["Omar", "Haddad"], ["Lena", "Moretti"], ["Yusuf", "Demir"], ["Clara", "Nilsson"],
-  ["Mateo", "Ruiz"], ["Ines", "Barros"], ["Tomas", "Novak"], ["Mia", "Laurent"], ["Daniel", "Okoro"], ["Sara", "Lindgren"],
-  ["Ivan", "Petrenko"], ["Hana", "Sato"], ["Leo", "Fischer"], ["Eva", "Kowalska"], ["Amira", "Saleh"], ["Jonas", "Weber"]];
+// A made-up name that fits the sex chosen below, and never a doctor's surname.
+const MADE_UP_NAMES = {
+  Female: [["Anna", "Keller"], ["Lena", "Moretti"], ["Clara", "Nilsson"], ["Ines", "Barros"], ["Mia", "Laurent"], ["Sara", "Lindgren"],
+           ["Hana", "Sato"], ["Eva", "Kowal"], ["Amira", "Saleh"], ["Rosa", "Pires"], ["Julia", "Berg"], ["Nora", "Quist"]],
+  Male: [["Omar", "Rahimi"], ["Yusuf", "Demir"], ["Mateo", "Ruiz"], ["Tomas", "Hrabal"], ["Daniel", "Okoro"], ["Ivan", "Petrenko"],
+         ["Leo", "Marchetti"], ["Noah", "Whitlock"], ["Jonas", "Weber"], ["Felix", "Dumont"], ["Karl", "Eklund"], ["Hugo", "Lemaire"]] };
 function entrance() {
   walkTo(1);
   panel.innerHTML = `
@@ -796,6 +799,8 @@ function entrance() {
     <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
     <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
     <p class="hint" id="spell" hidden>Did you mean: <b id="spell-text"></b>? <button type="button" class="mini" id="spell-use">Yes, use this</button></p>
+    <p class="hint" id="english" hidden><b>Meddy reads English only.</b> Please describe it in English, for example:
+      “headache since this morning”. You can still go on: the nurse reads what you wrote.</p>
     <div class="row">
       <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" inputmode="numeric" value="${me.age}"></div>
       <div><span class="label" id="sex-label">Sex</span>${choice("sex", ["Female", "Male"], me.sex, "sex-label")}</div>
@@ -819,7 +824,13 @@ function entrance() {
     <p class="hint" id="no-insurance" ${me.insurance === "none" ? "" : "hidden"}>You will be seen all the same.</p>
     <p class="error" id="error" role="alert"></p>
     <button class="go" id="go">Register and go to check-in</button>`;
-  bindChoice("sex", (v) => { me.sex = v; remember("entrance"); });
+  bindChoice("sex", (v) => {
+    me.sex = v;
+    // A made-up name follows the sex: "Anna Keller" becomes a man's made-up name when "Male" is tapped after it.
+    const first = document.getElementById("first-name"), last = document.getElementById("last-name");
+    const other = MADE_UP_NAMES[v === "Male" ? "Female" : "Male"], at = other.findIndex(([f, l]) => f === first.value && l === last.value);
+    if (at >= 0) { [first.value, last.value] = MADE_UP_NAMES[v][at % MADE_UP_NAMES[v].length]; me.firstName = first.value; me.lastName = last.value; }
+    remember("entrance"); });
   const cardBox = document.getElementById("member-id");
   bindChoice("insurance", (v) => { me.insurance = { Public: "public", Private: "private", "No insurance": "none" }[v];
     document.getElementById("card-row").hidden = me.insurance === "none";
@@ -837,14 +848,16 @@ function entrance() {
   // A typing slip ("hurt pain", "breating") is offered back corrected; the patient decides.
   let spellTimer = null;
   const checkSpelling = () => { clearTimeout(spellTimer); spellTimer = setTimeout(async () => {
-    const typed = complaintBox.value.trim(), box = document.getElementById("spell");
+    const typed = complaintBox.value.trim(), box = document.getElementById("spell"), english = document.getElementById("english");
     if (!box || !complaintBox.isConnected) return;          // the patient has already moved on to the next step
-    if (typed.length < 3) { box.hidden = true; return; }
+    if (typed.length < 3) { box.hidden = true; english.hidden = true; return; }
     try {
       const answer = await api("/api/spelling", { text: typed });      // in the body: never in the address
       if (complaintBox.value.trim() !== typed || !box.isConnected) return;
       document.getElementById("spell-text").textContent = answer.text; box.hidden = !answer.changed;
-    } catch (e) { box.hidden = true; }
+      // Not one word Meddy knows, and letters outside English: most likely another language.
+      english.hidden = answer.understood !== false || !/[^\u0000-\u024f\s\d.,!?'"()\-]/.test(typed);
+    } catch (e) { box.hidden = true; english.hidden = true; }
   }, 500); };
   complaintBox.addEventListener("input", checkSpelling);
   checkSpelling();
@@ -859,7 +872,8 @@ function entrance() {
   for (const id of ["complaint", "first-name", "last-name"]) document.getElementById(id).addEventListener("input", () => {
     document.getElementById(id).removeAttribute("aria-invalid"); keepDraft(); });
   document.getElementById("made-up-name").addEventListener("click", () => {
-    const [first, last] = MADE_UP_NAMES[Math.floor(Math.random() * MADE_UP_NAMES.length)];
+    const names = MADE_UP_NAMES[me.sex] || MADE_UP_NAMES.Female;
+    const [first, last] = names[Math.floor(Math.random() * names.length)];
     document.getElementById("first-name").value = first; document.getElementById("last-name").value = last;
     for (const id of ["first-name", "last-name"]) document.getElementById(id).removeAttribute("aria-invalid");
     document.getElementById("error").textContent = ""; keepDraft(); });
@@ -883,7 +897,7 @@ function entrance() {
     }
     if (!me.complaint) { error.textContent = "Tell us what is wrong first.";
       complaintBox.setAttribute("aria-invalid", "true"); complaintBox.focus(); return; }
-    if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Enter an age between 15 and 110.";
+    if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Meddy is for adults: enter an age between 15 and 110. Children are seen at the desk.";
       document.getElementById("age").setAttribute("aria-invalid", "true"); document.getElementById("age").focus(); return; }
     const card = cardBox.value.replace(/[\s\-./]/g, "");
     if (!me.insurance) { error.textContent = "Choose your insurance. If you have none, tap “No insurance”.";
@@ -1071,7 +1085,7 @@ function atNurse() {
     <h2>Show this code to the nurse</h2>
     <div class="place">
       <span class="num code" aria-hidden="true">${esc(me.code || me.reg.slice(-4))}</span>
-      <p>Your code<b>${esc(me.code || me.reg.slice(-4))}</b></p>
+      <p aria-label="Your code: ${esc(me.code || me.reg.slice(-4))}">Your code<b aria-hidden="true">for the nurse</b></p>
       <div class="qr-code small" id="nurse-qr" aria-hidden="true"></div>
     </div>
     <p class="lede">The nurse will call your code. This screen moves on by itself.</p>

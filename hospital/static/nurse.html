@@ -175,7 +175,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=12"></script>
+<script src="/static/meddy-site.js?v=14"></script>
 <script>
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
@@ -430,6 +430,8 @@ async function openPatient(reg, takeOver) {
     <div id="result"></div>`;
   summarise(run, reg);
   manage(reg, card);
+  // On a phone the card is below the list: a nurse who scanned a patient's code lands on the card itself.
+  if (window.matchMedia("(max-width: 960px)").matches) panel.scrollIntoView({ block: "start" });
   // A re-check starts from what the nurse wrote and ticked before, so that deciding again does not wipe it.
   if (card.note) { document.getElementById("note").value = card.note; document.getElementById("note-count").textContent = card.note.length + " / 300"; }
   document.getElementById("summary-wrong").checked = Boolean(card.summary_held_back);

@@ -437,7 +437,9 @@ def spelling(body: Typed):
     The words travel in the body of the request, never in its address: what a patient types about their health
     must not end up in the address logs of a proxy standing in front of the hospital."""
     fixed = core.spelling(body.text)
-    return {"text": fixed, "changed": fixed != body.text}
+    # "understood": Meddy found a symptom word it knows. When it does not (another language, no symptom named),
+    # the phone asks the patient to say it in English: the models read English only.
+    return {"text": fixed, "changed": fixed != body.text, "understood": bool(core.known_words(fixed))}
 
 
 @app.get("/api/spelling")
