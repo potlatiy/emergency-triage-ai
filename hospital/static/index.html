@@ -627,7 +627,8 @@ async function restoreVisit() {
     if (writing) askFollowUp();
     return;
   }
-  startOver();                                                   // the visit is finished
+  if (now.status === "finished") return thanks(now.closed);      // the visit is over: say goodbye
+  startOver();
 }
 
 function offerToContinue(other) {
@@ -1095,7 +1096,7 @@ function atNurse() {
     if (now.status === "nurse" && Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) drawWorse(now.worse);
     if (now.status === "waiting") waiting("The nurse is done. You are in the waiting room now.");
     else if (now.status === "called") doctor({ doctor: now.doctor, room: now.room, ticket: now.ticket });
-    else if (now.status === "finished") startOver();
+    else if (now.status === "finished") thanks(now.closed);
   }, 3000);
 }
 // ---------------------------------------------------------------- 4. waiting room
@@ -1128,7 +1129,8 @@ async function waiting(message) {
   if (run !== tick) return;                                             // a newer screen is already being drawn
   if (!sameVisit(mine)) { startOver(); return; }
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
-  if (mine.status !== "waiting") { startOver(); return; }               // finished, or no longer in the line
+  if (mine.status === "finished") { thanks(mine.closed); return; }     // the nurse closed the visit
+  if (mine.status !== "waiting") { startOver(); return; }
   remember("waiting");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
   panel.innerHTML = `
@@ -1213,11 +1215,33 @@ function doctor(called) {
       <div class="clock">Your ticket<b>${esc(called.ticket || "")}</b></div>
     </div>
     <p class="lede">Your doctor already has your answers and the nurse's measurements, so you tell your story once.</p>
-    <div class="note" style="margin-top:24px"><b>What was real here.</b> Meddy's level comes from a model tested on 1,267 real patients;
-    it matched experts 68% of the time against 85% for nurses, so the nurse sets the level and Meddy is her second check. The department
-    comes from a second model trained on the same patients' real diagnoses. Meddy suggests a level and a department and never a diagnosis.
-    The doctors are made up. Not medical advice.</div>
-    <button class="go" id="again">Start again as a new patient</button>`;
+    <button class="go light" id="again">Start again as a new patient</button>`;
+  document.getElementById("again").addEventListener("click", () => startOver());
+  // When the doctor closes the visit, this screen says thank you by itself.
+  const run = tick;
+  watching = setInterval(async () => {
+    try {
+      const now = await api("/api/me/" + encodeURIComponent(me.reg));
+      if (run !== tick) return;
+      if (now.status === "finished") thanks(now.closed);
+    } catch (e) { if (run === tick && e.status === 404) startOver(); }
+  }, 5000);
+}
+
+// The end of the visit. After the doctor: thank you and get well. Closed by the nurse: say so plainly.
+function thanks(closed) {
+  const seen = closed === "seen";
+  walkTo(5);
+  forget();                                       // a reload starts a new visit; this one is over
+  panel.innerHTML = `
+    ${head("patient")}
+    <h2>${seen ? "Thank you for visiting us" : "Your visit was closed"}</h2>
+    <div class="note ${seen ? "good" : ""}" style="margin-top:18px">${seen
+      ? "<b>Your visit is finished.</b> We hope you feel better soon. Follow what your doctor told you."
+      : closed === "removed" ? "The nurse closed your visit. If you still need help, talk to the staff or register again."
+      : "The hospital closed your visit. If you still need help, please register again."}</div>
+    ${seen ? `<p class="lede">If you feel worse, come back straight away or call your emergency number.</p>` : ""}
+    <button class="go" id="again">Start a new visit</button>`;
   document.getElementById("again").addEventListener("click", () => startOver());
 }
 
