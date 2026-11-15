@@ -208,6 +208,7 @@ class Worse(BaseModel):
 
 class Calling(BaseModel):
     doctor_reg: str
+    reg_no: str | None = None          # "Accept": this patient, who must be waiting for this doctor
 
 
 class Simulation(BaseModel):
@@ -590,11 +591,13 @@ def doctor_call(body: Calling):
     """The doctor calls their next patient: the first in line for their department. "called" is None when
     nobody is waiting for this doctor. A doctor who is off duty is refused (409)."""
     try:
-        called = db.call_for_doctor(body.doctor_reg)
+        called = db.call_for_doctor(body.doctor_reg, body.reg_no)
     except LookupError:
         raise HTTPException(404, "No doctor with this registration number.")
     except db.OffDuty:
         raise HTTPException(409, "This doctor is off duty and cannot call a patient.")
+    except db.NotForYou:
+        raise HTTPException(409, "This patient is no longer waiting for you.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"called": called, **db.line()}

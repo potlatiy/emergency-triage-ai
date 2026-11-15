@@ -187,6 +187,22 @@
   }
   @media (prefers-reduced-motion: reduce) { .live i { animation:none; } .pt { transition:none; } }
   .pick { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  /* patients waiting in line for this doctor, and the question when the nurse sends one */
+  #queue { list-style:none; margin:0 0 22px; padding:0; }
+  #queue li { display:flex; align-items:center; gap:12px; margin-top:10px; padding:12px 14px; border:2px dashed #b9c6e8;
+              border-radius:18px; background:var(--card); }
+  #queue li.chosen { border-style:solid; border-color:var(--blue); background:var(--blue-tint); }
+  #queue li div { flex:1; min-width:0; } #queue li b { display:block; } #queue li span { color:var(--soft); font-size:.95rem; }
+  #queue .empty-q { border:0; padding:0; background:none; color:var(--soft); }
+  .ask { position:fixed; inset:0; z-index:900; display:grid; place-items:center; background:rgba(22,37,42,.45); }
+  .ask > div { width:min(460px, 92vw); padding:26px; border-radius:22px; background:#fff; box-shadow:0 18px 50px rgba(0,0,0,.25); }
+  .ask h2 { margin:0 0 6px; font-size:1.5rem; } .ask p { margin:8px 0; }
+  .ask .row { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; } .ask .row button { flex:1 1 180px; }
+  .ask .go, #queue .mini { min-height:48px; padding:10px 20px; border:2px solid var(--blue); border-radius:999px; background:var(--blue);
+                           color:#fff; font:inherit; font-size:1rem; font-weight:800; cursor:pointer; }
+  .ask .go.light { background:#fff; color:var(--blue); }
+  .ask .go:hover, #queue .mini:hover { filter:brightness(1.08); }
+  #queue .mini { min-height:42px; padding:8px 18px; flex:none; } #queue .mini:disabled { opacity:.6; cursor:wait; }
 </style>
 </head>
 <body>
@@ -222,6 +238,8 @@
 
 <main class="wrap">
   <section aria-labelledby="list-title">
+    <h2 class="col-title" id="queue-title">Waiting for you</h2>
+    <ul id="queue" aria-labelledby="queue-title"></ul>
     <h2 class="col-title" id="list-title">Your patients</h2>
     <ul id="list"></ul>
   </section>
@@ -333,6 +351,7 @@ async function check() {
     }
     drawStaff(staff, answer.doctor);
     drawPatients(answer);
+    drawQueue(answer.waiting_for_you || []);
     $("live").classList.remove("down");
     $("live-text").textContent = "Live. Checked at " + new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
   } catch (error) {
@@ -590,6 +609,64 @@ function drawCard() {
     }
   });
 }
+
+// ---------------------------------------------------------------- waiting for this doctor
+// The patients in line for this doctor, each with "Accept". When the nurse sends one to this doctor by name, the
+// screen asks at once: "Are you free now?" Yes calls the patient in; "Not now" leaves them in the list.
+let queueKey = "", asking = null;
+const offeredKey = () => "meddy-offered-" + reg;
+function offered() { try { return new Set(JSON.parse(localStorage.getItem(offeredKey()) || "[]")); } catch (e) { return new Set(); } }
+function markOffered(regNo) {
+  const seen = offered(); seen.add(regNo);
+  try { localStorage.setItem(offeredKey(), JSON.stringify([...seen].slice(-200))); } catch (e) {}
+}
+function drawQueue(queue) {
+  $("queue-title").textContent = `Waiting for you (${queue.length})`;
+  const key = JSON.stringify(queue);
+  if (key !== queueKey) {
+    queueKey = key;
+    $("queue").innerHTML = queue.length ? queue.map((p) => `<li class="${p.chosen ? "chosen" : ""}">
+        <div><b>${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</b>
+          <span>${esc(levelText(p.level))} · waited ${p.waited} min${p.chosen ? " · the nurse chose you" : ""}</span></div>
+        <button type="button" class="mini" data-accept="${esc(p.reg_no)}">Accept</button></li>`).join("")
+      : `<li class="empty-q">Nobody is waiting for you.</li>`;
+  }
+  const next = queue.find((p) => p.chosen && !offered().has(p.reg_no));
+  if (next && !asking) ask(next);
+}
+function ask(p) {
+  asking = p.reg_no;
+  markOffered(p.reg_no);
+  const box = document.createElement("div");
+  box.className = "ask"; box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-labelledby", "ask-title");
+  box.innerHTML = `<div><h2 id="ask-title">New patient for you</h2>
+    <p><b>${esc(p.ticket)} · ${p.patient ? esc(p.patient) : ""}</b></p>
+    <p>“${esc(p.complaint)}” · ${esc(person(p))} · ${esc(levelText(p.level))}</p>
+    ${p.said ? `<p style="color:var(--soft)">${esc(p.said)}</p>` : ""}
+    <p><b>Are you free now?</b></p>
+    <div class="row"><button type="button" class="go" id="ask-yes" style="margin:0">Yes, let them come in</button>
+      <button type="button" class="go light" id="ask-no" style="margin:0">Not now</button></div></div>`;
+  document.body.appendChild(box);
+  const close = () => { box.remove(); asking = null; };
+  box.querySelector("#ask-yes").addEventListener("click", () => { close(); accept(p.reg_no); });
+  box.querySelector("#ask-no").addEventListener("click", () => { close(); $("called-note").textContent =
+    `${p.patient || "The patient"} stays in “Waiting for you”. Press Accept when you are free.`; });
+  box.querySelector("#ask-yes").focus();
+}
+async function accept(regNo) {
+  const note = $("called-note");
+  note.textContent = "Calling…";
+  try {
+    const response = await fetch("/api/doctor/call", { method:"POST", headers:{ "Content-Type":"application/json" },
+                                                       body:JSON.stringify({ doctor_reg:reg, reg_no:regNo }) });
+    if (response.status === 409) { note.textContent = (await response.json()).detail; check(); return; }
+    if (!response.ok) throw new Error();
+    const { called } = await response.json();
+    note.textContent = `Ticket ${called.ticket} (${called.patient || called.who}) is on the way to ${called.room}. Their phone shows the room now.`;
+    selected = called.reg_no; check();
+  } catch (error) { note.textContent = "Could not call: the hospital server did not answer. Try again."; }
+}
+$("queue").addEventListener("click", (event) => { const b = event.target.closest("[data-accept]"); if (b) { b.disabled = true; accept(b.dataset.accept); } });
 
 // The doctor calls the next patient from the waiting room: the first in line for this department. The patient's
 // phone asks the server every few seconds, so it moves on by itself and tells them which room to go to.
