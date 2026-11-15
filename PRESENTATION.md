@@ -19,7 +19,7 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 | 0:00–0:15 | The three windows, the phone at the entrance | "In a crowded emergency department, the person with chest pain can end up waiting behind five sprained ankles. A nurse sorts the line, but under pressure about one patient in ten is rated less urgent than they really are." |
 | 0:15–0:35 | Phone: type "crushing chest pain and sweating", age 67, male, "No insurance", register. Tap the first danger sign and "Pressure or tightness", type "I was carrying shopping upstairs when my chest went tight" in "In your own words", press "Go to the nurse". The phone shows a code | "This is the patient's phone. You say what is wrong and get a quick check built for your complaint: danger signs to tap, questions an AI model chose for you, and room to say it in your own words. Then the phone shows a code for the nurse." |
 | 0:35–0:55 | Nurse: tap the code in her list. Show what the patient said and the AI summary. Choose Unstable, press "Measure and get Meddy's report", then "Everything is correct: send straight to the resuscitation bay". The phone switches by itself | "The nurse opens the patient by that code and reads what they said, summed up by the AI in two sentences. She measures the vital signs, and Meddy, trained on 1,267 real emergency patients, suggests level 2, an emergency. One button, and the patient's phone says: go to the resuscitation bay. It never shows the level." |
-| 0:55–1:15 | Phone: "Start again as a new patient", "bad stomach pain and vomiting", age 40, "No insurance", "No, none of these", "Cramping". Nurse: Feverish, "I want to check the patient myself", level 3, to the waiting room. Phone: place in line. Doctor: "Call my next patient" until the phone shows the room | "Here Meddy is less sure, so it advises a personal check. The nurse gives her own level and the patient joins a line ordered by urgency; the phone shows only a ticket and a place. The doctor calls the next patient of their department, and the phone tells the patient which room to go to. The doctor's screen opens with a patient summary: what the patient said, what the nurse found, and what Meddy suggested, each under its own label." |
+| 0:55–1:15 | Phone: "Start again as a new patient", "bad stomach pain and vomiting", age 40, "No insurance", "No, none of these", "Cramping". Nurse: Feverish, "I want to check the patient myself", level 3; under "Suggested doctor" choose Dr. Baptiste (open "Choose another doctor" if he is not first), to the waiting room. Phone: place in line and "Your doctor: Dr. Baptiste". Doctor: the window "New patient for you: are you free now?", press "Yes, let them come in"; the phone shows the room. Show the patient summary, then "Visit finished" twice: the phone says thank you | "Here Meddy is less sure, so it advises a personal check. The nurse gives her own level and chooses the doctor: Meddy suggests the best match and shows who is free or busy. The doctor's screen asks at once: a new patient for you, are you free now? Yes, and the patient's phone shows the room. The doctor already has a patient summary: what the patient said, what the nurse found, and what Meddy suggested, each under its own label. When the visit is finished, the phone says thank you." |
 | 1:15–1:45 | The second-check chart from the README | "Does it work? On the exact level the model is right 68% of the time and nurses 85%, so it cannot replace a nurse. As a second check it flags 107 of the 131 patients nurses rated too low. If a nurse can re-check one patient in five, simple rules find about a third of them. Our model finds two thirds." |
 | 1:45–2:00 | The limits section of the README | "The waiting times are simulated, the data is from one country, and the questionnaire is untested. Next we would try it with real nurses." |
 
@@ -27,8 +27,8 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 
 1. Open the three windows: https://darkshdws-meddy.hf.space, `/nurse` and `/doctor`. (Or locally:
    `python hospital/server.py` and http://localhost:8000.) A free Space that has been quiet for two days takes
-   about a minute to wake up. If the Space has a staff PIN (`MEDDY_STAFF_PIN`), the nurse's and the doctor's
-   windows ask for it once: type it before the recording starts. On the doctor's window choose your name.
+   about a minute to wake up. The nurse's and the doctor's windows ask for the staff PIN once (`0070`, the same
+   one the judges get): type it before the recording starts. On the doctor's window choose your name.
 2. Add the Space variable `MEDDY_AUTO_UPDATE` = `0` (Space → Settings → Variables), so a teammate's merge cannot
    restart the site during the recording. Delete it afterwards.
 3. Run both patients of the script through once first. The AI model needs a few seconds to load the first time
@@ -161,6 +161,8 @@ put together (the only AI text in it is the two checked sentences, and the nurse
 - **Code:** https://github.com/potlatiy/emergency-triage-ai
 - **Write-up:** the same link (the README is the write-up)
 - **What we added:** "Our own idea."
+- **Live demo:** https://darkshdws-meddy.hf.space (the patient's phone), `/nurse` and `/doctor`. Staff PIN for the
+  judges: `0070`.
 - **Disclaimer line (already in the README):** "This project is a prototype and is not medical advice."
 - **Credits:** copy the Sources section at the end of the README. It lists the dataset, the libraries, the
   language model and the AI tools used.

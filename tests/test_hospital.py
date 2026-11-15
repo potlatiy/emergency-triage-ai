@@ -1973,10 +1973,11 @@ def test_everyday_complaints_find_their_department(complaint, department):
 def test_the_report_suggests_a_doctor_and_a_short_list_of_three_more():
     _, report = report_for("chest pain on and off", pain=4)
     best, others = report["doctors"]["suggested"], report["doctors"]["others"]
-    assert best["department"] == report["department"] == "Cardiology" and len(others) == 3
+    assert best["department"] == report["department"] == "Cardiology" and 1 <= len(others) <= 3
     assert others[0]["department"] == "Cardiology"                         # the next cardiologist first
-    assert len({d["department"] for d in others[1:]}) == 2 and "Cardiology" not in {d["department"] for d in others[1:]}
-    assert len({d["doctor_reg"] for d in [best, *others]}) == 4
+    # Other departments only when they fit; general medicine, which covers everyone, may close the list.
+    assert all(d["department"] in ("Cardiology", core.DEFAULT_DEPARTMENT) or d["match"] >= db.SHORT_LIST_FIT for d in others)
+    assert len({d["doctor_reg"] for d in [best, *others]}) == len(others) + 1
     on_duty = {d["reg_no"]: d for d in db.staff()["doctors"] if d["on_duty"]}
     for d in [best, *others]:
         assert d["doctor_reg"] in on_duty and d["busy"] == (on_duty[d["doctor_reg"]]["waiting"] > 0)
@@ -2056,9 +2057,15 @@ def test_the_simulation_brings_and_finishes_made_up_patients_only():
     assert left == before - 1 and db.staff()["visits"]["with doctor"] == 1
     assert db.visit_for(real)["status"] == "with doctor"             # the real patient is never touched
     free = [d for d in db.staff()["doctors"] if d["on_duty"] and not d["busy"] and d["reg_no"] != "DR-1000"]
+    waiting = assessed_visit("cough", age=40)
+    client.post("/api/line/join", json={"reg_no": waiting, "level": 4})          # a real patient in the waiting room
+    db.wait(30)                                                      # the made-up ones have waited long enough
+    in_line = len(db.line()["patients"])
     came = db.simulate(FixedDice(0.0), now=20_000)["came"]           # every free doctor gets a patient
-    assert came == len(free) and all(d["busy"] for d in db.staff()["doctors"] if d["on_duty"] and d["reg_no"] != "DR-1000")
-    assert len(db.line()["patients"]) == len(db.SEED_WAITING)        # the line itself is never touched
+    called = in_line - len(db.line()["patients"]) + 1                # made-up patients called in (one walked in)
+    assert came + called == len(free) and called > 0
+    assert all(d["busy"] for d in db.staff()["doctors"] if d["on_duty"] and d["reg_no"] != "DR-1000")
+    assert db.visit_for(waiting)["status"] == "waiting"              # a real patient in the line is never called
 
 
 def test_the_simulation_leaves_a_watched_doctor_and_can_be_switched_off():
@@ -2122,7 +2129,8 @@ def test_a_busy_doctor_says_since_when_and_about_when_they_are_free():
 ])
 def test_typing_slips_are_put_right(typed, meant):
     assert core.spelling(typed) == meant
-    assert client.get("/api/spelling", params={"text": typed}).json() == {"text": meant, "changed": typed != meant}
+    answer = client.get("/api/spelling", params={"text": typed}).json()
+    assert answer["text"] == meant and answer["changed"] == (typed != meant)
 
 
 def test_a_typing_slip_still_finds_the_right_questions_and_department():
@@ -2143,8 +2151,10 @@ def test_what_the_patient_types_is_never_put_in_an_address():
     """The phone asks for the spelling fix while the patient types. It sends the words in the body of the request:
     an address can be written down by any proxy in front of the hospital, and this is a health complaint."""
     fixed = client.post("/api/spelling", json={"text": "hurt pain for one hour"})
-    assert fixed.status_code == 200 and fixed.json() == {"text": "heart pain for one hour", "changed": True}
-    assert client.post("/api/spelling", json={"text": "chest pain"}).json() == {"text": "chest pain", "changed": False}
+    assert fixed.status_code == 200 and fixed.json() == {"text": "heart pain for one hour", "changed": True, "understood": True}
+    assert client.post("/api/spelling", json={"text": "chest pain"}).json() == {"text": "chest pain", "changed": False,
+                                                                                "understood": True}
+    assert client.post("/api/spelling", json={"text": "у меня болит голова"}).json()["understood"] is False
     assert client.post("/api/spelling", json={"text": "x" * 201}).status_code == 422
     page = (server.STATIC / "index.html").read_text(encoding="utf-8")
     assert "/api/spelling?" not in page and "?text=" not in page and "?complaint=" not in page
@@ -2192,9 +2202,11 @@ def test_without_a_staff_pin_the_screens_stay_open():
 
 
 def test_simulated_patients_do_not_use_up_the_waiting_rooms_tickets():
-    before = db._meta("ticket")
     db.simulate(FixedDice(0.0), now=1000)                                 # every free doctor gets a simulated patient
-    assert db._meta("ticket") == before
+    before = db._meta("ticket")
+    # A tickets belong to the waiting room only: one for every visit that ever stood in the line today.
+    a_tickets = db._conn.execute("SELECT COUNT(*) AS n FROM visits WHERE ticket LIKE 'A%'").fetchone()["n"]
+    assert a_tickets == before
     tickets = [r["ticket"] for r in db._conn.execute("SELECT ticket FROM visits WHERE status = 'with doctor' AND ticket LIKE 'B%'")]
     assert tickets and tickets[0] == "B001"
     reg = assessed_visit("cough", age=40)
@@ -2264,6 +2276,29 @@ def test_a_pin_typed_in_another_alphabet_is_a_wrong_pin_and_not_a_crash(monkeypa
 
 def test_gemma_stays_loaded_between_patients():
     assert core.KEEP_GEMMA_LOADED == "12h"
+
+
+# ---------------------------------------------------------------- made-up patients stay out of the nurse's way
+
+def test_made_up_patients_have_their_own_numbers_and_fitting_names():
+    seeded = [r for r in db._conn.execute("SELECT reg_no, sex, first_name, last_name FROM visits WHERE you = 0")]
+    assert seeded and all(r["reg_no"].startswith("S-2026-") for r in seeded)
+    assert all((r["first_name"], r["last_name"]) in (db.MADE_UP_WOMEN if r["sex"] == "Female" else db.MADE_UP_MEN)
+               for r in seeded)
+    doctors = {name.split()[-1] for _, name, *_ in db.SEED_DOCTORS}
+    assert not doctors & {last for _, last in db.MADE_UP_NAMES}
+    first = new_visit("cough", age=40)
+    db.simulate(FixedDice(0.0), now=1000)                            # dozens of made-up patients
+    assert int(new_visit("cough", age=40)[-4:]) == int(first[-4:]) + 1      # real numbers count real patients only
+
+
+def test_made_up_patients_never_crowd_needs_you_again():
+    db.wait(200)                                                     # every made-up patient in the line is overdue
+    assert db.nurse_patients()["recheck"] == []
+    reg = assessed_visit("cough", age=40)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3})
+    db.wait(45)
+    assert [p["reg_no"] for p in db.nurse_patients()["recheck"]] == [reg]
 
 
 # ---------------------------------------------------------------- the nurse manages her patients
@@ -2345,6 +2380,34 @@ def test_the_phone_knows_how_the_visit_ended():
     assert db.where_is(closed)["closed"] == "closed"
 
 
+def test_the_doctor_always_learns_when_it_started(monkeypatch):
+    """Gemma 3 1B asked "doing, before, medicine" for almost every complaint and never when it started."""
+    copied = [{"topic": "trigger", "question": "What were you doing when the chest pain started?"},
+              {"topic": "before", "question": "Have you had this chest pain before?"},
+              {"topic": "medicine", "question": "Have you taken anything for the chest pain?"}]
+    monkeypatch.setattr(core, "questions_from_model", lambda complaint, skip: copied)
+    monkeypatch.setattr(core, "_written", {})
+    asked = core.follow_up("crushing chest pain", use_model=True)["questions"]
+    assert [q["topic"] for q in asked] == ["onset", "trigger", "before"]
+    told = core.follow_up("chest pain since this morning", use_model=True)["questions"]
+    assert "onset" not in [q["topic"] for q in told]                    # the complaint already says when
+
+
+def test_the_summary_line_with_the_complaint_only_when_something_is_missing():
+    assert core.with_complaint("The patient reported chest pain and sweating.", "crushing chest pain and sweating") ==         "The patient reported chest pain and sweating."
+    assert core.with_complaint("The patient reports breathing difficulties since last night.",
+                               "breating problems since last night").startswith("The patient")
+    assert core.with_complaint("The patient reports a headache.", "у меня болит голова").startswith('Came with "у меня')
+
+
+def test_the_short_list_offers_no_department_that_does_not_fit():
+    match = {"Gastroenterology and surgery": 0.96, "Urology and kidney": 0.02, "General medicine": 0.01,
+             "Eye, ear, nose and throat": 0.01}
+    choices = db.doctor_choices(match)
+    assert {d["department"] for d in [choices["suggested"], *choices["others"]]} <= {"Gastroenterology and surgery",
+                                                                                     "General medicine"}
+
+
 def test_still_fine_ends_a_recheck_like_any_other_decision():
     """The nurse measured a waiting patient again and pressed "Still fine". That is her decision: the patient may
     be called again, the doctor is told she looked, and nothing says she "had not decided"."""
@@ -2367,4 +2430,20 @@ def test_still_fine_ends_a_recheck_like_any_other_decision():
     before = db.visit_for(plain)["summary"]
     client.post("/api/nurse/still-fine", json={"reg_no": plain})
     assert db.visit_for(plain)["rechecks"] == 1 and db.visit_for(plain)["summary"] == before
+
+
+def test_the_simulation_does_not_call_away_a_made_up_patient_the_nurse_is_rechecking():
+    """The made-up patients in the waiting room are called in by the simulation after a while. One the nurse has
+    just measured again stays with her, like a real patient: otherwise her decision would be refused."""
+    waiting = next(p for p in db.line()["patients"] if not p["you"])
+    reg = waiting["reg_no"]
+    client.post("/api/triage", json={"reg_no": reg})                              # the nurse measures them again
+    db._meta("clock", db._clock() + db.SIM_LINE_WAIT)                             # long enough to be called, short of the hold's end
+    with db._lock, db._conn:
+        db._conn.execute("UPDATE visits SET held_at = ? WHERE reg_no = ?", (db._clock(), reg))   # measured just now
+    db.simulate(FixedDice(0.0), now=10_000)                                       # every made-up patient who may be called is
+    assert db.visit_for(reg)["status"] == "waiting"
+    others = [p for p in db._conn.execute("SELECT status FROM visits WHERE you = 0 AND day = ? AND ticket LIKE 'A%'", (db._meta("day"),))]
+    assert any(p["status"] == "with doctor" for p in others)                      # the others were called
+    assert client.post("/api/line/join", json={"reg_no": reg, "level": waiting["level"], "review": "checked"}).status_code == 200
 
