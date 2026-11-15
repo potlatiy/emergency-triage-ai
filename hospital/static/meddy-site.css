@@ -66,7 +66,7 @@
 footer.bottom .foot-logo { height:30px; width:auto; display:block; }
 
 /* ---------- the welcome on the patient's first step ---------- */
-.welcome { margin-top:24px; }
+:root .welcome { margin-top:24px; }      /* :root, or the page's own .wrap { margin:0 auto } wins */
 .welcome[hidden] { display:none; }
 .welcome-card { position:relative; overflow:hidden; display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);
                 gap:28px; align-items:center; padding:36px 40px; border-radius:28px; color:#fff;
@@ -101,7 +101,7 @@ footer.bottom .foot-logo { height:30px; width:auto; display:block; }
   .welcome-card { grid-template-columns:minmax(0,1fr); padding:28px 22px; border-radius:24px; }
 }
 @media (max-width: 640px) {                       /* on a phone the check-in comes first: keep the welcome short */
-  .welcome { margin-top:12px; }
+  :root .welcome { margin-top:24px; }    /* the same gap as below it, to the steps */
   .welcome-card { padding:16px 20px; border-radius:20px; }
   .welcome-card::after { display:none; }
   .welcome h2 { font-size:1.35rem; line-height:1.2; max-width:none; }
