@@ -2537,7 +2537,7 @@ def test_a_patient_next_for_a_busy_doctor_is_told_so():
 # ---------------------------------------------------------------- tidy that always helps, one patient at a time, the chief
 
 def test_plain_code_tidies_punctuation_without_changing_a_word():
-    assert core.plain_tidy("wash you anal and put hot compres") == "Wash you anal and put hot compres."
+    assert core.plain_tidy("wash you anal and put hot compres") == "Wash you anal and put hot compress."
     assert core.plain_tidy("rest today.drink water , i will see you in 2 days") ==         "Rest today. Drink water, I will see you in 2 days."
 
 
@@ -2555,7 +2555,7 @@ def test_meddy_tidies_the_note_or_falls_back_to_plain_code(monkeypatch, model_wr
     tidied = core.tidy_note("wash you anal and put hot compres")
     assert tidied["source"] == source and tidied["added"] == added and tidied["dropped"] == dropped
     if source == "plain":
-        assert tidied["text"] == "Wash you anal and put hot compres."
+        assert tidied["text"] == "Wash you anal and put hot compress."
 
 
 def test_a_dropped_no_or_not_is_never_offered(monkeypatch):
@@ -2610,3 +2610,14 @@ def test_meddy_suggests_from_the_numbers():
 def test_the_patients_page_does_not_lead_to_the_staff_screens():
     page = (server.STATIC / "index.html").read_text(encoding="utf-8")
     assert 'href="/nurse"' not in page and 'href="/doctor"' not in page and 'href="/board"' in page
+
+
+def test_plain_code_puts_right_slips_of_common_note_words():
+    assert core.plain_tidy("taka a rest no running for 2 days and come back if pain gets worse") ==         "Take a rest no running for 2 days and come back if pain gets worse."
+    assert core.plain_tidy("drnk plenty of fluds and rest") == "Drink plenty of fluids and rest."
+    assert core.plain_tidy("see your GP on monday") == "See your GP on monday."         # unknown words left alone
+
+
+def test_a_tight_chest_counts_as_pain():
+    assert core.mentions_pain("my chest feels tight when i walk upstairs")
+    assert core.mentions_pain("pressure in my chest")

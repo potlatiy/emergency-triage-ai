@@ -410,11 +410,14 @@ function drawPatients(answer) {
   if (openKey !== cardKey) {                                                        // an unchanged card is left alone
     // The card is redrawn every minute ("waited ... min"): a note the doctor is writing must survive that.
     const box = $("finish-box"), same = cardFor === selected;
-    const kept = same && box ? { open: !box.hidden, note: $("doctor-note").value, focused: document.activeElement === $("doctor-note") } : null;
+    const kept = same && box ? { open: !box.hidden, note: $("doctor-note").value, focused: document.activeElement === $("doctor-note"),
+                                 hint: $("tidy-hint").textContent, tidied: $("tidied").hidden ? null : $("tidied").innerHTML } : null;
     cardKey = openKey; cardFor = selected; drawCard();
     if (kept && $("finish-box")) {
       $("finish-box").hidden = !kept.open; $("finish").setAttribute("aria-expanded", kept.open);
       $("doctor-note").value = kept.note;
+      $("tidy-hint").textContent = kept.hint;
+      if (kept.tidied !== null) { $("tidied").hidden = false; $("tidied").innerHTML = kept.tidied; bindTidied(); }
       if (kept.focused) $("doctor-note").focus({ preventScroll:true });
     }
   }
@@ -642,8 +645,8 @@ function drawCard() {
       shown.innerHTML = `<blockquote>${esc(answer.text)}</blockquote>
         ${changes.length ? `<p class="hint" style="margin:0 0 8px;color:#9a5a00"><b>Check before using:</b> Meddy ${esc(changes.join(" and "))}.</p>` : ""}
         <button type="button" class="mini" id="use-tidied">Use this</button> <button type="button" class="mini" id="keep-mine">Keep mine</button>`;
-      $("use-tidied").addEventListener("click", () => { $("doctor-note").value = answer.text; $("tidied").hidden = true; say("Done: the note is tidied."); });
-      $("keep-mine").addEventListener("click", () => { $("tidied").hidden = true; say("Your own words are kept."); });
+      shown.dataset.text = answer.text;
+      bindTidied();
     } catch (e) { say("Meddy could not tidy it just now. Your own words are fine."); }
     finally { if ($("tidy")) $("tidy").disabled = false; }
   });
@@ -660,6 +663,15 @@ function drawCard() {
       hint.textContent = "Could not close the visit: the hospital server did not answer. Try again.";
     }
   });
+}
+
+// "Use this" / "Keep mine" under Meddy's tidied note; bound again when the card is redrawn with the note kept.
+function bindTidied() {
+  const shown = $("tidied"), use = $("use-tidied"), keep = $("keep-mine");
+  if (!shown || !use || !keep) return;
+  use.addEventListener("click", () => { $("doctor-note").value = shown.dataset.text || shown.querySelector("blockquote").textContent;
+    shown.hidden = true; $("tidy-hint").textContent = "Done: the note is tidied."; });
+  keep.addEventListener("click", () => { shown.hidden = true; $("tidy-hint").textContent = "Your own words are kept."; });
 }
 
 // ---------------------------------------------------------------- waiting for this doctor

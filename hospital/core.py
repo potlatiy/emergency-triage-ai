@@ -693,7 +693,8 @@ def questionnaire(complaint, injury=False, use_model=True):
             "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL, "mentioned": mentions_pain(complaint)}}
 
 
-_PAIN_WORDS = re.compile(r"\b(pain\w*|hurt\w*|ach(e|es|ing)|\w+ache|sore|burn\w*|cramp\w*|sting\w*|tender|throb\w*)\b", re.I)
+_PAIN_WORDS = re.compile(r"\b(pain\w*|hurt\w*|ach(e|es|ing)|\w+ache|sore|burn\w*|cramp\w*|sting\w*|tender|throb\w*|"
+                         r"tight\w*|pressure)\b", re.I)
 
 
 def mentions_pain(complaint):
@@ -888,10 +889,34 @@ def tidy_differences(original, tidy):
     return [w for w in after if not matched(w, before)], [w for w in before if not matched(w, after)]
 
 
+# Words a doctor's note for a patient is mostly made of. A word typed close to one of them ("taka", "compres",
+# "drnk") is put right by plain code; any other word is left exactly as the doctor wrote it.
+NOTE_WORDS = set("""take taking rest drink water eat food sleep come back return call see visit doctor nurse hospital pharmacy
+if when after before until every each day days week weeks hour hours morning evening night twice once three times
+pain gets get worse better fever cough wound dressing change keep clean dry wash apply cream ointment ice cold hot warm
+compress bandage tablet tablets medicine medicines antibiotic antibiotics paracetamol ibuprofen avoid running sport
+lifting driving drive work school walk walking stairs raise leg arm foot ankle knee back stomach chest head throat
+fluids plenty light meals soup follow instructions appointment check stitches removed swelling bleeding stop start
+your you the and with for this that more less than any other immediately straight away emergency number sooner""".split())
+
+
+def _note_spelling(text):
+    def fix(found):
+        word = found.group(0)
+        low = word.lower()
+        if len(low) < 4 or low in NOTE_WORDS or low in SYMPTOM_WORDS:
+            return word
+        close = [w for w in difflib.get_close_matches(low, NOTE_WORDS | set(SYMPTOM_WORDS), n=3, cutoff=0.74)
+                 if w[0] == low[0] and abs(len(w) - len(low)) <= 2]
+        return close[0] if close else word
+    return re.sub(r"[^\W\d_]+", fix, text)
+
+
 def plain_tidy(text):
-    """Punctuation and capital letters put right by plain code, with no word changed: a capital at the start of
-    each sentence, "I" for "i", a space after a comma or a full stop, and a full stop at the end."""
-    tidy = " ".join(str(text or "").split())
+    """The note put right by plain code: close slips of common note words ("taka" -> "take"), a capital at the
+    start of each sentence, "I" for "i", a space after a comma or a full stop, and a full stop at the end. No
+    word is added or dropped."""
+    tidy = _note_spelling(" ".join(str(text or "").split()))
     tidy = re.sub(r"\s+([,.!?;:])", r"\1", tidy)
     tidy = re.sub(r"([,.!?;:])(?=[^\s\d])", r"\1 ", tidy)
     tidy = re.sub(r"\bi\b", "I", tidy)
