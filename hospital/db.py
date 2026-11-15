@@ -1,37 +1,59 @@
 """The hospital's internal database (SQLite, one file: hospital.db).
 
-It holds four things:
-- doctors : every doctor's registration number, department, room, whether they are on duty,
-            and how many patients they have now (always equal to their open visits)
-- visits  : every patient visit, under its own registration number, from arrival to the doctor
-- answers : what each patient answered at check-in
-- people  : the registry that keeps one open visit per person. It holds a one-way fingerprint of each
-            insurance card, never the card number itself
+It holds:
+- departments : the nine departments and the resuscitation team
+- doctors     : every doctor's registration number, department, room and shift, whether they are on duty,
+                and how many patients they have now (always equal to their open visits)
+- visits      : every patient visit, under its own registration number, from arrival to the doctor.
+                Visits are never deleted: a new day closes the open ones and keeps them
+- answers     : what each patient answered at check-in
+- events      : the log of every step of every visit (registered, checked in, assessed, in line, sent to a
+                doctor, finished, closed), with the time and who did it
+- people      : the registry that keeps one open visit per person. It holds a one-way fingerprint of each
+                insurance card, never the card number itself
+- meta        : counters (registration numbers, tickets) and the demo clock
+
+Registration numbers are never given twice: the counter keeps going across days and restarts.
+Online, a copy of the file is kept on lasting storage (MEDDY_KEEP_DIR, the Space's bucket) and taken back at
+start, so a restart or a new version of the code loses nothing.
 
 No names are stored for patients. The doctors are made up for the demonstration.
 """
 
+import atexit
 import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import core
 
 # The tests point this at a throwaway file so they never touch the demonstration database.
 DB_PATH = Path(os.environ.get("HOSPITAL_DB", Path(__file__).parent / "hospital.db"))
+# Lasting storage. On the Hugging Face Space the container's own disk is wiped at every restart, so a copy of the
+# database is kept in the Space's bucket (mounted at /data, see deploy/huggingface/start.sh) and taken back here.
+KEEP_DIR = os.environ.get("MEDDY_KEEP_DIR")
+KEPT = Path(KEEP_DIR) / "hospital.db" if KEEP_DIR else None
+if KEPT and KEPT.exists() and not DB_PATH.exists():
+    shutil.copyfile(KEPT, DB_PATH)
+    print(f"Database taken back from {KEPT}.", flush=True)
 _lock = threading.Lock()
 _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 _conn.row_factory = sqlite3.Row
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS departments (
+    name TEXT PRIMARY KEY, code TEXT NOT NULL, wing TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS doctors (
-    reg_no TEXT PRIMARY KEY, name TEXT NOT NULL, department TEXT NOT NULL, room TEXT NOT NULL,
-    on_duty INTEGER NOT NULL DEFAULT 1, waiting INTEGER NOT NULL DEFAULT 0);
+    reg_no TEXT PRIMARY KEY, name TEXT NOT NULL, department TEXT NOT NULL REFERENCES departments(name), room TEXT NOT NULL,
+    shift TEXT NOT NULL DEFAULT 'day', on_duty INTEGER NOT NULL DEFAULT 1, waiting INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS visits (
     reg_no TEXT PRIMARY KEY, ticket TEXT, complaint TEXT NOT NULL, age REAL, sex TEXT, injury INTEGER DEFAULT 0,
     level INTEGER, danger INTEGER DEFAULT 0, you INTEGER DEFAULT 0, arrived INTEGER,
@@ -42,31 +64,71 @@ CREATE TABLE IF NOT EXISTS visits (
     summary TEXT, nurse_note TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     arrival TEXT, pain INTEGER, checked_in INTEGER,
+    day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
     person TEXT PRIMARY KEY, insurance TEXT NOT NULL, card_end TEXT NOT NULL, visits INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS answers (
     id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT NOT NULL REFERENCES visits(reg_no),
     question TEXT NOT NULL, answer TEXT, kind TEXT NOT NULL, topic TEXT);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, visit_reg TEXT REFERENCES visits(reg_no), day INTEGER, clock INTEGER,
+    at TEXT NOT NULL, what TEXT NOT NULL, who TEXT, detail TEXT);
+CREATE INDEX IF NOT EXISTS events_by_visit ON events(visit_reg);
+CREATE INDEX IF NOT EXISTS visits_by_status ON visits(status);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 """
 
-# (registration number, name, department, room)
+# (name, short code, wing)
+SEED_DEPARTMENTS = [
+    ("Resuscitation team", "RES", "Ground floor, by the ambulance entrance"),
+    ("Cardiology", "CAR", "Wing A"), ("Respiratory medicine", "RSP", "Wing A"), ("Neurology", "NEU", "Wing B"),
+    ("Trauma and orthopaedics", "TRA", "Wing C"), ("Gastroenterology and surgery", "GAS", "Wing C"),
+    ("Eye, ear, nose and throat", "ENT", "Wing B"), ("General medicine", "GEN", "Wing A"),
+    ("Urology and kidney", "URO", "Wing D"), ("Obstetrics and gynaecology", "OBG", "Wing D"),
+]
+
+# (registration number, name, department, room, shift). Day-shift doctors are on duty when a day starts; the
+# night shift is off duty (switch them on in the staff table). The resuscitation team is always there.
 SEED_DOCTORS = [
-    ("DR-1000", "Resuscitation team", "Resuscitation team", "Resus bay"),
-    ("DR-1001", "Dr. Marlow", "Cardiology", "Room 1"),
-    ("DR-1002", "Dr. Okafor", "Cardiology", "Room 2"),
-    ("DR-1003", "Dr. Lindqvist", "Respiratory medicine", "Room 3"),
-    ("DR-1004", "Dr. Haddad", "Neurology", "Room 4"),
-    ("DR-1005", "Dr. Petrov", "Neurology", "Room 5"),
-    ("DR-1006", "Dr. Castell", "Trauma and orthopaedics", "Room 6"),
-    ("DR-1007", "Dr. Nwosu", "Trauma and orthopaedics", "Room 7"),
-    ("DR-1008", "Dr. Baptiste", "Gastroenterology and surgery", "Room 8"),
-    ("DR-1009", "Dr. Sorensen", "Eye, ear, nose and throat", "Room 9"),
-    ("DR-1010", "Dr. Achebe", "General medicine", "Room 10"),
-    ("DR-1011", "Dr. Ferrand", "General medicine", "Room 11"),
-    ("DR-1012", "Dr. Varga", "Urology and kidney", "Room 12"),
-    ("DR-1013", "Dr. Imani", "Obstetrics and gynaecology", "Room 13"),
+    ("DR-1000", "Resuscitation team", "Resuscitation team", "Resus bay", "always"),
+    ("DR-1001", "Dr. Marlow", "Cardiology", "Room 1", "day"),
+    ("DR-1002", "Dr. Okafor", "Cardiology", "Room 2", "day"),
+    ("DR-1003", "Dr. Lindqvist", "Respiratory medicine", "Room 3", "day"),
+    ("DR-1004", "Dr. Haddad", "Neurology", "Room 4", "day"),
+    ("DR-1005", "Dr. Petrov", "Neurology", "Room 5", "day"),
+    ("DR-1006", "Dr. Castell", "Trauma and orthopaedics", "Room 6", "day"),
+    ("DR-1007", "Dr. Nwosu", "Trauma and orthopaedics", "Room 7", "day"),
+    ("DR-1008", "Dr. Baptiste", "Gastroenterology and surgery", "Room 8", "day"),
+    ("DR-1009", "Dr. Sorensen", "Eye, ear, nose and throat", "Room 9", "day"),
+    ("DR-1010", "Dr. Achebe", "General medicine", "Room 10", "day"),
+    ("DR-1011", "Dr. Ferrand", "General medicine", "Room 11", "day"),
+    ("DR-1012", "Dr. Varga", "Urology and kidney", "Room 12", "day"),
+    ("DR-1013", "Dr. Imani", "Obstetrics and gynaecology", "Room 13", "day"),
+    ("DR-1014", "Dr. Kowalski", "Cardiology", "Room 14", "day"),
+    ("DR-1015", "Dr. Tanaka", "Cardiology", "Room 15", "night"),
+    ("DR-1016", "Dr. Moreau", "Respiratory medicine", "Room 16", "day"),
+    ("DR-1017", "Dr. Adeyemi", "Respiratory medicine", "Room 17", "night"),
+    ("DR-1018", "Dr. Silva", "Neurology", "Room 18", "night"),
+    ("DR-1019", "Dr. Novak", "Trauma and orthopaedics", "Room 19", "day"),
+    ("DR-1020", "Dr. Hughes", "Trauma and orthopaedics", "Room 20", "night"),
+    ("DR-1021", "Dr. Rossi", "Trauma and orthopaedics", "Room 21", "day"),
+    ("DR-1022", "Dr. Mendes", "Gastroenterology and surgery", "Room 22", "day"),
+    ("DR-1023", "Dr. Larsen", "Gastroenterology and surgery", "Room 23", "night"),
+    ("DR-1024", "Dr. Kim", "Eye, ear, nose and throat", "Room 24", "day"),
+    ("DR-1025", "Dr. Ahmed", "Eye, ear, nose and throat", "Room 25", "night"),
+    ("DR-1026", "Dr. Fischer", "General medicine", "Room 26", "day"),
+    ("DR-1027", "Dr. Owusu", "General medicine", "Room 27", "day"),
+    ("DR-1028", "Dr. Dubois", "General medicine", "Room 28", "night"),
+    ("DR-1029", "Dr. Ivanova", "General medicine", "Room 29", "night"),
+    ("DR-1030", "Dr. Brennan", "Urology and kidney", "Room 30", "day"),
+    ("DR-1031", "Dr. Yilmaz", "Urology and kidney", "Room 31", "night"),
+    ("DR-1032", "Dr. Lopez", "Obstetrics and gynaecology", "Room 32", "day"),
+    ("DR-1033", "Dr. Nakamura", "Obstetrics and gynaecology", "Room 33", "night"),
+    ("DR-1034", "Dr. Hartmann", "Respiratory medicine", "Room 34", "day"),
+    ("DR-1035", "Dr. Okonkwo", "Neurology", "Room 35", "day"),
+    ("DR-1036", "Dr. Virtanen", "Eye, ear, nose and throat", "Room 36", "day"),
+    ("DR-1037", "Dr. Costa", "Cardiology", "Room 37", "night"),
 ]
 # Made-up patients who are already with a doctor when the day starts, so every doctor's list is made of
 # real visits that the doctor's screen can open. The nurse's level is made up; Meddy's level is really
@@ -122,25 +184,70 @@ def _next_number(key):
     return number
 
 
+def _now():
+    """The real time, for the log: the demo clock only says how many minutes have passed in the demonstration."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _event(reg_no, what, who=None, detail=None):
+    """Write one step of a visit into the log. The caller holds the lock and the transaction."""
+    _conn.execute("INSERT INTO events (visit_reg, day, clock, at, what, who, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (reg_no, _meta("day"), _meta("clock"), _now(), what, who, detail))
+
+
+def _seed_staff():
+    """Departments and doctors from the lists above. Doctors added to the list later are added; nobody is
+    removed and nobody's patients are touched. The caller holds the lock and the transaction."""
+    _conn.executemany("INSERT OR IGNORE INTO departments (name, code, wing) VALUES (?, ?, ?)", SEED_DEPARTMENTS)
+    _conn.executemany("INSERT OR IGNORE INTO doctors (reg_no, name, department, room, shift, on_duty) VALUES (?, ?, ?, ?, ?, ?)",
+                      [(*d, int(d[4] != "night")) for d in SEED_DOCTORS])
+
+
+def _start_day():
+    """The parts of a day that start again: the demo clock, the tickets, the doctors' shifts, and the made-up
+    patients (already with doctors, and five in the waiting room). The caller holds the lock and the transaction."""
+    _meta("clock", START_CLOCK)
+    _meta("day", secrets.randbelow(10**9))      # a phone keeps this next to its number, to tell days apart
+    _meta("ticket", 0)                          # tickets start at A001 each day; registration numbers never do
+    _meta("arrivals", 0)
+    _conn.execute("UPDATE doctors SET waiting = 0, on_duty = CASE WHEN shift = 'night' THEN 0 ELSE 1 END")
+    departments = {reg_no: department for reg_no, _, department, _, _ in SEED_DOCTORS}
+    for doctor, complaint, age, sex, level, preset, pain, alert, minutes_ago in SEED_WITH_DOCTOR:
+        _made_up_visit(complaint, age, sex, level, preset, pain, alert, START_CLOCK - minutes_ago,
+                       departments[doctor], doctor)
+        _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor,))
+    for complaint, level, minutes_ago in SEED_WAITING:
+        _made_up_visit(complaint, 40, "Female", level, "normal", 3, "Alert", START_CLOCK - minutes_ago)
+
+
 def reset():
-    """Start the day again: staff back on duty, made-up patients already with the doctors,
-    and five sample patients in the waiting room."""
+    """Wipe everything and start from nothing: an empty database with the staff and a first day.
+    Used for a brand-new database and by the tests. "Start a new day" uses new_day, which keeps the history."""
     with _lock, _conn:
-        _conn.executescript("DROP TABLE IF EXISTS answers; DROP TABLE IF EXISTS visits; DROP TABLE IF EXISTS doctors;"
-                            "DROP TABLE IF EXISTS people; DROP TABLE IF EXISTS meta;" + SCHEMA)
-        _conn.executemany("INSERT INTO doctors (reg_no, name, department, room) VALUES (?, ?, ?, ?)", SEED_DOCTORS)
-        _meta("clock", START_CLOCK)
-        _meta("day", secrets.randbelow(10**9))      # registration numbers start again every day; this tells days apart
+        _conn.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS answers; DROP TABLE IF EXISTS visits;"
+                            "DROP TABLE IF EXISTS doctors; DROP TABLE IF EXISTS departments; DROP TABLE IF EXISTS people;"
+                            "DROP TABLE IF EXISTS meta;" + SCHEMA)
+        _seed_staff()
         _meta("visit", 0)
-        _meta("ticket", 0)
-        _meta("arrivals", 0)
-        departments = {reg_no: department for reg_no, _, department, _ in SEED_DOCTORS}
-        for doctor, complaint, age, sex, level, preset, pain, alert, minutes_ago in SEED_WITH_DOCTOR:
-            _made_up_visit(complaint, age, sex, level, preset, pain, alert, START_CLOCK - minutes_ago,
-                           departments[doctor], doctor)
-            _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor,))
-        for complaint, level, minutes_ago in SEED_WAITING:
-            _made_up_visit(complaint, 40, "Female", level, "normal", 3, "Alert", START_CLOCK - minutes_ago)
+        _start_day()
+
+
+def new_day():
+    """Start a new day in the department without losing anything.
+
+    Every visit still open is closed and kept (closed_why = "new day"), so its card is free again; the doctors'
+    lists are empty and the day shift is on duty; the demo clock and the tickets start again; the made-up patients
+    are back. The visits, answers and log of earlier days stay, and the registration numbers go on counting, so a
+    number is never given twice."""
+    with _lock, _conn:
+        now = _now()
+        open_visits = [r["reg_no"] for r in _conn.execute("SELECT reg_no FROM visits WHERE status != 'done'")]
+        for reg_no in open_visits:
+            _event(reg_no, "closed", "system", "new day")
+        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'new day' WHERE status != 'done'",
+                      (now,))
+        _start_day()
+    return {"closed": len(open_visits)}
 
 
 def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, department=None, doctor=None):
@@ -157,12 +264,13 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
     reg_no, ticket = f"P-2026-{number:04d}", f"A{_next_number('ticket'):03d}"
     _conn.execute(
         "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, ai_odds, second_check, vitals, arrived, "
-        "department, department_how, insurance, card_end, status, doctor_reg) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (reg_no, ticket, complaint, age, sex, level, ai_level, json.dumps(odds), core.second_check(odds, level),
          json.dumps({**vitals, "alert": alert, "pain": pain}), arrived, department,
          "made-up patient" if department else None, *MADE_UP_INSURANCE[number % len(MADE_UP_INSURANCE)],
-         "with doctor" if doctor else "waiting", doctor))
+         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now()))
+    _event(reg_no, "made up", "system", "with " + doctor if doctor else "in the waiting room")
     return reg_no, ticket
 
 
@@ -208,8 +316,10 @@ def register(complaint, age, sex, insurance="none", card=None):
                           "ON CONFLICT(person) DO UPDATE SET visits = visits + 1, insurance = excluded.insurance",
                           (person, insurance, card_end))
         reg_no = f"P-2026-{_next_number('visit'):04d}"
-        _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you, person, insurance, card_end) "
-                      "VALUES (?, ?, ?, ?, 1, ?, ?, ?)", (reg_no, complaint, age, sex, person, insurance, card_end))
+        _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you, person, insurance, card_end, day, registered_at) "
+                      "VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+                      (reg_no, complaint, age, sex, person, insurance, card_end, _meta("day"), _now()))
+        _event(reg_no, "registered", "patient's phone", complaint)
     return reg_no
 
 
@@ -252,6 +362,7 @@ def check_in(reg_no, arrival, injury, pain, answers):
         _conn.execute("UPDATE visits SET arrival = ?, injury = ?, pain = ?, status = 'nurse', "
                       "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
                       (arrival, int(injury), pain, _meta("clock"), reg_no))
+        _event(reg_no, "checked in", "patient's phone", f"{len(answers)} answers")
     return code_for(reg_no)
 
 
@@ -340,6 +451,8 @@ def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department
                       "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
                       (ai_level, record, json.dumps(odds) if odds else None, department,
                        None if quick is None else int(quick), _meta("clock"), reg_no))
+        if _conn.execute("SELECT 1 FROM visits WHERE reg_no = ?", (reg_no,)).fetchone():
+            _event(reg_no, "assessed", "nurse", f"Meddy suggested level {ai_level}" + (f", {department}" if department else ""))
 
 
 def _flag(reg_no, level):
@@ -387,6 +500,8 @@ def _join(reg_no, level, danger, department, department_how, review):
                   "department_how = COALESCE(?, department_how), second_check = ?, review = COALESCE(?, review), "
                   "status = 'waiting' WHERE reg_no = ?",
                   (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review, reg_no))
+    if visit:
+        _event(reg_no, "in line", "nurse", f"level {level}, ticket {ticket}" + (f", {review}" if review else ""))
     return ticket
 
 
@@ -528,6 +643,7 @@ def call_for_doctor(doctor_reg):
         _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor_reg,))
         _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
                       (doctor_reg, patient["reg_no"]))
+        _event(patient["reg_no"], "called by the doctor", doctor_reg, f"{doctor['name']}, {doctor['room']}")
     return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
             "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
             "department": department, "doctor": doctor["name"], "doctor_reg": doctor_reg, "room": doctor["room"],
@@ -551,6 +667,7 @@ def refer(reg_no, level, reason, department=None, note=None, summary_ok=True):
         if department:
             _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
                           (department, reg_no))
+        _event(reg_no, "sent straight in", "nurse", f"level {level}: {reason}")
         _write_summary(reg_no, note, summary_ok)
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
         doctor, match_reason = _send_to_doctor(patient)
@@ -575,6 +692,7 @@ def _send_to_doctor(patient):
     _conn.execute("UPDATE doctors SET waiting = waiting + 1 WHERE reg_no = ?", (doctor["reg_no"],))
     _conn.execute("UPDATE visits SET status = 'with doctor', doctor_reg = ? WHERE reg_no = ?",
                   (doctor["reg_no"], patient["reg_no"]))
+    _event(patient["reg_no"], "sent to a doctor", "system", f"{doctor['name']}, {doctor['room']}: {reason}")
     return doctor, reason
 
 
@@ -673,23 +791,46 @@ def finish_visit(reg_no):
         visit = _conn.execute("SELECT status, doctor_reg FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None or visit["status"] != "with doctor":
             return None
-        _conn.execute("UPDATE visits SET status = 'done' WHERE reg_no = ?", (reg_no,))
+        _conn.execute("UPDATE visits SET status = 'done', closed_at = ?, closed_why = 'finished by the doctor' "
+                      "WHERE reg_no = ?", (_now(), reg_no))
         _conn.execute("UPDATE doctors SET waiting = MAX(waiting - 1, 0) WHERE reg_no = ?", (visit["doctor_reg"],))
+        _event(reg_no, "finished", visit["doctor_reg"])
     return {"reg_no": reg_no, "doctor_reg": visit["doctor_reg"], "status": "done"}
 
 
 def staff():
+    """The staff table and today's counts. Earlier days stay in the database and are counted under "all days"."""
     with _lock:
         doctors = [dict(r) for r in _conn.execute("SELECT * FROM doctors ORDER BY reg_no")]
-        counts = {r["status"]: r["n"] for r in _conn.execute("SELECT status, COUNT(*) AS n FROM visits GROUP BY status")}
+        counts = {r["status"]: r["n"] for r in _conn.execute(
+            "SELECT status, COUNT(*) AS n FROM visits WHERE day = ? GROUP BY status", (_meta("day"),))}
         people = _conn.execute("SELECT COUNT(*) AS n FROM people").fetchone()["n"]
+        ever = _conn.execute("SELECT COUNT(*) AS n FROM visits").fetchone()["n"]
+        logged = _conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
     regular = [d for d in doctors if d["department"] != "Resuscitation team"]
     return {"doctors": [{**d, "on_duty": bool(d["on_duty"])} for d in doctors],
             "on_duty": sum(d["on_duty"] for d in regular), "total": len(regular),
             "visits": {"registered": sum(counts.values()), "with nurse": counts.get("nurse", 0),
                        "waiting": counts.get("waiting", 0),
                        "with doctor": counts.get("with doctor", 0), "done": counts.get("done", 0)},
-            "people": people, "reviews": review_stats()}
+            "people": people, "reviews": review_stats(), "all days": {"visits": ever, "events": logged},
+            "kept": keeping()}
+
+
+def history(reg_no):
+    """Every step of one visit, oldest first. None for an unknown visit."""
+    with _lock:
+        if not _conn.execute("SELECT 1 FROM visits WHERE reg_no = ?", (reg_no,)).fetchone():
+            return None
+        return [dict(r) for r in _conn.execute(
+            "SELECT at, clock, what, who, detail FROM events WHERE visit_reg = ? ORDER BY id", (reg_no,))]
+
+
+def recent_events(limit=20):
+    """The newest steps in the whole department, newest first, for the nurse's "behind the scenes" panel."""
+    with _lock:
+        return [dict(r) for r in _conn.execute(
+            "SELECT visit_reg, at, clock, what, who, detail FROM events ORDER BY id DESC LIMIT ?", (limit,))]
 
 
 def set_duty(reg_no, on_duty):
@@ -700,10 +841,77 @@ def set_duty(reg_no, on_duty):
         return _conn.execute("UPDATE doctors SET on_duty = ? WHERE reg_no = ?", (int(on_duty), reg_no)).rowcount == 1
 
 
-# Create the tables on first use, and rebuild them if the file is from an older version of the code.
-with _conn:
-    _conn.executescript(SCHEMA)
-_columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")} | {
-    "answers." + r["name"] for r in _conn.execute("PRAGMA table_info(answers)")}
-if not {"department", "referral_reason", "second_check", "person", "review", "checked_in", "summary", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
-    reset()
+# ---------------------------------------------------------------- keeping the database
+
+def _upgrade():
+    """Bring a database file from an older version of the code up to date without losing what it holds.
+
+    Missing tables are created and missing columns are added; doctors added to the list since are added. Only a
+    brand-new, empty file gets a first day. (Earlier versions wiped the file whenever a column was missing.)"""
+    model = sqlite3.connect(":memory:")
+    model.executescript(SCHEMA)
+    with _lock, _conn:
+        _conn.executescript(SCHEMA)
+        for (table,) in model.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'sqlite_sequence'"):
+            have = {r["name"] for r in _conn.execute(f"PRAGMA table_info({table})")}
+            for _, name, kind, _, default, _ in model.execute(f"PRAGMA table_info({table})"):
+                if name not in have:
+                    _conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}" + (f" DEFAULT {default}" if default else ""))
+        _seed_staff()
+        fresh = _conn.execute("SELECT COUNT(*) AS n FROM meta WHERE key = 'clock'").fetchone()["n"] == 0
+        if not fresh:       # visits from before days were written down belong to the day that is open now
+            _conn.execute("UPDATE visits SET day = (SELECT value FROM meta WHERE key = 'day') WHERE day IS NULL")
+    model.close()
+    if fresh:
+        reset()
+
+
+_kept_changes = None
+
+
+def keep_copy():
+    """Copy the whole database to lasting storage, if anything changed since the last copy.
+
+    SQLite's own backup makes one consistent picture while the hospital keeps working; it is written next to
+    the kept copy and then put in its place, so a copy is never half written. Returns True when a copy was made."""
+    global _kept_changes
+    if not KEPT:
+        return False
+    with _lock:
+        changes = _conn.total_changes
+        if changes == _kept_changes:
+            return False
+        fresh = KEPT.with_suffix(".new")
+        target = sqlite3.connect(fresh)
+        _conn.backup(target)
+        target.close()
+    try:
+        os.replace(fresh, KEPT)
+    except OSError:                       # some network storage cannot rename over a file
+        shutil.copyfile(fresh, KEPT)
+        fresh.unlink(missing_ok=True)
+    _kept_changes = changes
+    return True
+
+
+def keeping():
+    """Where the database is kept, for the staff panel: None on a laptop."""
+    return {"where": str(KEPT), "copied": _kept_changes is not None} if KEPT else None
+
+
+def start_keeping(every=10):
+    """Copy the database to lasting storage every few seconds when it changed, and once more when the server stops."""
+    if not KEPT:
+        return
+    def loop():
+        while True:
+            time.sleep(every)
+            try:
+                keep_copy()
+            except Exception as error:             # never take the hospital down: say it and try again
+                print(f"Could not copy the database to {KEPT}: {error}", flush=True)
+    threading.Thread(target=loop, daemon=True, name="keep-database").start()
+    atexit.register(keep_copy)
+
+
+_upgrade()

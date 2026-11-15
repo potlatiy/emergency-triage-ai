@@ -416,8 +416,25 @@ def duty(body: Duty):
 
 @app.post("/api/reset")
 def reset():
-    db.reset()
-    return db.line()
+    """"Start a new day": open visits are closed and kept, the made-up patients are back. Nothing is deleted and
+    registration numbers go on counting (see db.new_day)."""
+    closed = db.new_day()
+    return {**closed, **db.line()}
+
+
+@app.get("/api/visit/{reg_no}/history")
+def visit_history(reg_no: str):
+    """Every step of one visit with its time and who did it: staff only, like the nurse's and doctor's screens."""
+    steps = db.history(reg_no)
+    if steps is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return {"reg_no": reg_no, "steps": steps}
+
+
+@app.get("/api/events")
+def events(limit: int = 20):
+    """The newest steps in the whole department, for the nurse's "behind the scenes" panel."""
+    return {"events": db.recent_events(max(1, min(limit, 200)))}
 
 
 @app.get("/api/address")
@@ -433,6 +450,8 @@ def address():
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 if __name__ == "__main__":
-    db.reset()                 # every start of the server begins a fresh demonstration day
+    # The database is kept between starts: everything from earlier is still there ("Start a new day" closes the
+    # open visits). Online, a copy goes to lasting storage every few seconds (see db.start_keeping).
+    db.start_keeping()
     online = LAN or PUBLIC_URL
     uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning")

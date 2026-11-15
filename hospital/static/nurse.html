@@ -114,10 +114,14 @@
       <p class="hint" style="margin:0">Switch a doctor off duty and the next patient is matched around them.</p>
       <div class="db-actions">
         <button class="go light" id="new-day" type="button">Start a new day</button>
-        <p class="hint">Clears every list. Phones with an open visit go back to the entrance.</p>
+        <p class="hint">Closes every open visit and empties the lists. Nothing is deleted, and registration numbers go on counting.</p>
       </div>
-      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Patients</th><th>Status</th></tr></thead>
+      <div class="table-wrap"><table class="staff"><thead><tr><th>Reg. no.</th><th>Doctor</th><th>Department</th><th>Room</th><th>Shift</th><th>Patients</th><th>Status</th></tr></thead>
         <tbody id="staff"></tbody></table></div>
+      <h3 class="sub" style="font-size:1.15rem;margin-top:22px">The log: the newest steps</h3>
+      <p class="hint" style="margin:4px 0 0">Every step of every visit is written down with its time and who did it. Nothing is deleted.</p>
+      <div class="table-wrap"><table class="staff"><thead><tr><th>Time</th><th>Visit</th><th>Step</th><th>Who</th><th>Detail</th></tr></thead>
+        <tbody id="events"></tbody></table></div>
     </div>
   </details>
 </div>
@@ -529,7 +533,9 @@ async function refreshDatabase() {
     <div><b>${data.on_duty} of ${data.total}</b><span class="mono">doctors on duty</span></div>
     <div><b>${data.visits["with nurse"] || 0}</b><span class="mono">waiting for the nurse</span></div>
     <div><b>${data.visits.waiting}</b><span class="mono">in the line</span></div>
-    <div><b>${data.visits["with doctor"]}</b><span class="mono">with a doctor</span></div>`;
+    <div><b>${data.visits["with doctor"]}</b><span class="mono">with a doctor</span></div>
+    <div><b>${data["all days"] ? data["all days"].visits : "–"}</b><span class="mono">visits kept, all days</span></div>
+    <div><b>${data.kept ? (data.kept.copied ? "✓" : "…") : "–"}</b><span class="mono">${data.kept ? "copied to lasting storage" : "kept on this computer"}</span></div>`;
   const t = data.reviews;
   document.getElementById("reviews").innerHTML = `<b>Test regime.</b> ` + (t.reviewed === 0
     ? "No report reviewed yet. Every time the nurse accepts Meddy's report or checks the patient herself, it is counted here."
@@ -540,11 +546,22 @@ async function refreshDatabase() {
   document.getElementById("staff").innerHTML = data.doctors.map((d) => `
     <tr class="${d.on_duty ? "" : "off"}">
       <td class="mono">${esc(d.reg_no)}</td><td>${esc(d.name)}</td><td>${esc(d.department)}</td><td>${esc(d.room)}</td>
-      <td class="num">${d.waiting}</td>
+      <td>${esc(d.shift || "")}</td><td class="num">${d.waiting}</td>
       <td><button class="duty ${d.on_duty ? "on" : ""}" data-reg="${esc(d.reg_no)}" data-on="${d.on_duty}"
             ${d.reg_no === "DR-1000" ? "disabled" : ""} aria-pressed="${d.on_duty}">${d.on_duty ? "On duty" : "Off duty"}</button></td>
     </tr>`).join("");
 }
+async function loadEvents() {
+  let data;
+  try { data = await api("/api/events?limit=12"); } catch (e) { return; }
+  document.getElementById("events").innerHTML = data.events.map((e) => `<tr>
+    <td class="mono">${esc(new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }))}</td>
+    <td class="mono">${esc(e.visit_reg ? e.visit_reg.slice(-4) : "")}</td><td>${esc(e.what)}</td><td>${esc(e.who || "")}</td>
+    <td>${esc(e.detail || "")}</td></tr>`).join("");
+}
+document.querySelector("details.db").addEventListener("toggle", (event) => { if (event.target.open) loadEvents(); });
+setInterval(() => { if (document.querySelector("details.db").open) loadEvents(); }, 6000);
+
 document.getElementById("staff").addEventListener("click", async (event) => {
   const button = event.target.closest(".duty"); if (!button || button.disabled) return;
   await api("/api/staff/duty", { reg_no: button.dataset.reg, on_duty: button.dataset.on !== "true" }).catch(() => {});

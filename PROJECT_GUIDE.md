@@ -65,7 +65,7 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
 
 ### The patient's path in our system
 
-1. **Entrance.** The patient says what is wrong and shows their insurance: scan the card, type the number, or
+1. **Entrance.** The patient says what is wrong and gives their insurance card number, or
    "no insurance". The visit gets a registration number, and the registry allows one open visit per card.
    Insurance is only an identity check: it never reaches either model and never changes the level or the line.
 2. **Check-in, on the patient's phone.** A quick check built for the complaint: three danger signs to tap, what
@@ -202,6 +202,8 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
       (`/doctor`). The phone shows a code for the nurse and never the level; the doctor calls the next patient
 - [x] Online on a Hugging Face Space that rebuilds itself when `main` changes (`deploy/huggingface/`):
       https://darkshdws-meddy.hf.space
+- [x] A database that keeps everything: 37 doctors in day and night shifts, a log of every step of every visit,
+      registration numbers never given twice, and a copy in the Space's storage bucket so restarts lose nothing
 - [x] The chain checked end to end for weak links: a patient who is with a doctor cannot be assessed or queued again, joining the line needs an assessment, unknown values
       are refused, emergencies never sit in the line, a reload keeps the patient's place, and every doctor's
       list is made of real visits

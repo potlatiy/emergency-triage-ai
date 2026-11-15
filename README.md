@@ -52,7 +52,7 @@ How a visit would work, and how much of it we built and tested:
 
 | Step | What happens | Status |
 |---|---|---|
-| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they scan their insurance card (or type the number, or say they have none) and give what is wrong in their own words, age, sex and how they arrived. One person can have one open visit. | Built as a demo step. The scanner reads a barcode or QR code with the camera; we tried it only on our own sample card. |
+| 1. Registration | Before triage, while the patient waits for the nurse (the short queue), they type their insurance card number (or say they have none) and give what is wrong in their own words, age, sex and how they arrived. One person can have one open visit. | Built as a demo step. We built a camera scanner first and removed it: real insurance cards (Medicare, the Spanish SIP card, the German Gesundheitskarte) carry no barcode, so it only read our own sample card. |
 | 2. Follow-up questions | The AI chooses three history questions for this complaint (for example when it started, or what was taken for it). The patient taps a quick answer, writes their own, or both, and can describe what happened in their own words. | Built, **not tested**. The answers go to the nurse and the doctor and never change the level. |
 | 3. Suggested level | At triage the nurse measures vital signs and enters them. The AI suggests a level from 1 to 5 with the probability of each level. When no level is likely enough, it says it is not sure. | **Built and tested.** |
 | 4. Number on the phone | After check-in the phone shows a short code for the nurse. Then it shows the ticket number and place in line, and finally the room to go to: never the level and never a promised time. | Built as a demo. The phone is its own screen and the server never sends it the level. It follows the visit by itself and keeps its place after a reload. |
@@ -99,10 +99,14 @@ which rebuilds itself when `main` changes.
 | Waiting room (phone) | Your place in line, updated by itself | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level |
 | Doctor (doctor's screen, phone) | Department and doctor. The doctor calls the next patient; the phone shows the room | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
 
-The internal database is one SQLite file with four tables (and a small one for counters): doctors, visits, the questionnaire answers, and a
-registry of people that keeps one open visit per insurance card. The doctors, their registration numbers and the
-patients already in the department are made up. No patient names are asked for, no card number is stored (only a
-one-way fingerprint), and the database is wiped each time the server starts.
+The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
+visits, the questionnaire answers, a log of every step of every visit (with its time and who did it), a registry
+of people that keeps one open visit per insurance card, and counters. Nothing is deleted: "Start a new day" closes
+the open visits and keeps them, and registration numbers are never given twice. Online, a copy of the file is kept
+in the Space's storage bucket every few seconds and taken back at start, so a restart or a new version of the code
+loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The doctors,
+their registration numbers and the patients already in the department are made up. No patient names are asked
+for, and no card number is stored (only a one-way fingerprint).
 
 **Two things have been tested on real data:** the urgency level and the choice of department. The questionnaire, the line and the choice of doctor are demonstrations.
 

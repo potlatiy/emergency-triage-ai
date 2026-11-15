@@ -19,8 +19,11 @@ The Space downloads the code from the `main` branch of https://github.com/potlat
 it builds, so the Space never holds a copy of it.
 
 Everything runs in one container: the hospital server, both trained models, Ollama with Gemma 3 1B for
-the history questions, and the SQLite database. The database starts a fresh demonstration day at every
-start, as it does on a laptop. This is a prototype and not medical advice; it holds no real patients.
+the history questions, and the SQLite database. The database lives on the container's disk and a copy is kept
+in the private storage bucket `darkshdws/meddy-storage`, mounted at `/data` (Space → Settings → Storage Buckets):
+`start.sh` turns this on when `/data` is writable, the server copies the file there every few seconds when it
+changed, and takes it back at start. So a restart, a rebuild or a new version loses nothing. This is a prototype
+and not medical advice; it holds no real patients.
 
 ## Putting the latest `main` online
 
