@@ -94,7 +94,10 @@ def test_a_danger_sign_counts_as_half_a_level():
 
 def test_a_new_day_has_staff_and_sample_patients():
     staff = db.staff()
-    assert len(staff["doctors"]) == 14 and staff["on_duty"] == staff["total"] == 13
+    day_shift = [d for d in db.SEED_DOCTORS if d[4] == "day"]
+    assert len(staff["doctors"]) == len(db.SEED_DOCTORS) == 38
+    assert staff["total"] == 37 and staff["on_duty"] == len(day_shift) == 26          # the night shift is off duty
+    assert {d["department"] for d in staff["doctors"]} == {name for name, _, _ in db.SEED_DEPARTMENTS}
     assert len(db.line()["patients"]) == 5
 
 
@@ -122,7 +125,9 @@ def test_the_least_busy_doctor_on_duty_is_chosen():
 
 
 def test_general_medicine_covers_when_nobody_is_on_duty():
-    db.set_duty("DR-1008", False)                     # the only gastroenterology doctor
+    for doctor in db.staff()["doctors"]:              # every gastroenterology doctor goes off duty
+        if doctor["department"] == "Gastroenterology and surgery":
+            db.set_duty(doctor["reg_no"], False)
     reg = db.register("abd pain", 50, "Male")
     db.join_line(reg, 3, True, "Gastroenterology and surgery", "key-word rule")
     while (called := db.call_next())["reg_no"] != reg:
@@ -929,13 +934,14 @@ def test_every_made_up_patient_has_the_ai_level_of_that_patient():
 
 
 def test_a_phone_can_tell_a_new_day_from_the_old_one():
-    """Registration numbers start again after a new day, so the number alone is not enough to find your visit."""
+    """A new day closes the open visit: the phone sees "finished" and a new day. Numbers are never given twice."""
     first = client.post("/api/register", json={"complaint": "cough", "age": 30, "use_model": False}).json()
     assert client.get(f"/api/me/{first['reg_no']}").json()["day"] == first["day"]
     client.post("/api/reset")
     second = client.post("/api/register", json={"complaint": "collapsed", "age": 70, "use_model": False}).json()
-    assert second["reg_no"] == first["reg_no"]                # the same number, another patient
-    assert client.get(f"/api/me/{second['reg_no']}").json()["day"] == second["day"] != first["day"]
+    assert second["reg_no"] > first["reg_no"]                 # the counter goes on: never the same number twice
+    old = client.get(f"/api/me/{first['reg_no']}").json()
+    assert old["status"] == "finished" and old["day"] == second["day"] != first["day"]
 
 
 def test_the_last_two_doctor_fallbacks():
@@ -1278,3 +1284,71 @@ def test_the_summary_never_reaches_the_patients_phone_and_is_never_called_a_diag
     assert not any("diagnos" in key.lower() for key in all_keys(summary))
     assert "diagnos" not in json.dumps(summary).lower()
 
+
+
+
+# ---------------------------------------------------------------- a database that keeps everything
+
+def test_a_new_day_keeps_history_and_never_reuses_a_number():
+    reg = checked_in()
+    numbers_before = db.visit_for(reg)["reg_no"]
+    assert client.post("/api/reset").json()["closed"] >= 1
+    kept = db.visit_for(reg)
+    assert kept["status"] == "done" and kept["closed_why"] == "new day"                   # closed, not deleted
+    assert db.answers_for(reg)                                                            # its answers are kept
+    assert [s["what"] for s in db.history(reg)][-1] == "closed"
+    fresh = new_visit()
+    assert fresh > numbers_before and db.visit_for(fresh)["day"] == db.day() != kept["day"]
+    assert db.staff()["visits"]["done"] == 0                                              # today's counts start again
+    assert db.staff()["all days"]["visits"] > db.staff()["visits"]["registered"]
+
+
+def test_a_card_is_free_again_after_a_new_day():
+    first = client.post("/api/register", json={"complaint": "cough", "age": 30, "use_model": False,
+                                               "insurance": "public", "card": "DEMO12345678"})
+    assert first.status_code == 200
+    again = {"complaint": "cough", "age": 30, "use_model": False, "insurance": "public", "card": "DEMO12345678"}
+    assert client.post("/api/register", json=again).status_code == 409
+    client.post("/api/reset")
+    assert client.post("/api/register", json=again).status_code == 200
+
+
+def test_every_step_of_a_visit_is_in_the_log():
+    reg = checked_in()
+    card = client.get(f"/api/nurse/patient/{reg}").json()
+    client.post("/api/triage", json={"reg_no": reg, "arrival": card["arrival"], "pain": card["pain"],
+                                     "answers": card["answers"]})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3, "department": "Cardiology"})
+    client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"})
+    client.post("/api/doctor/finish", json={"reg_no": reg})
+    steps = client.get(f"/api/visit/{reg}/history").json()["steps"]
+    assert [s["what"] for s in steps] == ["registered", "checked in", "assessed", "in line", "called by the doctor", "finished"]
+    assert all(s["at"] for s in steps) and steps[-1]["who"] == "DR-1002"
+    assert db.visit_for(reg)["closed_why"] == "finished by the doctor"
+    assert client.get("/api/visit/P-2026-9999/history").status_code == 404
+    assert client.get("/api/events?limit=3").json()["events"][0]["what"] == "finished"
+
+
+def test_an_older_database_is_upgraded_without_losing_anything():
+    reg = new_visit()
+    with db._lock, db._conn:
+        db._conn.execute("ALTER TABLE visits DROP COLUMN closed_why")       # as a file from before this version
+        db._conn.execute("DELETE FROM doctors WHERE reg_no = 'DR-1037'")
+        db._conn.execute("UPDATE visits SET day = NULL")                     # visits from before days were kept
+    db._upgrade()
+    assert db.staff()["visits"]["waiting"] == len(db.line()["patients"]) == 5   # they count as today's
+    assert db.visit_for(reg)["complaint"] == "chest pain since this morning" and "closed_why" in db.visit_for(reg)
+    assert any(d["reg_no"] == "DR-1037" for d in db.staff()["doctors"])
+
+
+def test_the_database_is_copied_to_lasting_storage(monkeypatch, tmp_path):
+    import sqlite3
+    monkeypatch.setattr(db, "KEPT", tmp_path / "hospital.db")
+    monkeypatch.setattr(db, "_kept_changes", None)
+    reg = new_visit()
+    assert db.keep_copy() is True and db.keep_copy() is False                  # nothing changed the second time
+    copy = sqlite3.connect(tmp_path / "hospital.db")
+    assert copy.execute("SELECT complaint FROM visits WHERE reg_no = ?", (reg,)).fetchone()[0] == "chest pain since this morning"
+    copy.close()
+    new_visit()
+    assert db.keep_copy() is True                                               # a change: copied again
