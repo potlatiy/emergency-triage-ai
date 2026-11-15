@@ -33,11 +33,14 @@ doctor presses "Erase everything". "Start a new day" closes open visits but does
 | `meddy_staff` | Remembers that the nurse or doctor typed the staff PIN (a signed token, never the PIN; `HttpOnly`) | 12 hours, or until "Lock this screen" |
 | `meddy_chief` | The same for the chief doctor's panel | 12 hours, or until "Lock this screen" |
 
-## Items saved in the browser (never sent anywhere)
+## Items saved in the browser
+
+They stay on the device. One of them, the key of the patient's own visit, is sent back to Meddy's server and to
+nobody else.
 
 | Name | What it does |
 |---|---|
-| `meddy-visit` | The patient's own visit number and step, so the phone carries on after a reload |
+| `meddy-visit` | The patient's own visit, so the phone carries on after a reload: its number and step, what was typed at check-in (name, age, the complaint and the answers), and a key for this visit. The phone sends the key back to Meddy's server each time it asks about the visit, so that only this phone is given the doctor's note |
 | `meddy-doctor` | Which doctor's screen is open on this computer |
 | `meddy-offered-…` | Which new patients this doctor was already asked about |
 | `meddy-large` | Larger text on or off |
@@ -48,6 +51,9 @@ doctor presses "Erase everything". "Start a new day" closes open visits but does
 
 - **Hugging Face** hosts the site and sees IP addresses in its logs ([privacy policy](https://huggingface.co/privacy)).
 - **Google Fonts** serves the typeface, so Google sees the visitor's IP address ([privacy policy](https://policies.google.com/privacy)).
+- **Cloudflare (cdnjs)** serves the small library that draws the QR codes on the patient's page, the first time a
+  code is shown, so Cloudflare sees the visitor's IP address ([privacy policy](https://www.cloudflare.com/privacypolicy/)).
+  Nothing the visitor typed is sent to it.
 
 ## In a real hospital
 
@@ -57,4 +63,5 @@ impact assessment, real staff accounts instead of a shared PIN, and its own rete
 none of that, which is why it asks for made-up details.
 
 A test (`test_the_privacy_page_names_every_cookie_and_browser_item_the_site_sets`) checks that the privacy page names
-every cookie the server sets and every item the pages save, and that every screen links to it.
+every cookie the server sets and every item the pages save, and that every screen links to it. A second test checks
+that it names every outside service a page loads anything from.

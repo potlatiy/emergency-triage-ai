@@ -36,3 +36,25 @@ def test_a_visit_from_before_keys_still_shows_its_note():
     db.call_next(reg)
     client.post("/api/doctor/finish", json={"reg_no": reg, "note": "All fine."})
     assert client.get("/api/me/" + reg).json()["note"] == "All fine."
+
+
+def test_the_privacy_page_names_every_outside_service_the_pages_load_from():
+    """A page that loads a font or a script from somewhere else tells that somewhere the visitor's address. The
+    privacy page must name each one: the QR library from Cloudflare was loaded and not listed."""
+    import re
+    names = {"fonts.googleapis.com": "Google Fonts", "fonts.gstatic.com": "Google Fonts", "cdnjs.cloudflare.com": "Cloudflare"}
+    privacy = (server.STATIC / "privacy.html").read_text(encoding="utf-8")
+    loaded = set()
+    for page in server.STATIC.iterdir():
+        if page.suffix in (".html", ".js", ".css"):
+            text = page.read_text(encoding="utf-8")
+            loaded |= set(re.findall(r'(?:src|href)\s*=\s*"https://([^/"]+)[^"]*\.(?:js|css)', text))       # scripts and styles
+            loaded |= set(re.findall(r'<link[^>]+href="https://([^/"]+)', text))                              # fonts and preconnects
+            loaded |= set(re.findall(r'\.src\s*=\s*"https://([^/"]+)', text))                                # scripts added later
+    assert "cdnjs.cloudflare.com" in loaded and "fonts.googleapis.com" in loaded
+    for host in loaded:
+        assert host in names, f"{host} is loaded by a page and is not known to this test: name it on the privacy page"
+        assert names[host] in privacy, host
+    # what the phone keeps: the row says the truth about the key
+    assert "key" in privacy and "sent back to Meddy" in privacy
+
