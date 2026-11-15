@@ -52,6 +52,12 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 | Right department: most common / key-word rule / our model | 21% / 67% / 70% |
 | Right department among the model's top three | 88% |
 | Exact level when the model moves to the other hospital | 55–58% (down from 68%) |
+| Meddy's range of levels: experts' level inside / levels wide / most urgent patients inside | 90.6% / 2.0 / 80% |
+| The same for the simple baseline (most likely level, one either side) | 95.7% / 2.9 / 92% |
+| Range inside when it is one level / two levels / three or more | 82% / 93% / 96% |
+| Range with model and cut from the other hospital: inside / urgent patients inside | 87% / 64% |
+| Five similar patients: their most common level was the experts' / at least one had it | 61% / 89% (five random patients: 33% / 79%; the model alone: 68%) |
+| Re-check while waiting: level 3 / 4 / 5 | every 30 / 60 / 120 minutes (the Canadian scale's times) |
 
 ## Questions judges may ask
 
@@ -63,6 +69,28 @@ There its level was too low for about 7% of patients, about the same as the nurs
 sends the patient to the resuscitation team at once, which is the safe direction, so that is one press too.
 We have not tested how real nurses use the button, and reading a report first may make them agree too easily. That is
 why the app counts every verdict.
+
+**What is the "likely range" on the nurse's screen?**
+One level is right for 68% of patients, so Meddy also says "level 3 to level 4". A level is in the range when its
+probability is at least about 10%. We chose that cut so that the experts' level stays inside for 9 patients in 10,
+then checked it on patients the cut had not seen: 90.6%. The method is called conformal prediction. The weak spots:
+for the most urgent patients it is only 8 in 10, a miss on them is nearly always too low, and there the simple "one
+level either side" does better. It also does not travel: with the other hospital's model and cut it is 87%. The
+screen says the first two next to every range.
+
+**What are the "patients like this one"?**
+Five real patients from the 1,267 who look most like the new one: same kind of complaint first, then closest in the
+complaint words, the numbers and the tick-box answers. The nurse sees the level their nurse gave and the level the
+experts gave, never the diagnosis. Tested on patients they had not seen, the most common level among the five was
+the experts' level 61% of the time (five random patients: 33%). That is weaker than the model (68%), so we show them
+as evidence to look at, not as a second opinion.
+
+**What if a patient gets worse while waiting?**
+The phone has an "I feel worse" button. In the waiting room it does not move the patient up the line; it puts them
+on top of the nurse's list.
+She measures again, Meddy writes a new report, and her new level decides. The patient keeps the ticket and the
+minutes already waited. The nurse's screen also marks patients who have waited longer than their level allows
+without a second look. We could not test this on our data: it has one measurement per patient.
 
 **Why is your AI worse than nurses?**
 It reads a few words, the age and the vital signs. A nurse sees and hears the patient. That is why we did not build a

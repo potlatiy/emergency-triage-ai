@@ -20,13 +20,26 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import similar  # noqa: E402
 import trained_models  # noqa: E402
-from triage import (LEVELS, NUMBERS, QUICK_SURE, TEXT, flag_strength, load, safety_first,  # noqa: E402
-                    urgency_gap_score, warning_signs)
+from triage import (LEVELS, NUMBERS, QUICK_SURE, RANGE_COVERAGE, TEXT, flag_strength, level_range, load,  # noqa: E402
+                    safety_first, urgency_gap_score, warning_signs)
 
 LEVEL_NAMES = {1: "Resuscitation", 2: "Emergency", 3: "Urgent", 4: "Less urgent", 5: "Non-urgent"}
 SURE_ENOUGH = 0.60
 MOVE_UP_EVERY = 45          # minutes of waiting that lift a level 3-5 patient by one level
+# How long a waiting patient may go without the nurse looking at them again, by level, in minutes. These are the
+# reassessment times of the Canadian triage scale (CTAS), which the Korean scale of our data (KTAS) was built from:
+# level 2 every 15 minutes, 3 every 30, 4 every 60, 5 every 120. Levels 1 and 2 never wait in our line.
+RECHECK_AFTER = {3: 30, 4: 60, 5: 120}
+
+
+def recheck_due(patient, clock):
+    """Has this waiting patient gone longer without a nurse than their level allows? Counted from the last time
+    the nurse decided on them (or from when they joined the line)."""
+    seen = patient.get("seen_at") if patient.get("seen_at") is not None else patient.get("arrived")
+    allowed = RECHECK_AFTER.get(patient.get("level"))
+    return bool(allowed and seen is not None and clock - seen >= allowed)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 # The online copy runs on a plain processor, so it can choose a smaller Gemma and wait longer for it.
 OLLAMA_MODEL = os.environ.get("MEDDY_OLLAMA_MODEL", "gemma3:4b")
@@ -39,6 +52,10 @@ _data = load()
 # The saved files are loaded when they fit this computer; otherwise the models are trained again here.
 # The assignment model learned from each real patient's final diagnosis (see assignment.py).
 _model, _assignment = trained_models.ready()
+# Meddy's range of levels: a level stays in the range when its probability reaches this cut (see triage.range_cut).
+_RANGE = trained_models.level_range_settings()
+_RANGE_CUT = _RANGE["cut"]
+_similar = None        # the 1,267 patients of the data, built at the first look-up (see similar_patients)
 _BUSY = float(_data["Patients number per hour"].median())
 # The model was trained on complaints as nurses write them ("ant. chest pain"). Patients typing their own
 # words are less familiar to it, and at middling confidence it made odd choices in our trials. So it
@@ -110,7 +127,7 @@ def vital_warnings(vitals, alert="Alert", pain=0):
     return [name for name in table.columns if bool(table[name].iloc[0])]
 
 
-def review_advice(result, danger=False, asked=True):
+def review_advice(result, danger=False, asked=True, worse=False):
     """Can the nurse accept Meddy's report after a quick look, or should she check the patient in person?
 
     asked says whether the patient answered the danger-sign questions at all. "Not asked" is not "no": a
@@ -119,6 +136,7 @@ def review_advice(result, danger=False, asked=True):
     "rule_only" is true when a personal check is advised only for a reason our tests could not measure: the
     1,267 test patients have no check-in answers, so a yes to a danger sign, unanswered danger questions and
     an unread complaint are safety rules. The page must not print a test figure next to such advice.
+    worse: the patient pressed "I feel worse" while waiting. That is always a reason to look in person.
 
     A quick review is advised only where Meddy's level held up in our tests: Meddy is at least 80% sure,
     the level is 3 to 5 and nothing in the measurements or the answers is a warning. On such patients its
@@ -137,6 +155,8 @@ def review_advice(result, danger=False, asked=True):
         reasons.append("the patient answered yes to a danger sign")
     elif not asked:
         reasons.append("the patient did not answer the danger-sign questions")
+    if worse:
+        reasons.append("the patient says they feel worse")
     if result["warnings"]:
         reasons.append("warning signs: " + ", ".join(result["warnings"]))
     return {"quick": not reasons, "emergency": False, "reasons": reasons, "rule_only": bool(reasons) and measured}
@@ -148,6 +168,48 @@ def second_check(probabilities, nurse_level):
     if probabilities is None or nurse_level is None:
         return None
     return str(flag_strength(np.asarray(probabilities, dtype=float)[None, :], [nurse_level])[0]) or None
+
+
+def level_range_of(probabilities):
+    """Meddy's range of levels for one patient: {"low": most urgent level in it, "high": least urgent, "promise"}.
+    In our tests the experts' level was inside the range for 9 unseen patients in 10 (8 in 10 of the most urgent)."""
+    # Worked out from the probabilities as the report shows and stores them (three decimals), so the nurse's
+    # screen and the doctor's summary always give the same range. Rounding can only make a range wider.
+    shown = np.round(np.asarray(probabilities, dtype=float), 3)[None, :]
+    low, high = level_range(shown, _RANGE_CUT)
+    low, high = int(low[0]), int(high[0])
+    # "inside": how often the experts' level was inside a range this wide in our tests (1, 2, 3 or more levels).
+    return {"low": low, "high": high, "promise": RANGE_COVERAGE, "inside": _RANGE["inside"][min(high - low + 1, 3)]}
+
+
+# Below this, no complaint in the data resembles the patient's: the similar patients are then alike in their
+# measurements only, and the nurse is told so.
+COMPLAINT_ALIKE_ENOUGH = 0.3
+
+
+def kind_of_complaint(complaint, injury=False):
+    """The kind of complaint the key-word rule reads ("pee" and "dysuria" are both urology), or None when it
+    finds no word it knows. It lets a patient who writes in everyday words find the patients the data describes
+    in clinical words."""
+    kind = department_for(complaint, injury)
+    recognised = bool(_SYMPTOM_RULES.search(f" {(complaint or '').lower()} ")) or injury
+    return kind if recognised else None
+
+
+def similar_patients(row, complaint, injury=False):
+    """The five patients in the data most like this one, for the nurse to look at. Never their diagnosis.
+
+    Patients with the same kind of complaint come first; among them, and when the kind is not recognised,
+    the order is by how alike the complaint words, the numbers and the tick-box answers are (see similar.py)."""
+    global _similar
+    if _similar is None:
+        data = load()
+        _similar = similar.Similar(data, [kind_of_complaint(c, i == 2) for c, i in zip(data[TEXT], data["Injury"])])
+    found = _similar.nearest(row, kind_of_complaint(complaint, injury))
+    for patient in found:           # alike in the measurements but with another complaint: the nurse is told
+        patient["other_complaint"] = not patient.pop("same_kind") and patient["complaint_alike"] < COMPLAINT_ALIKE_ENOUGH
+    return {"patients": found, "under_rated": sum(p["nurse_level"] > p["expert_level"] for p in found),
+            "complaint_matched": not found[0]["other_complaint"]}
 
 
 def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, alert="Alert", pain=0, vitals=None):
@@ -192,6 +254,8 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
         "sure": float(probabilities.max()),          # unrounded: the 80% rule is decided on this
+        "range": level_range_of(probabilities),
+        "similar": similar_patients(row, complaint, injury),
         "unsure": bool(probabilities.max() < SURE_ENOUGH),
         "careful_level": int(safety_first(probabilities[None, :])[0]),
         # For every level the nurse could give: how sure Meddy is that the patient is more urgent than that,
@@ -656,6 +720,7 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
         "text": ai["text"] if use_ai else plain_summary(visit["complaint"], visit["age"], visit["sex"], answers,
                                                         bool(visit.get("injury"))),
         "written_by": "ai" if use_ai else "code",
+        "held_back": bool(ai and ai.get("source") == "ai" and ai.get("text") and not summary_ok),   # the nurse said: not right
         "own_words": story,
         "danger_yes": [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"],
         # False: the patient came through check-in without answering a danger question (the nurse took them
@@ -676,13 +741,16 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
     against_advice = visit.get("review") == "approved" and visit.get("quick_advised") == 0
     nurse_found = {"measured": measured, "warnings": warnings, "level": visit.get("level"), "review": visit.get("review"),
                    "against_advice": against_advice,
+                   # While waiting: how often the patient pressed "I feel worse", and how often the nurse looked again.
+                   "said_worse": visit.get("worse_said") or 0, "rechecks": visit.get("rechecks") or 0,
+                   "worse_unanswered": False, "remeasured": False,      # set when the doctor reads it (db.doctor_patients)
                    "referral_reason": visit.get("referral_reason"), "note": note}
     meddy = None
     if visit.get("ai_level") is not None:
         odds = json.loads(visit["ai_odds"]) if visit.get("ai_odds") else None
         sure = max(odds) if odds else None
         how = visit.get("department_how")
-        meddy = {"level": visit["ai_level"], "sure": sure, "unsure": bool(sure is not None and sure < SURE_ENOUGH),
+        meddy = {"level": visit["ai_level"], "sure": sure, "range": level_range_of(odds) if odds else None, "unsure": bool(sure is not None and sure < SURE_ENOUGH),
                  "unread": not known_words(visit["complaint"]), "flag": visit.get("second_check"),
                  "department": visit.get("ai_department"),
                  "how": how if how and not how.startswith(("nurse", "made-up")) else None}

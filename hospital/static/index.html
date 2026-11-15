@@ -6,7 +6,7 @@
 <title>Meddy · Digital hospital</title>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=4">
+<link rel="stylesheet" href="/static/meddy-site.css?v=5">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -133,7 +133,7 @@
 
   /* choices: separate round buttons */
   .choice { display:flex; flex-wrap:wrap; gap:12px; }
-  .choice button { flex:1 1 0; min-width:0; min-height:60px; padding:12px 16px; white-space:nowrap; border:2px solid #aab8b0; border-radius:999px;
+  .choice button { flex:1 1 0; min-width:max-content; min-height:60px; padding:12px 16px; white-space:nowrap; border:2px solid #aab8b0; border-radius:999px;
      background:var(--card); color:var(--ink); font-size:1.15rem; font-weight:700; cursor:pointer;
      transition:background-color .15s ease, border-color .15s ease, color .15s ease; }
   .choice button:hover { border-color:var(--blue); background:var(--blue-tint); }
@@ -335,6 +335,7 @@
   .qr-code.small { width:128px; height:128px; margin-left:auto; } .qr-code.small[hidden] { display:none; }
   .qr-code.small img, .qr-code.small canvas { width:112px !important; height:112px !important; }
   .qr.off { background:var(--page); }
+  .qr.none { display:none; }
   @media (max-width: 640px) { .qr { display:none; } }   /* already on a phone: nothing to scan */
   details.db { padding:0; }
   details.db summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:14px; padding:22px 28px;
@@ -376,6 +377,13 @@
   @media (max-width: 640px) {
     body { font-size:1.125rem; }
     .size { margin-left:0; }
+    /* on a phone the first question must be on the first screen: a short header, the text-size button beside the logo */
+    header.top .wrap { gap:12px; padding-top:12px; padding-bottom:12px; }
+    header.top .wrap > p { display:none; }              /* the step card says the same */
+    header.top .brand { flex:1 1 0; min-width:0; }
+    header.top .roles { order:2; }
+    header.top .size { font-size:0; gap:0; padding:6px; }   /* only the "A+" circle shows; the name stays for screen readers */
+    header.top .size span { font-size:1rem; }
     .card, .panel { padding:22px; }
     .panel h2 { font-size:1.75rem; }
     .steps { gap:4px; padding:6px; }
@@ -587,7 +595,7 @@ async function start() {
   me = { ...fresh(), ...saved.me };
   if (!sameVisit(now)) { startOver(); return; }
   if (now.status === "waiting") return waiting("Welcome back. Your place in line was kept.");
-  if (now.status === "nurse") return atNurse();
+  if (now.status === "nurse") { me.worse = Boolean(now.worse); return atNurse(); }    // the server knows if they pressed "I feel worse"
   if (now.status === "called") return doctor(saved.called || { doctor: now.doctor, room: now.room, ticket: now.ticket });
   if (now.status === "registered") {
     const writing = me.followUp === "writing";
@@ -1019,8 +1027,10 @@ function atNurse() {
       temperature, and then this screen moves on by itself.</p>
     <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
     <p class="hint">The nurse can also scan the square code with her phone: it opens your answers on her screen.</p>
+    <div id="worse-box"></div>
     <p class="error" id="error" role="alert"></p>`;
   drawQr(document.getElementById("nurse-qr"), nurseLink, 112);
+  drawWorse(me.worse);
   const run = tick;
   watching = setInterval(async () => {
     let now;
@@ -1034,6 +1044,7 @@ function atNurse() {
     if (run !== tick) return;
     document.getElementById("error").textContent = "";
     if (!sameVisit(now)) { startOver("The hospital started a new day, so your visit was cleared. Please register again."); return; }
+    if (now.status === "nurse" && Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) drawWorse(now.worse);
     if (now.status === "waiting") waiting("The nurse is done. You are in the waiting room now.");
     else if (now.status === "called") doctor({ doctor: now.doctor, room: now.room, ticket: now.ticket });
     else if (now.status === "finished") startOver();
@@ -1057,8 +1068,10 @@ async function waiting(message) {
   const held = document.activeElement && document.activeElement.id;      // to give the keyboard its place back
   walkTo(4);
   const run = tick;
-  let mine, data;
-  try { [mine, data] = await Promise.all([api("/api/me/" + encodeURIComponent(me.reg)), api("/api/line")]); }
+  let mine;
+  // Only this patient's own ticket and place are asked for. The page used to download the whole line as well
+  // (every waiting patient's name, complaint and level) just to read the clock, which a patient's phone must not get.
+  try { mine = await api("/api/me/" + encodeURIComponent(me.reg)); }
   catch (e) {
     if (run !== tick) return;
     if (e.status === 404) { startOver(); return; }
@@ -1069,7 +1082,6 @@ async function waiting(message) {
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
   if (mine.status !== "waiting") { startOver(); return; }               // finished, or no longer in the line
   remember("waiting");
-  const hours = Math.floor(data.clock / 60), minutes = String(data.clock % 60).padStart(2, "0");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
   panel.innerHTML = `
     ${head("patient")}
@@ -1082,6 +1094,7 @@ async function waiting(message) {
     </div>
     <p class="lede">Please wait until your ticket is called. The most urgent patients go first, and the longer you wait,
     the further you move up. This screen updates by itself.</p>
+    <div id="worse-box"></div>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
     <p class="hint">Your doctor calls you from their own screen, and this screen then shows the room.
@@ -1093,10 +1106,50 @@ async function waiting(message) {
       const now = await api("/api/me/" + encodeURIComponent(me.reg));
       if (run !== tick) return;
       if (!sameVisit(now)) { startOver(); return; }
-      if (now.status !== mine.status || now.position !== mine.position) waiting(now.status === "called" ? "" : "The line moved.");
+      const checked = Boolean(me.worse) && !now.worse && !justPressed();   // the nurse has looked at the patient again
+      if (now.status !== mine.status || now.position !== mine.position)
+        waiting(now.status === "called" ? "" : checked ? "The nurse has checked you again." : "The line moved.");
+      else if (Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) {
+        mine.worse = now.worse; drawWorse(now.worse, checked ? "The nurse has checked you again." : "");
+      }
     } catch (e) { if (run === tick && e.status === 404) startOver(); }     // a new day was started on another screen
   }, 5000);
+  drawWorse(mine.worse);
   if (held && document.getElementById(held)) document.getElementById(held).focus({ preventScroll: true });
+}
+
+// "I feel worse": while the patient waits (for the nurse or in the waiting room) one press tells the nurse to look
+// again. In the waiting room it never changes the level or the place in line; only a nurse can do that. Before the
+// nurse has seen the patient it puts them first on her list.
+let pressedAt = 0;                                       // when "I feel worse" was last pressed on this phone
+// An answer the server gave just before the press can arrive just after it: such an answer must not undo the press.
+const justPressed = () => Date.now() - pressedAt < 6000;
+function drawWorse(isWorse, note) {
+  const box = document.getElementById("worse-box");
+  if (!box) return;
+  me.worse = Boolean(isWorse);
+  const inLine = step === "waiting";
+  box.innerHTML = me.worse
+    ? `<div class="note red" role="status"><b>The nurse has been told that you feel worse.</b>
+         ${inLine ? "She has been asked to check you again. Your place in line is kept." : "She has been asked to see you first."}
+         <span class="hint">If it is an emergency, call out to the staff now.</span></div>`
+    : `<button type="button" class="go light" id="worse" style="margin-top:18px">I feel worse</button>
+       <p class="hint" style="margin:8px 0 0">${note ? `<b>${esc(note)}</b> ` : ""}${inLine
+         ? "Tells the nurse to check you again. It does not change your place in line."
+         : "Tells the nurse that you feel worse, so that she sees you sooner."} If it is an emergency, call out to the staff.</p>
+       <p class="error" id="worse-error" role="alert"></p>`;
+  const button = document.getElementById("worse");
+  if (button) button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await api("/api/worse", { reg_no: me.reg }); pressedAt = Date.now(); drawWorse(true); }
+    catch (e) {
+      button.disabled = false;
+      const error = document.getElementById("worse-error");       // gone when the screen has moved on meanwhile
+      if (error) error.textContent = e.status === 409 ? "You are not in the line right now. Please speak to the staff."
+        : e.status === 404 ? "The hospital no longer has this visit. Please speak to the staff."
+        : "Meddy can't reach the hospital server. Please tell the staff in person.";
+    }
+  });
 }
 
 // ---------------------------------------------------------------- 5. doctor
@@ -1148,9 +1201,7 @@ async function showAddress() {
   try { url = (await api("/api/address")).url; } catch (e) {}
   const box = document.getElementById("qr");
   if (!url) {
-    box.classList.add("off");
-    document.getElementById("qr-text").textContent =
-      "Phones can join when the hospital runs on your Wi-Fi: start the server with MEDDY_LAN=1.";
+    box.classList.add("none");                          // no address to scan: say nothing (how to turn it on is in the README)
     return;
   }
   document.getElementById("qr-url").textContent = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
