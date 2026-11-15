@@ -202,6 +202,103 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 @keyframes meddy-slide { from { opacity:0; transform:translateX(18px); } }
 @keyframes meddy-fade-only { from { opacity:0; } }
 
+/* ---------- the floor plan on the patient's screen (meddy-plan.js) ---------- */
+/* The page's plan redrawn to be read at a glance; that plan stays in the page, hidden, as the fallback.
+   The plan sits to one side of the step card, and on its own row on narrow screens. */
+.mp-off { display:none !important; }
+.mp-scene { position:relative; container-type:inline-size; max-width:520px; margin:0 auto; line-height:1.15; }
+.mp-scene svg { display:block; width:100%; height:auto; }
+@media (min-width: 900px) {
+  :root main.mp-side { grid-template-columns:350px minmax(0, 1fr); gap:24px; }
+  :root main.mp-side .plan { position:sticky; top:16px; padding:12px; }
+  :root main.mp-side .plan h2 { margin:2px 4px 10px; font-size:1rem; }
+}
+@media (min-width: 1170px) { :root main.mp-side { grid-template-columns:510px minmax(0, 1fr); gap:28px; } }
+/* A quiet picture of the rooms lies over plain coloured rooms, on the card's own white. Without the picture
+   (.pic is taken off) the rooms get their walls, doors and seats drawn instead. */
+.mp-floor { fill:#fff; }
+.mp-room { fill:var(--room); }
+.mp-frame { fill:none; stroke:var(--wall); stroke-width:1.6; transition:stroke .3s ease, stroke-width .3s ease, stroke-opacity .3s ease; }
+.pic .mp-frame { stroke-opacity:0; }
+:root .mp-frame.lit { stroke:var(--blue, #2152c4); stroke-opacity:.35; stroke-width:2.2; }
+:root .mp-frame.on { stroke:var(--blue, #2152c4); stroke-opacity:1; stroke-width:2.6; }
+.mp-door { fill:none; stroke:#fff; stroke-width:5; }                          /* a gap in the wall */
+.pic .mp-door, .pic .mp-chair { display:none; }
+/* the way: a thin pale line where it is still to come, blue where it has been walked, moving dots to a room that
+   is pointed at. The short way to the resuscitation bay is drawn only once it is walked or pointed at. */
+.mp-way, .mp-walked, .mp-lead { fill:none; stroke-linecap:round; stroke-linejoin:round; }
+.mp-way { stroke:#c0c9d4; stroke-width:2.4; }
+.mp-way.urgent { stroke:none; }
+.mp-walked { stroke:var(--blue, #2152c4); stroke-width:2.8; }
+.mp-lead { stroke:var(--blue, #2152c4); stroke-width:3.6; stroke-dasharray:.1 9.9; opacity:0; transition:opacity .2s ease; }
+.mp-lead.urgent { stroke:#c9433b; }
+.mp-lead.show { opacity:1; animation:mp-march .7s linear infinite; }
+.mp-lead.show.back { animation-direction:reverse; }
+@keyframes mp-march { to { stroke-dashoffset:-10; } }
+/* people, seen from straight above: shoulders and a head with hair, in soft colours and without outlines.
+   On the seats: the people really waiting. */
+.mp-chair { fill:#e4c491; stroke:#c9a35f; stroke-width:1.2; }
+.mp-foot { fill:#6b7a85; }
+.mp-top { fill:var(--blue, #2152c4); }
+.mp-skin { fill:#f3cfae; }
+.mp-hair { fill:#5b463a; }
+.mp-person { opacity:0; transform:scale(.3) rotate(var(--turn, 180deg)); transition:opacity .45s ease, transform .45s cubic-bezier(.2,.9,.3,1.2); }
+.mp-seat.taken .mp-person { opacity:1; transform:scale(.82) rotate(var(--turn, 180deg)); }
+/* the staff: doctors in white coats, the nurse in pale blue. A doctor's patient is on the bed, in the same quiet grey. */
+.mp-spot.in .mp-person { opacity:1; transform:scale(.86) rotate(var(--turn, 0deg)); }
+.mp-coat .mp-top { fill:#fff; stroke:#8792a0; stroke-width:1.2; }
+.mp-scrubs .mp-top { fill:#b9cdf6; stroke:#7189cf; stroke-width:1.2; }
+/* "YOU": the person in the thin blue ring, with their name under them */
+.mp-you .mp-ring { fill:#fff; fill-opacity:.92; stroke:var(--blue, #2152c4); stroke-width:1.8; }
+.mp-you .mp-body { transition:transform .28s ease-out; }
+.mp-you .mp-pulse { fill:var(--blue, #2152c4); transform-box:fill-box; transform-origin:center; animation:mp-pulse 2.6s ease-out infinite; }
+@keyframes mp-pulse { from { transform:scale(1); opacity:.22; } to { transform:scale(2); opacity:0; } }
+.mp-tag { position:absolute; z-index:2; transform:translateX(-50%); padding:.04em .5em .1em; border-radius:999px;
+          background:var(--blue, #2152c4); color:#fff; box-shadow:0 0 0 1.5px #fff; font-size:clamp(8px, 2.1cqw, 10.5px); font-weight:800;
+          letter-spacing:.05em; pointer-events:none; }
+/* a small label on every room's wall: its number and its name (what happens there is in the room's note) */
+.mp-sign { position:absolute; transform:translate(-50%, -50%); padding:.16em .62em .2em; border-radius:999px; background:#fff;
+           color:var(--ink, #16252a); box-shadow:0 0 0 1px rgba(22,37,42,.1); font-size:clamp(9px, 2.5cqw, 12px); font-weight:700;
+           text-align:center; white-space:nowrap; pointer-events:none; transition:background-color .3s ease, color .3s ease, box-shadow .3s ease; }
+.mp-sign b { display:flex; align-items:center; gap:.38em; font-weight:inherit; }
+.mp-sign[hidden] { display:none; }
+.mp-who { font-size:clamp(8.5px, 2.3cqw, 11px); }
+.mp-no { color:var(--soft, #45555b); font-style:normal; font-weight:800; }
+.mp-sign.done { color:var(--soft, #45555b); }
+.mp-sign.done .mp-no { color:#1d7a52; }
+.mp-sign.on { background:var(--blue, #2152c4); color:#fff; box-shadow:none; }
+.mp-sign.on .mp-no { color:rgba(255,255,255,.82); }
+.mp-note { max-width:520px; margin:6px auto 0; color:#66747a; font-size:.75rem; line-height:1.35; text-align:center; }
+/* every person can be pointed at, tapped, or reached with the keyboard: a round button lies over them */
+.mp-face { position:absolute; z-index:1; width:clamp(22px, 4.6cqw, 28px); height:clamp(22px, 4.6cqw, 28px); padding:0; border:0; border-radius:50%;
+           background:transparent; transform:translate(-50%, -50%); cursor:pointer; -webkit-tap-highlight-color:transparent;
+           transition:background-color .15s ease, box-shadow .15s ease; }
+.mp-face.big { width:clamp(28px, 6.4cqw, 38px); height:clamp(28px, 6.4cqw, 38px); }
+.mp-face[hidden] { display:none; }
+.mp-face:hover, .mp-face.open { background:rgba(33,82,196,.12); box-shadow:0 0 0 1.5px rgba(33,82,196,.6); }
+.mp-face:focus-visible { outline:3px solid var(--blue, #2152c4); outline-offset:1px; }
+/* the staff's view on the nurse's screen: larger, a count on each room, a ring round a patient the nurse should look at */
+.mp-scene.ward { max-width:760px; }
+.ward .mp-walked { display:none; }                                             /* nobody's visit is followed here */
+.mp-count { margin-left:.15em; padding:0 .5em; border-radius:999px; background:#e7ebef; color:var(--ink, #16252a); font-style:normal; font-weight:800; }
+.mp-count:empty { display:none; }
+:root .mp-face.alert { box-shadow:0 0 0 2px #b4302f; }
+:root .mp-face.due { box-shadow:0 0 0 2px #b06a00; }
+.mp-key { display:flex; flex-wrap:wrap; justify-content:center; gap:6px 18px; max-width:760px; margin:10px auto 0; color:var(--soft, #45555b); font-size:.9rem; }
+.mp-key i { display:inline-block; width:.8em; height:.8em; margin-right:.45em; border-radius:50%; vertical-align:-.04em; }
+.mp-key i.ring { background:transparent; box-shadow:inset 0 0 0 2px #b4302f; }
+/* a room can be pointed at, tapped, or reached with the keyboard: it lights up and a small note opens */
+.mp-hit { position:absolute; padding:0; border:0; border-radius:10px; background:transparent; cursor:pointer;
+          -webkit-tap-highlight-color:transparent; }
+.mp-hit:focus-visible { outline:3px solid var(--blue, #2152c4); outline-offset:2px; }
+.mp-tip { position:absolute; z-index:3; transform:translateX(-50%); display:grid; gap:1px; width:max-content; max-width:min(15em, 92cqw);
+          padding:.5em .75em .55em; border-radius:12px; background:#16252a; color:#fff; box-shadow:0 10px 22px -10px rgba(22,37,42,.7);
+          font-size:12.5px; line-height:1.3; text-align:left; pointer-events:none; }
+.mp-tip[hidden] { display:none; }
+.mp-tip b { font-size:1.06em; }
+.mp-tip span { color:rgba(255,255,255,.88); }
+.mp-tip em { margin-top:2px; font-style:normal; font-weight:700; color:#a9c8ff; }
+
 /* the curtain for people who ask for reduced motion: it fades instead of rolling, and nothing slides */
 .curtain.calm { transform:none; opacity:0; transition:none; }
 .curtain.calm.in { opacity:1; transition:opacity 200ms ease; }
@@ -214,6 +311,8 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
   /* fewer and gentler, not none: what helps understanding fades, nothing travels */
   :root #you { transition:transform 200ms ease; }
   .welcome-card, .welcome h2, .welcome .intro, .promises li, .journey li { animation-name:meddy-fade-only; }
+  .mp-you .mp-pulse, .mp-lead.show { animation:none; }       /* the ring does not pulse, the dots do not move */
+  .mp-you .mp-body, .mp-person { transition:none; }
   :root .go, :root .choice button, :root .roles a, :root .pain button { transition-property:background-color, border-color, color; }
   :root .go:not(:disabled):active, :root .choice button:active, :root .roles a:active, :root .size:active { transform:none; }
   .meddy-notice { transition:opacity 200ms ease; transform:translate(-50%, 0); }
