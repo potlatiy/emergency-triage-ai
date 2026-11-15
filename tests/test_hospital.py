@@ -2309,3 +2309,28 @@ def test_todays_patients_say_where_each_one_went_and_the_phone_knows_its_doctor(
     assert all(not r.startswith("P-") or r in where for r in where)                 # made-up patients are left out
     assert client.get(f"/api/me/{waiting}").json()["doctor"] == "Dr. Okafor"
     assert [p for p in db.line()["patients"] if p["reg_no"] == waiting][0]["doctor"] == "Dr. Okafor"
+
+
+def test_still_fine_ends_a_recheck_like_any_other_decision():
+    """The nurse measured a waiting patient again and pressed "Still fine". That is her decision: the patient may
+    be called again, the doctor is told she looked, and nothing says she "had not decided"."""
+    reg = in_the_waiting_room(level=3)
+    ticket, level = db.visit_for(reg)["ticket"], db.visit_for(reg)["level"]
+    client.post("/api/worse", json={"reg_no": reg})
+    client.post("/api/triage", json={"reg_no": reg, "vitals": "feverish"})
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == reg)["with_nurse"] is True
+    assert client.post("/api/nurse/still-fine", json={"reg_no": reg}).status_code == 200
+    visit = db.visit_for(reg)
+    assert (visit["worse_at"], visit["rechecks"], visit["remeasured"], visit["held_at"]) == (None, 1, 0, None)
+    assert (visit["ticket"], visit["level"]) == (ticket, level)
+    assert next(p for p in db.line()["patients"] if p["reg_no"] == reg)["with_nurse"] is False
+    assert json.loads(visit["summary"])["nurse_found"]["warnings"] == ["high fever"]          # from the new measurements
+    db.call_next(reg)
+    found = doctors_view(reg)["summary"]["nurse_found"]
+    assert (found["said_worse"], found["rechecks"], found["worse_unanswered"], found["remeasured"]) == (1, 1, False, False)
+
+    plain = in_the_waiting_room(level=3)                         # without measuring: counted, summary left as it was
+    before = db.visit_for(plain)["summary"]
+    client.post("/api/nurse/still-fine", json={"reg_no": plain})
+    assert db.visit_for(plain)["rechecks"] == 1 and db.visit_for(plain)["summary"] == before
+
