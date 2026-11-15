@@ -318,12 +318,24 @@ def version():
     return {"version": VERSION}
 
 
+class Typed(BaseModel):
+    text: str = Field(default="", max_length=200)
+
+
+@app.post("/api/spelling")
+def spelling(body: Typed):
+    """The complaint with typing slips put right, for the phone's "Did you mean ...?". Nothing is stored.
+
+    The words travel in the body of the request, never in its address: what a patient types about their health
+    must not end up in the address logs of a proxy standing in front of the hospital."""
+    fixed = core.spelling(body.text)
+    return {"text": fixed, "changed": fixed != body.text}
+
+
 @app.get("/api/spelling")
-def spelling(text: str = ""):
-    """The complaint with typing slips put right, for the phone's "Did you mean ...?". Nothing is stored."""
-    text = text[:200]
-    fixed = core.spelling(text)
-    return {"text": fixed, "changed": fixed != text}
+def spelling_from_an_older_page(text: str = ""):
+    """The same, for a phone page opened before this version (it reloads itself when it sees the new one)."""
+    return spelling(Typed(text=text[:200]))
 
 
 @app.get("/api/nurse/patient/{reg_no}")

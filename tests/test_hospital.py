@@ -2134,3 +2134,15 @@ def test_a_typing_slip_still_finds_the_right_questions_and_department():
 
 def test_an_open_page_can_tell_a_new_version_is_online():
     assert re.fullmatch(r"[0-9a-f]{12}", client.get("/api/version").json()["version"])
+
+
+def test_what_the_patient_types_is_never_put_in_an_address():
+    """The phone asks for the spelling fix while the patient types. It sends the words in the body of the request:
+    an address can be written down by any proxy in front of the hospital, and this is a health complaint."""
+    fixed = client.post("/api/spelling", json={"text": "hurt pain for one hour"})
+    assert fixed.status_code == 200 and fixed.json() == {"text": "heart pain for one hour", "changed": True}
+    assert client.post("/api/spelling", json={"text": "chest pain"}).json() == {"text": "chest pain", "changed": False}
+    assert client.post("/api/spelling", json={"text": "x" * 201}).status_code == 422
+    page = (server.STATIC / "index.html").read_text(encoding="utf-8")
+    assert "/api/spelling?" not in page and "?text=" not in page and "?complaint=" not in page
+
