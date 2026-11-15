@@ -178,3 +178,86 @@ def test_patients_with_the_same_kind_of_complaint_come_first(tested):
 def test_a_tie_among_the_similar_patients_goes_to_the_more_urgent_level():
     assert list(similar.vote(np.array([[2, 2, 4, 4, 5], [3, 3, 3, 1, 1], [5, 4, 3, 2, 1]]))) == [2, 3, 1]
 
+
+# ---------------------------------------------------------------- the audit's harder checks
+
+def test_a_level_exactly_at_the_cut_is_inside_the_range():
+    odds = np.array([[0.10, 0.60, 0.20, 0.05, 0.05]])
+    assert [int(v[0]) for v in triage.level_range(odds, cut=0.10)] == [1, 3]
+    assert [int(v[0]) for v in triage.level_range(odds, cut=0.1000001)] == [2, 3]
+
+
+@pytest.mark.filterwarnings("ignore")      # toy data has empty groups; one hospital never recorded oxygen
+def test_the_range_is_tried_only_on_patients_its_cut_was_not_set_on(monkeypatch):
+    """Every patient gets a probability pattern of their own, so we can see which patients the cut was found on
+    and which the range was tried on: the two halves never share a patient, and together they are everyone."""
+    n = 40
+    marks = np.linspace(0.30, 0.69, n)
+    odds = np.column_stack([marks, 1 - marks, np.zeros(n), np.zeros(n), np.zeros(n)])
+    truth = np.ones(n, dtype=int)
+    seen = []
+    real_cut, real_range = triage.range_cut, triage.level_range
+    monkeypatch.setattr(triage, "range_cut", lambda p, t, c: seen.append(("cut", set(p[:, 0]))) or real_cut(p, t, c))
+    monkeypatch.setattr(triage, "level_range", lambda p, cut: seen.append(("range", set(p[:, 0]))) or real_range(p, cut))
+    triage.level_range_figures(truth, odds, rounds=5)
+    assert len(seen) == 10
+    for (what_a, found_on), (what_b, tried_on) in zip(seen[::2], seen[1::2]):
+        assert (what_a, what_b) == ("cut", "range")
+        assert not found_on & tried_on and found_on | tried_on == set(marks)
+
+
+def test_similar_patients_are_prepared_without_the_patient_being_looked_up(tested, monkeypatch):
+    """The letter patterns and the scaling are fitted on the other four folds only."""
+    df, _ = tested
+    fitted_on, looked_up = [], []
+
+    class Watched(similar.Similar):
+        def __init__(self, data, kinds=None):
+            fitted_on.append(set(data.index))
+            super().__init__(data, kinds)
+
+        def order(self, patients, kinds=None, shares=similar.SHARES):
+            looked_up.append(set(patients.index))
+            return super().order(patients, kinds, shares)
+
+    monkeypatch.setattr(similar, "Similar", Watched)
+    similar.fair_neighbours(df)
+    assert len(fitted_on) == len(looked_up) == 5
+    assert all(not a & b and a | b == set(df.index) for a, b in zip(fitted_on, looked_up))
+
+
+@pytest.mark.filterwarnings("ignore")      # toy data has empty groups; one hospital never recorded oxygen
+def test_the_weak_spots_of_the_range_are_the_ones_we_report(tested):
+    df, probabilities = tested
+    figures = triage.level_range_figures(df["KTAS_expert"].values, probabilities)
+    by_width = {width: round(float(share), 2) for width, share in figures["inside_by_width"].items()}
+    assert by_width == {1: 0.82, 2: 0.93, 3: 0.96}                      # a single level is right less often than 9 in 10
+    assert round(float(figures["urgent_above_range"]), 2) == 0.19       # urgent patients missed on the dangerous side
+    moved = triage.range_across_hospitals(df)                           # the promise does not travel
+    assert [(home, away) for home, away, _, _ in moved] == [(1, 2), (2, 1)]
+    assert all(0.85 <= inside <= 0.89 and 0.60 <= urgent <= 0.68 for _, _, inside, urgent in moved)
+
+
+def test_what_the_similar_patients_are_worth_next_to_five_random_ones(tested, capsys):
+    df, _ = tested
+    figures = similar.report(df)
+    capsys.readouterr()
+    assert round(figures["majority"], 2) == 0.61 and round(figures["three_or_more"], 2) == 0.57
+    assert round(figures["among"], 2) == 0.89 and round(figures["model_top_two"], 2) == 0.89
+    assert 0.76 <= figures["random_among"] <= 0.83 and figures["random_majority"] < 0.40
+
+
+def test_the_notebook_reads_the_kind_of_complaint_with_the_hospitals_own_rule():
+    """The notebook carries a copy of the key-word rule. If the hospital's rule changes, the copy must follow."""
+    import json
+    import sys
+    from pathlib import Path
+    root = Path(triage.__file__).parent
+    sys.path.insert(0, str(root / "hospital"))
+    import core
+    cells = json.loads((root / "triage.ipynb").read_text())["cells"]
+    copy = next("".join(c["source"]) for c in cells if "KINDS = [" in "".join(c["source"]))
+    scope = {}
+    exec(copy[copy.index("KINDS = ["):copy.index("def kind_of")], scope)       # only the list of patterns
+    assert [(name, pattern) for name, pattern in scope["KINDS"]] == [(name, pattern) for name, pattern in core.DEPARTMENTS]
+

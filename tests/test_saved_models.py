@@ -42,12 +42,24 @@ def test_a_changed_recipe_or_other_inputs_means_training_again(monkeypatch):
     assert "other inputs" in trained_models.why_not_usable()
 
 
-def test_the_saved_range_cut_is_the_one_the_data_gives_today():
+def test_the_saved_range_cut_and_its_figures_are_what_the_data_gives_today():
     """The cut for Meddy's range of levels is saved next to the models. It must be what the fair probabilities
-    give, never something worked out from the saved model's answers on patients it has already seen."""
-    from triage import fair_probabilities, load, range_cut
+    give, never something worked out from the saved model's answers on patients it has already seen. It is saved
+    unrounded: rounding it up dropped the very patient the cut was set on. The figures saved with it are the
+    ones the code measures."""
+    import json
+    from triage import fair_probabilities, level_range_figures, load, range_cut
     data = load()
-    fresh = range_cut(fair_probabilities(data), data["KTAS_expert"].values)
+    unseen = fair_probabilities(data)
+    truth = data["KTAS_expert"].values
     assert trained_models.why_not_usable() is None
-    assert trained_models.level_range_cut() == round(fresh, 4)
-
+    settings = trained_models.level_range_settings()
+    assert settings["cut"] == range_cut(unseen, truth) == trained_models.level_range_cut()
+    kept = (unseen[range(len(truth)), truth - 1] >= settings["cut"]).sum()
+    assert kept >= 0.9 * (len(truth) + 1) - 1                 # the promise, on the patients the cut was set on
+    figures = level_range_figures(truth, unseen)
+    saved = json.loads(trained_models.INFO_FILE.read_text())["level_range"]
+    assert saved["expert_level_inside_on_unseen_patients"] == round(float(figures["inside"]), 3)
+    assert saved["average_levels_in_range"] == round(float(figures["width"]), 2)
+    assert saved["urgent_patients_inside"] == round(float(figures["urgent_inside"]), 3)
+    assert settings["inside"] == {width: round(float(share), 3) for width, share in figures["inside_by_width"].items()}

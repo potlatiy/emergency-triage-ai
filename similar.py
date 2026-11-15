@@ -113,7 +113,8 @@ def kinds_of(data):
 
 
 def vote(levels):
-    """The level most of the similar patients had. A tie goes to the more urgent level."""
+    """The most common level among the similar patients (it can win with two of five). A tie goes to the more
+    urgent level."""
     counts = np.stack([(levels == level).sum(axis=1) for level in range(1, 6)], axis=1)
     return counts.argmax(axis=1) + 1
 
@@ -135,14 +136,30 @@ def report(data=None, k=NEIGHBOURS):
         levels = truth[found]
         majority = float((vote(levels) == truth).mean())
         among = float((levels == truth[:, None]).any(axis=1).mean())
-        print(f"   {name:48} most of them had the expert's level: {majority:.0%}   "
+        print(f"   {name:48} their most common level was the experts' level: {majority:.0%}   "
               f"at least one of them had it: {among:.0%}")
         if use_kinds is not None:
             figures.update(majority=majority, among=among, complaint_alike=float(words_alike.mean()),
+                           three_or_more=float(((levels == truth[:, None]).sum(axis=1) >= 3).mean()),
                            recognised=float(np.mean([kind is not None for kind in kinds])))
+    # What "at least one of the five" is worth: five patients picked at random from the other folds do nearly as well.
+    rng = np.random.default_rng(SEED)
+    random_five = np.zeros((len(data), k), dtype=int)
+    for others, held_out in StratifiedKFold(5, shuffle=True, random_state=SEED).split(data, truth):
+        random_five[held_out] = rng.choice(others, size=(len(held_out), k))
+    probabilities = fair_probabilities(data)
+    top_two = np.argsort(-probabilities, axis=1)[:, :2] + 1
+    figures.update(random_majority=float((vote(truth[random_five]) == truth).mean()),
+                   random_among=float((truth[random_five] == truth[:, None]).any(axis=1).mean()),
+                   model_top_two=float((top_two == truth[:, None]).any(axis=1).mean()))
+    print(f"   {'five patients picked at random':48} their most common level was the experts' level: "
+          f"{figures['random_majority']:.0%}   at least one of them had it: {figures['random_among']:.0%}")
+    print(f"   Three or more of the five had the experts' level for {figures['three_or_more']:.0%} of patients.")
+    print(f"   The urgency model's two most likely levels held the experts' level for {figures['model_top_two']:.0%}.")
     print(f"   The key-word rule recognised the complaint of {figures['recognised']:.0%} of the patients.")
     print(f"   For comparison: always the most common level {figures['baseline']:.0%}, the urgency model {figures['model']:.0%}.")
-    print("   So the similar patients are weaker than the model. They are shown as evidence to look at, not as a second opinion.")
+    print("   So the similar patients are weaker than the model, and 'at least one of the five' says little: five random")
+    print("   patients nearly manage it. They are shown as evidence to look at, not as a second opinion.")
     return figures
 
 

@@ -92,8 +92,11 @@ def save():
         },
         "level_range": {
             "promise": RANGE_COVERAGE,
-            "keep_a_level_when_its_probability_is_at_least": round(range_cut(unseen, data["KTAS_expert"].values), 4),
+            # Not rounded: rounding it up would drop the very patient the cut was set on.
+            "keep_a_level_when_its_probability_is_at_least": range_cut(unseen, data["KTAS_expert"].values),
             "expert_level_inside_on_unseen_patients": round(float(range_figures["inside"]), 3),
+            "inside_when_the_range_is_one_two_three_or_more_levels": {
+                str(width): round(float(share), 3) for width, share in range_figures["inside_by_width"].items()},
             "average_levels_in_range": round(float(range_figures["width"]), 2),
             "urgent_patients_inside": round(float(range_figures["urgent_inside"]), 3),
         },
@@ -125,15 +128,25 @@ def why_not_usable():
     return None
 
 
-def level_range_cut():
-    """How small a level's probability may be for the level to stay in Meddy's range (see triage.range_cut).
-    Read from model_info.json when the saved models are usable, worked out from the data otherwise."""
+def level_range_settings():
+    """What Meddy's range of levels needs: {"cut": how small a level's probability may be for the level to stay
+    in the range (see triage.range_cut), "inside": how often the experts' level was inside in our tests, for a
+    range of 1, 2 and 3-or-more levels}. Read from model_info.json when the saved models are usable, worked out
+    from the data otherwise."""
     if why_not_usable() is None:
         saved = json.loads(INFO_FILE.read_text()).get("level_range")
-        if saved and saved.get("promise") == RANGE_COVERAGE:
-            return saved["keep_a_level_when_its_probability_is_at_least"]
+        if saved and saved.get("promise") == RANGE_COVERAGE and "inside_when_the_range_is_one_two_three_or_more_levels" in saved:
+            return {"cut": saved["keep_a_level_when_its_probability_is_at_least"],
+                    "inside": {int(w): share for w, share in saved["inside_when_the_range_is_one_two_three_or_more_levels"].items()}}
     data = load()
-    return range_cut(fair_probabilities(data), data["KTAS_expert"].values)
+    unseen = fair_probabilities(data)
+    figures = level_range_figures(data["KTAS_expert"].values, unseen)
+    return {"cut": range_cut(unseen, data["KTAS_expert"].values),
+            "inside": {width: round(float(share), 3) for width, share in figures["inside_by_width"].items()}}
+
+
+def level_range_cut():
+    return level_range_settings()["cut"]
 
 
 def ready(announce=True):

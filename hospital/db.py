@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS visits (
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     arrival TEXT, pain INTEGER, checked_in INTEGER, first_name TEXT, last_name TEXT,
     seen_at INTEGER, worse_at INTEGER, worse_said INTEGER DEFAULT 0, rechecks INTEGER DEFAULT 0,
+    ai_level_then INTEGER, remeasured INTEGER DEFAULT 0,
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
@@ -434,7 +435,17 @@ def nurse_card(reg_no):
             "since_seen": (clock - (visit["seen_at"] if visit["seen_at"] is not None else visit["arrived"])
                            if visit["status"] == "waiting" else None),
             "rechecks": visit["rechecks"] or 0,
+            # What the nurse wrote and decided before, so that a re-check starts from it and does not wipe it.
+            "note": visit["nurse_note"], "summary_held_back": _held_back(visit["summary"]),
             "answers": answers_for(reg_no)}
+
+
+def _held_back(summary):
+    """Did the nurse say "this summary is not right" the last time she decided? Then the stored summary was
+    written by the template although the language model had written one."""
+    if not summary:
+        return False
+    return json.loads(summary)["patient_said"].get("held_back", False)
 
 
 def _answers(reg_no):
@@ -463,10 +474,14 @@ def _summary_of(visit, note=None, summary_ok=True, with_ai=True):
     return core.patient_summary(visit, answers, ai, summary_ok, note)
 
 
-def _write_summary(reg_no, note, summary_ok):
-    """Write the summary down at the moment the patient leaves the nurse, in the same transaction as her
-    decision. From then on it is read, never rebuilt: a model that answers differently later cannot change it."""
+def _write_summary(reg_no, note, summary_ok, keep_note=False):
+    """Write the summary down at the moment the nurse decides, in the same transaction as her decision. From
+    then on it is read, never rebuilt: a model that answers differently later cannot change it. It is written
+    again only when she decides again (a re-check). keep_note: the request carried no note at all, so the note
+    she wrote before stays (a re-check must not wipe it by accident)."""
     visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    if keep_note:
+        note = visit["nurse_note"]
     summary = _summary_of(visit, note, summary_ok)
     _conn.execute("UPDATE visits SET summary = ?, nurse_note = ? WHERE reg_no = ?", (json.dumps(summary), note, reg_no))
 
@@ -484,7 +499,9 @@ def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department
         before = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if before and before["status"] == "registered":
             _event(reg_no, "taken by the nurse", "nurse", "check-in on the phone was not finished")
+        # remeasured: a patient who is already in the line was measured again and the nurse has not decided yet.
         _conn.execute("UPDATE visits SET ai_level = ?, vitals = ?, ai_odds = ?, ai_department = ?, quick_advised = ?, "
+                      "remeasured = CASE WHEN status = 'waiting' THEN 1 ELSE 0 END, "
                       "status = CASE WHEN status = 'registered' THEN 'nurse' ELSE status END, "
                       "checked_in = COALESCE(checked_in, ?) WHERE reg_no = ?",
                       (ai_level, record, json.dumps(odds) if odds else None, department,
@@ -539,7 +556,8 @@ def _join(reg_no, level, danger, department, department_how, review):
     # The nurse has now seen the patient: the re-check time starts again and a "I feel worse" is answered.
     _conn.execute("UPDATE visits SET ticket = ?, level = ?, danger = ?, arrived = ?, department = COALESCE(?, department), "
                   "department_how = COALESCE(?, department_how), second_check = ?, review = COALESCE(?, review), "
-                  "status = 'waiting', seen_at = ?, worse_at = NULL, rechecks = COALESCE(rechecks, 0) + ? WHERE reg_no = ?",
+                  "status = 'waiting', seen_at = ?, worse_at = NULL, rechecks = COALESCE(rechecks, 0) + ?, "
+                  "ai_level_then = ai_level, remeasured = 0 WHERE reg_no = ?",
                   (ticket, level, int(danger), arrived, department, department_how, _flag(reg_no, level), review,
                    clock, int(again), reg_no))
     if visit and again:
@@ -583,13 +601,14 @@ def join_line(reg_no, level, danger, department=None, department_how=None, revie
         return _join(reg_no, level, danger, department, department_how, review)
 
 
-def admit(reg_no, level, danger, department=None, department_how=None, review=None, note=None, summary_ok=True):
+def admit(reg_no, level, danger, department=None, department_how=None, review=None, note=None, summary_ok=True,
+          keep_note=False):
     """What the nurse station does through the web: join the line, write the patient summary for the doctor,
     and for level 1 or 2 go to the resuscitation team in the same breath. One lock for all of it, so nobody
     else can call the patient in between. Returns (ticket, where the patient was sent, or None when they wait)."""
     with _lock, _conn:
         ticket = _join(reg_no, level, danger, department, department_how, review)
-        _write_summary(reg_no, note, summary_ok)
+        _write_summary(reg_no, note, summary_ok, keep_note)
         if level > 2:
             return ticket, None
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
@@ -725,7 +744,7 @@ def call_for_doctor(doctor_reg):
             "reason": f"Called by {doctor['name']}: first in line for {department.lower()}."}
 
 
-def refer(reg_no, level, reason, department=None, note=None, summary_ok=True):
+def refer(reg_no, level, reason, department=None, note=None, summary_ok=True, keep_note=False):
     """The nurse sends a critical patient straight to a doctor, past the line.
 
     Her reason is stored so the doctor can read it. The doctor is chosen by the same rules as
@@ -735,15 +754,20 @@ def refer(reg_no, level, reason, department=None, note=None, summary_ok=True):
         if visit is None:
             return None
         ticket = visit["ticket"] or f"A{_next_number('ticket'):03d}"      # keep the ticket if they already have one
-        # Sending a patient straight in is always the nurse's own check, never a quick acceptance.
+        clock = _meta("clock")
+        again = visit["status"] == "waiting"           # sent in from the waiting room: that is a re-check too
+        # Sending a patient straight in is always the nurse's own check, never a quick acceptance. She has seen
+        # the patient now, so an "I feel worse" is answered.
         _conn.execute("UPDATE visits SET ticket = ?, level = ?, referred = 1, referral_reason = ?, second_check = ?, "
-                      "review = 'checked', arrived = COALESCE(arrived, ?) WHERE reg_no = ?",
-                      (ticket, level, reason, _flag(reg_no, level), _meta("clock"), reg_no))
+                      "review = 'checked', arrived = COALESCE(arrived, ?), seen_at = ?, worse_at = NULL, "
+                      "rechecks = COALESCE(rechecks, 0) + ?, ai_level_then = ai_level, remeasured = 0 WHERE reg_no = ?",
+                      (ticket, level, reason, _flag(reg_no, level), clock, clock, int(again), reg_no))
         if department:
             _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
                           (department, reg_no))
-        _event(reg_no, "sent straight in", "nurse", f"level {level}: {reason}")
-        _write_summary(reg_no, note, summary_ok)
+        _event(reg_no, "sent straight in", "nurse", f"level {level}: {reason}"
+               + (" (after the patient said they felt worse)" if visit["worse_at"] is not None else ""))
+        _write_summary(reg_no, note, summary_ok, keep_note)
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
         doctor, match_reason = _send_to_doctor(patient)
     return {"ticket": ticket, "department": doctor["department"], "doctor": doctor["name"],
@@ -848,6 +872,12 @@ def doctor_patients(doctor_reg):
             # A visit that never passed the nurse's screen (the made-up patients) has no stored summary:
             # it is put together here from what is stored, by the template, without the language model.
             row["summary"] = json.loads(row["summary"]) if row["summary"] else _summary_of(row, with_ai=False)
+            # The summary was written when the nurse last decided. What happened in the waiting room after that
+            # is added here, as it stands now: a press of "I feel worse" she did not get to, or new measurements
+            # she had not decided on when the doctor called.
+            row["summary"]["nurse_found"].update(
+                said_worse=row["worse_said"] or 0, rechecks=row["rechecks"] or 0,
+                worse_unanswered=row["worse_at"] is not None, remeasured=bool(row["remeasured"]))
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],

@@ -6,7 +6,7 @@
 <title>Meddy · Nurse's screen</title>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=4">
+<link rel="stylesheet" href="/static/meddy-site.css?v=5">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -58,7 +58,8 @@
   header.top .links + .size { margin-left:0; }
   @media (max-width: 960px) { .list { position:static; } }
   .bar.in span:first-child { color:var(--ink); font-weight:800; }
-  .bar.in span:first-child::after { content:" ●"; color:var(--blue); font-size:.7em; vertical-align:middle; }
+  .bar.in i { outline:2px solid var(--blue); outline-offset:2px; }      /* the levels inside Meddy's range */
+  #again:not(:empty) { margin-top:14px; }
   .note.range { margin-top:14px; background:var(--blue-tint); }
   table.alike { min-width:0; } table.alike td.num, table.alike th:not(:first-child) { white-space:nowrap; }
   .pt.due .code { background:#a86a12; }
@@ -199,7 +200,7 @@ async function loadList() {
   try { data = await api("/api/nurse/patients"); }
   catch (e) { document.getElementById("list-note").textContent = "Meddy can't reach the hospital server. Retrying…"; return; }
   document.getElementById("list-note").textContent = "Danger signs first, then who has waited longest. Updates by itself.";
-  lastList = data.patients;
+  lastList = [...(data.recheck || []), ...data.patients];         // both lists, for finding a patient by name or ticket
   const box = document.getElementById("patients");
   // Patients already in the waiting room who need the nurse again: they said they feel worse, or they have waited
   // longer than their level allows without a second look.
@@ -233,6 +234,10 @@ document.getElementById("find").addEventListener("submit", (event) => {
   const typed = document.getElementById("code").value.trim();
   document.getElementById("find-error").textContent = typed ? "" : "Type the code shown on the patient's phone, or their name.";
   if (!typed) return;
+  // A ticket from the waiting room ("A021") is not a check-in code: look it up among the patients who need a re-check.
+  const byTicket = lastList.find((p) => p.ticket && p.ticket.toLowerCase() === typed.toLowerCase());
+  if (byTicket) { openPatient(byTicket.reg_no); return; }
+  if (/^a\d+$/i.test(typed)) { document.getElementById("find-error").textContent = "No patient with this ticket needs a re-check. Type the code from their phone instead."; return; }
   if (/\d/.test(typed)) { openPatient(regFor(typed)); return; }
   // A name: the first patient on the list whose name contains what was typed.
   const plain = (s) => s.toLowerCase().replace(/['\-]/g, "");          // "oneil" finds O'Neil
@@ -247,15 +252,18 @@ const sentence = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 // Minutes a waiting patient may go without a second look, by level: the reassessment times of the Canadian triage
 // scale, which the Korean scale of our data was built from (the same numbers as core.RECHECK_AFTER on the server).
 const RECHECK_AFTER = { 3: 30, 4: 60, 5: 120 };
-// Meddy's range of levels. The cut was set so that the experts' level is inside for 9 unseen patients in 10; the
-// figures in the hint are the ones measured in triage.py (section 9), weak spot included.
+// Meddy's range of levels. The cut was set so that the experts' level is inside for 9 unseen patients in 10.
+// range.inside is the figure measured for a range this wide (triage.py, section 9), sent by the server.
 function rangeNote(range) {
   if (!range) return "";
   const one = range.low === range.high;
+  const measured = range.inside ? Math.round(range.inside * 100) + "%" : "9 in 10";
   return `<div class="note range" role="status"><b>Likely range: ${one ? `level ${range.low} only` : `level ${range.low} to level ${range.high}`}.</b>
     ${one ? "Meddy sees one level for this patient." : range.high - range.low >= 2 ? "A wide range: Meddy is telling you it does not know." : ""}
-    <span class="hint">In our tests the experts' level was inside Meddy's range for 9 patients in 10, but only 8 in 10 of the
-      most urgent patients (levels 1 and 2). The range is not a guarantee for one patient.</span></div>`;
+    <span class="hint">${one ? `In our tests, when Meddy saw one level it was the experts' level for ${measured} of patients.`
+        : `In our tests the experts' level was inside a range this wide for ${measured} of patients.`}
+      For the most urgent patients (levels 1 and 2) the range held their level only 8 times in 10, and when it missed,
+      it was nearly always too low. The range is not a guarantee for one patient.</span></div>`;
 }
 // Five real patients from the public data who look most like this one, with the level the nurse and the experts gave.
 function similarBlock(similar) {
@@ -267,16 +275,18 @@ function similarBlock(similar) {
     <td>${esc(p.complaint)}${p.other_complaint ? ` <span class="tag">different complaint</span>` : ""}</td>
     <td class="num">${Math.round(p.age)}, ${esc(sexWord(p.sex))}</td>
     <td class="num">${p.nurse_level}</td>
-    <td class="num"><b>${p.expert_level}</b>${p.nurse_level > p.expert_level ? ` <span class="tag red">nurse rated too low</span>` : ""}</td></tr>`).join("");
+    <td class="num"><b>${p.expert_level}</b>${p.nurse_level > p.expert_level ? ` <span class="tag red">nurse under-rated</span>` : ""}</td></tr>`).join("");
   return `<h3 class="sub">Patients like this one</h3>
     <p class="hint" style="margin:6px 0 0">The five patients most like this one among the 1,267 real patients in the data.
-      The experts put ${esc(said)}.${similar.under_rated ? ` Their nurse rated ${similar.under_rated} of them too low.` : ""}</p>
-    ${similar.complaint_matched ? "" : `<div class="note amber" style="margin-top:10px"><b>▲ No patient in the data had a complaint like this one.</b>
-      These five are alike in age and measurements only.</div>`}
+      The experts put ${esc(said)}.${similar.under_rated ? ` Their nurses rated ${similar.under_rated} of them less urgent than the experts did.` : ""}
+      Level 1 is the most urgent.</p>
+    ${similar.complaint_matched ? "" : `<div class="note amber" style="margin-top:10px"><b>▲ Meddy found no patient in the data with a
+      complaint clearly like this one.</b> The rows marked "different complaint" are alike mostly in age and measurements.</div>`}
     <div class="table-wrap"><table class="staff alike"><thead><tr><th>Their complaint</th><th>Age, sex</th><th>Nurse's level</th><th>Experts' level</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
-    <p class="hint" style="margin:8px 0 0">Evidence to look at, not a second opinion: in our tests, most of the five had the
-      experts' level for 6 patients in 10 (Meddy's own level: 7 in 10). Their diagnoses are never shown.</p>`;
+    <p class="hint" style="margin:8px 0 0">Evidence to look at, not a second opinion. In our tests the most common level
+      among the five was the experts' level for 61% of patients; Meddy's own level was right for 68%. Their diagnoses
+      are never shown.</p>`;
 }
 function facts(card) {
   const yes = card.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
@@ -341,7 +351,7 @@ async function openPatient(reg, takeOver) {
     <dd>${esc(a.answer || "not answered")}</dd>`).join("");
   panel.innerHTML = `
     ${ids(card)}
-    <h2><span class="bigcode">${esc(card.code)}</span>${card.patient ? esc(card.patient) : esc(card.complaint)}</h2>
+    <h2><span class="bigcode">${esc(card.status === "waiting" && card.ticket ? card.ticket : card.code)}</span>${card.patient ? esc(card.patient) : esc(card.complaint)}</h2>
     ${card.patient ? `<p class="lede" style="font-weight:700;color:var(--ink)">“${esc(card.complaint)}”</p>` : ""}
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
       ${card.status === "waiting" ? `In the waiting room with ticket ${esc(card.ticket)}, level ${card.level}. Last seen by the nurse ${card.since_seen} min ago.`
@@ -376,6 +386,9 @@ async function openPatient(reg, takeOver) {
     <p class="error" id="error" role="alert"></p>
     <div id="result"></div>`;
   summarise(run, reg);
+  // A re-check starts from what the nurse wrote and ticked before, so that deciding again does not wipe it.
+  if (card.note) { document.getElementById("note").value = card.note; document.getElementById("note-count").textContent = card.note.length + " / 300"; }
+  document.getElementById("summary-wrong").checked = Boolean(card.summary_held_back);
   document.getElementById("note").addEventListener("input", (event) => {
     document.getElementById("note-count").textContent = event.target.value.length + " / 300"; });
   bindChoice("vitals", (v) => cur.vitals = v.toLowerCase());
@@ -573,7 +586,8 @@ function finished(ticket, called, level) {
     <button class="go" id="next-patient">Open the next patient</button>`;
   document.getElementById("next-patient").addEventListener("click", async () => {
     const data = await api("/api/nurse/patients").catch(() => ({ patients: [] }));
-    if (data.patients.length) openPatient(data.patients[0].reg_no); else { welcome(); history.replaceState(null, "", "/nurse"); }
+    const next = [...(data.recheck || []), ...data.patients][0];      // someone who needs the nurse again comes first
+    if (next) openPatient(next.reg_no); else { welcome(); history.replaceState(null, "", "/nurse"); }
   });
   loadList(); loadLine(); refreshDatabase();
 }

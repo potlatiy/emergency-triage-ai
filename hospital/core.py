@@ -53,7 +53,8 @@ _data = load()
 # The assignment model learned from each real patient's final diagnosis (see assignment.py).
 _model, _assignment = trained_models.ready()
 # Meddy's range of levels: a level stays in the range when its probability reaches this cut (see triage.range_cut).
-_RANGE_CUT = trained_models.level_range_cut()
+_RANGE = trained_models.level_range_settings()
+_RANGE_CUT = _RANGE["cut"]
 _similar = None        # the 1,267 patients of the data, built at the first look-up (see similar_patients)
 _BUSY = float(_data["Patients number per hour"].median())
 # The model was trained on complaints as nurses write them ("ant. chest pain"). Patients typing their own
@@ -172,8 +173,13 @@ def second_check(probabilities, nurse_level):
 def level_range_of(probabilities):
     """Meddy's range of levels for one patient: {"low": most urgent level in it, "high": least urgent, "promise"}.
     In our tests the experts' level was inside the range for 9 unseen patients in 10 (8 in 10 of the most urgent)."""
-    low, high = level_range(np.asarray(probabilities, dtype=float)[None, :], _RANGE_CUT)
-    return {"low": int(low[0]), "high": int(high[0]), "promise": RANGE_COVERAGE}
+    # Worked out from the probabilities as the report shows and stores them (three decimals), so the nurse's
+    # screen and the doctor's summary always give the same range. Rounding can only make a range wider.
+    shown = np.round(np.asarray(probabilities, dtype=float), 3)[None, :]
+    low, high = level_range(shown, _RANGE_CUT)
+    low, high = int(low[0]), int(high[0])
+    # "inside": how often the experts' level was inside a range this wide in our tests (1, 2, 3 or more levels).
+    return {"low": low, "high": high, "promise": RANGE_COVERAGE, "inside": _RANGE["inside"][min(high - low + 1, 3)]}
 
 
 # Below this, no complaint in the data resembles the patient's: the similar patients are then alike in their
@@ -714,6 +720,7 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
         "text": ai["text"] if use_ai else plain_summary(visit["complaint"], visit["age"], visit["sex"], answers,
                                                         bool(visit.get("injury"))),
         "written_by": "ai" if use_ai else "code",
+        "held_back": bool(ai and ai.get("source") == "ai" and ai.get("text") and not summary_ok),   # the nurse said: not right
         "own_words": story,
         "danger_yes": [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"],
         # False: the patient came through check-in without answering a danger question (the nurse took them
@@ -736,6 +743,7 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
                    "against_advice": against_advice,
                    # While waiting: how often the patient pressed "I feel worse", and how often the nurse looked again.
                    "said_worse": visit.get("worse_said") or 0, "rechecks": visit.get("rechecks") or 0,
+                   "worse_unanswered": False, "remeasured": False,      # set when the doctor reads it (db.doctor_patients)
                    "referral_reason": visit.get("referral_reason"), "note": note}
     meddy = None
     if visit.get("ai_level") is not None:

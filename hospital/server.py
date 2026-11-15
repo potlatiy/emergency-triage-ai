@@ -122,6 +122,7 @@ class Joining(BaseModel):
     review: Literal["approved", "checked"] | None = None
     # For the doctor's patient summary: her own note, and her word on the AI's two sentences
     # (False: "this is not right, do not pass it on"). Both optional, so older pages keep working.
+    # A request with no note at all keeps the note she wrote before (a re-check); an empty one clears it.
     note: str | None = Field(default=None, max_length=300)
     summary_ok: bool = True
 
@@ -317,7 +318,10 @@ def triage(body: Assessment):
     # A patient who is already in the waiting room is being re-checked: what stood before, and did they ask for it?
     said_worse = visit["worse_at"] is not None
     if visit["status"] == "waiting":
-        result["recheck"] = {"earlier_level": visit["level"], "earlier_ai_level": visit["ai_level"], "worse": said_worse}
+        # "earlier" is what stood when the nurse last decided, not what an earlier press of "Measure" in this
+        # same re-check has since written over it.
+        then = visit["ai_level_then"] if visit["ai_level_then"] is not None else visit["ai_level"]
+        result["recheck"] = {"earlier_level": visit["level"], "earlier_ai_level": then, "worse": said_worse}
     result["advice"] = core.review_advice(result, result["danger"], result["asked"], worse=said_worse)
     for option in result["department_options"]:
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
@@ -339,7 +343,8 @@ def join(body: Joining):
         raise HTTPException(409, "This patient has not been assessed at the nurse station yet.")
     try:        # the state is checked again inside the database, together with the change (two quick clicks)
         ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review,
-                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
+                                  note=(body.note or "").strip() or None, summary_ok=body.summary_ok,
+                                  keep_note=body.note is None)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
     if called:
@@ -386,7 +391,7 @@ def refer(body: Referral):
     known_department(body.department)
     try:
         return db.refer(body.reg_no, body.level, body.reason, body.department,
-                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok)
+                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok, keep_note=body.note is None)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
 

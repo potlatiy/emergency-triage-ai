@@ -58,7 +58,7 @@ How a visit would work, and how much of it we built and tested:
 | 4. Number on the phone | After check-in the phone shows a short code for the nurse. Then it shows the ticket number and place in line, and finally the room to go to: never the level and never a promised time. | Built as a demo. The phone is its own screen and the server never sends it the level. It follows the visit by itself and keeps its place after a reload. |
 | 5. Nurse decides | On her own screen the nurse opens the patient by their code, reads what they said and a two-sentence AI summary of it, measures the vital signs, sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. In a critical case she sends the patient straight to a doctor herself, skipping the line, and records the reason. | Second-look flag **tested**. The screen is a demo; the AI summary is **not tested** (it is checked in plain code for guesses and diagnoses). Levels 1 and 2 already go straight to the resuscitation team automatically. The reason is written by hand and is required; the nurse picks the department, and the least busy doctor on duty there is chosen for her. Picking a doctor by name is not built. |
 | 6. Order of the line | Levels 1 and 2 always go first. A less urgent patient moves up one level for every 45 minutes waited, so nobody is stuck at the back. | Plain rules. Ordering effect **simulated**. |
-| 7. Doctor gets the note | When the patient is called, the system matches them to a department and to the least busy doctor on duty, and the doctor's card opens with a **patient summary** in three parts, each marked with who it comes from: what the patient said (the two AI sentences the nurse read, or plain sentences from the patient's own answers), what the nurse found (her level, the measurements, her note), and what Meddy suggested (its level, how sure it was, its flag). It is written once, when the nurse sends the patient on, so the doctor reads what the nurse saw. The full answers and measurements are below it. The patient tells their story once. | Built as a demo: the note is on the doctor's own screen (`/doctor`). The doctor calls the next patient of their department from the line ("Call my next patient"), and closes the visit with "Visit finished". The department choice is **tested**, the note itself is not. |
+| 7. Doctor gets the note | When the patient is called, the system matches them to a department and to the least busy doctor on duty, and the doctor's card opens with a **patient summary** in three parts, each marked with who it comes from: what the patient said (the two AI sentences the nurse read, or plain sentences from the patient's own answers), what the nurse found (her level, the measurements, her note), and what Meddy suggested (its level, how sure it was, its flag). It is written when the nurse sends the patient on (and again if she re-checks them in the waiting room), so the doctor reads what the nurse saw. The full answers and measurements are below it. The patient tells their story once. | Built as a demo: the note is on the doctor's own screen (`/doctor`). The doctor calls the next patient of their department from the line ("Call my next patient"), and closes the visit with "Visit finished". The department choice is **tested**, the note itself is not. |
 
 The line is ordered by plain rules. The AI only supplies each patient's level.
 
@@ -299,13 +299,20 @@ of the patients and tried it on the other half, 500 times.
 | Baseline: the most likely level and one level either side | 95.7% | 2.9 | 92% |
 | The single most likely level | 68% | 1 | |
 
-The promise is kept, and at the same coverage our range is narrower than the baseline (2.5 levels against 2.9).
-With the 90% range the patient was more urgent than the range for 4.7% of patients and less urgent for 4.8%.
-The range is a single level for 27% of patients.
+On patients from these two hospitals the promise is kept, and at the same coverage our range is narrower than the
+baseline (2.5 levels against 2.9). With the 90% range the patient was more urgent than the range for 4.7% of
+patients and less urgent for 4.8%. The range is a single level for 27% of patients, and a narrow range is right
+less often: the experts' level was inside 82% of one-level ranges, 93% of two-level ranges and 96% of wider ones.
+The nurse's screen shows the figure for the width in front of her.
 
-**The weak result.** The promise is an average. Only 8 in 10 of the most urgent patients are inside the 90% range
-(level 1: 78%, level 2: 80%, level 5: 58%), and for them the simple baseline is better. The nurse's screen says
-this next to every range.
+**The weak results.**
+
+- **The promise is an average.** Only 8 in 10 of the most urgent patients are inside the 90% range (level 1: 78%,
+  level 2: 80%, level 5: 58%), and for them the simple baseline is better.
+- **For urgent patients a miss is nearly always the dangerous way.** 19% of the level 1 and 2 patients got a range
+  that was entirely less urgent than they were. The nurse's screen says this next to every range.
+- **It does not travel.** With the model and the cut from one hospital tried at the other, the experts' level was
+  inside for 87% of patients and for 64% of the urgent ones. The promise is for patients like those in the data.
 
 **Patients like this one.** Meddy shows the nurse five real patients from the data who look most like the patient
 in front of her, with the level their nurse gave and the level the experts gave. The diagnosis is never used.
@@ -313,20 +320,24 @@ in front of her, with the level their nurse gave and the level the experts gave.
 kind of complaint, read by the key-word rule, come first. Each patient was looked up among patients of the other
 four test folds.
 
-| | Most of the five had the experts' level | At least one of them had it |
+| | Their most common level was the experts' level | At least one of them had it |
 |---|---|---|
 | Same kind first, then the mix (used) | 61% | 89% |
 | The mix without the kind | 60% | 89% |
 | Complaint words only | 52% | 89% |
 | Numbers only | 47% | 86% |
+| Baseline: five patients picked at random | 33% | 79% |
 | For comparison: always the most common level 38%, the urgency model 68% | | |
 
-The similar patients are weaker than the model, so they are shown as evidence to look at, not as a second opinion.
+The most common level can win with two of the five; three or more of the five had the experts' level for 57% of
+patients. "At least one of them had it" says little: five random patients manage 79%, and the model's own two
+most likely levels 89%. The similar patients are weaker than the model, so they are shown as evidence to look at,
+not as a second opinion.
 
 ### Where it fails
 
-- **The range misses one urgent patient in five.** See section 6: the 90% promise holds on average, not for the
-  most urgent patients.
+- **The range misses one urgent patient in five, nearly always on the dangerous side, and it does not travel**
+  to another hospital. See section 6: the 90% promise holds on average for patients like those in the data.
 - **Urgent patients sent to the slow queue.** With the safety-first setting the model gave level 4 or 5 to seven
   patients whom experts rated level 1 or 2. They include a chest pain complaint written in Korean with no vital
   signs, two poisonings and an eye injury, where the danger does not show in the measurements. Nurses rated five of
@@ -343,12 +354,12 @@ The similar patients are weaker than the model, so they are shown as evidence to
   short phrases. A patient entering their own words on a phone will write differently, and we did not test that.
 - Hiding the level from patients is our design choice to avoid panic. We did not test how patients react.
 - **The nurse reviewing a report is not the same as the nurse deciding alone.** Our second-check result (107 of 131) was measured with the nurse giving her level first. When she reads Meddy's report before deciding, she may agree with it more often than she should. We count every verdict in the app ("test regime"), but we have not tried it with real nurses.
-- **Five patients appear twice in the data** (the same visit with two diagnoses), so the 1,267 rows are 1,262 visits, and such a pair can sit on both sides of a test split. Removing them changes nothing that matters: the exact level goes from 68.1% to 68.6%, and the second check from 107 of 131 to 107 of 130.
+- **Five patients appear twice in the data** (the same visit with two diagnoses), so the 1,267 rows are 1,262 visits, and such a pair can sit on both sides of a test split. Removing them changes nothing that matters: the exact level goes from 68.1% to 68.6%, and the second check from 107 of 131 to 107 of 130. The range of levels and the similar-patients figures do not change either.
 - **The department model's version was chosen on the same test splits it is reported on.** We tried four versions and kept the best, so its 70% and its 3.7-point lead over the key-word rule may be up to a point too kind. It still beats the rule.
 - **One diagnosis cannot be sorted by its name.** "Percutaneous catheter problem" (8 patients) covers urinary catheters and feeding or bile tubes. Our table sends all 8 to urology, and about half belong to gastroenterology.
 - **Each queue order was simulated on its own 200 random days**, so a difference of a minute or two between two rows of the first table is luck. The large differences are not.
-- **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike in age and measurements only; the screen says so.
-- **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: it only calls the nurse and never moves them up by itself.
+- **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering; the kind-first step adds one point, which could be chance. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike mostly in age and measurements; the screen marks them.
+- **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: in the waiting room it only calls the nurse and never moves them up the line. A patient who is still waiting for the nurse's first look goes to the top of her list, ahead of danger signs.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
