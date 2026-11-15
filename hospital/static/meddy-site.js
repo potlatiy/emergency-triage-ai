@@ -90,15 +90,24 @@
     // Check the next screen answers before leaving, so a server that does not have it yet never leaves
     // the visitor on an error page: the curtain rolls back and the note says what to do.
     const ready = fetch(url, { cache: "no-store" }).then((r) => r.ok).catch(() => false);
-    const leave = () => ready.then((ok) => {
+    finish();
+    const { OUT } = timing(), mine = ++playing;
+    caption.textContent = text || "";
+    void el.offsetWidth;
+    el.classList.add("in");
+    // Leave only once the bar has filled (it is full at about 860 ms), so the bar always completes on this
+    // screen; the next one opens covered, with the bar full, and rolls the curtain away.
+    later(calm.matches ? 260 : 900, () => ready.then((ok) => {
+      if (mine !== playing) return;
       if (!ok) {
         notice((text || "That screen") + " isn't available on this server yet. Restart the server, then try again.");
+        el.classList.remove("in"); el.classList.add("out");
+        later(OUT, () => { if (mine === playing) el.className = base(); });
         return;
       }
       try { sessionStorage.setItem(KEY, text || ""); } catch (e) {}
       window.location.href = url;
-    });
-    play(text, leave);
+    }));
   }
 
   // Safari and Firefox can bring a page back from memory (the Back button) with the curtain frozen half-way.
