@@ -266,7 +266,7 @@
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-site.js?v=17"></script>
 <script>
 // The doctor's screen asks the server every 5 seconds for the patients now with this doctor:
 //   GET /api/doctor/{reg_no}/patients   (the full card: level, Meddy's level, vital signs, answers, referral)
@@ -634,9 +634,13 @@ function drawCard() {
       const answer = await response.json();
       if (!answer.changed) { say("Nothing to fix: your note reads well."); return; }
       const shown = $("tidied"); if (!shown) return;
-      say("Meddy suggests:");
+      // Words Meddy added or dropped are named, so the doctor checks them before using the tidied note.
+      const changes = [answer.added && answer.added.length ? "added “" + answer.added.join("”, “") + "”" : "",
+                       answer.dropped && answer.dropped.length ? "dropped “" + answer.dropped.join("”, “") + "”" : ""].filter(Boolean);
+      say(answer.source === "plain" ? "Meddy fixed the punctuation and capitals:" : "Meddy suggests:");
       shown.hidden = false;
       shown.innerHTML = `<blockquote>${esc(answer.text)}</blockquote>
+        ${changes.length ? `<p class="hint" style="margin:0 0 8px;color:#9a5a00"><b>Check before using:</b> Meddy ${esc(changes.join(" and "))}.</p>` : ""}
         <button type="button" class="mini" id="use-tidied">Use this</button> <button type="button" class="mini" id="keep-mine">Keep mine</button>`;
       $("use-tidied").addEventListener("click", () => { $("doctor-note").value = answer.text; $("tidied").hidden = true; say("Done: the note is tidied."); });
       $("keep-mine").addEventListener("click", () => { $("tidied").hidden = true; say("Your own words are kept."); });
@@ -668,15 +672,19 @@ function markOffered(regNo) {
   const seen = offered(); seen.add(regNo);
   try { localStorage.setItem(offeredKey(), JSON.stringify([...seen].slice(-200))); } catch (e) {}
 }
+// One patient at a time: while a visit is open, the doctor finishes it before accepting or calling the next.
+const inAVisit = () => Boolean(screen && screen.patients && screen.patients.length);
 function drawQueue(queue) {
   $("queue-title").textContent = `Waiting for you (${queue.length})`;
-  const key = JSON.stringify(queue);
+  const busyNow = inAVisit();
+  const key = JSON.stringify([queue, busyNow]);
   if (key !== queueKey) {
     queueKey = key;
     $("queue").innerHTML = queue.length ? queue.map((p) => `<li class="${p.chosen ? "chosen" : ""}">
         <div><b>${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</b>
           <span>${esc(levelText(p.level))} · waited ${p.waited} min${p.chosen ? " · the nurse chose you" : ""}</span></div>
-        <button type="button" class="mini" data-accept="${esc(p.reg_no)}">Accept</button></li>`).join("")
+        <button type="button" class="mini" data-accept="${esc(p.reg_no)}" ${busyNow ? "disabled title=\"Finish your current visit first\"" : ""}>Accept</button></li>`).join("")
+        + (busyNow ? `<li class="empty-q">Finish the visit you are in, then accept the next patient.</li>` : "")
       : `<li class="empty-q">Nobody is waiting for you.</li>`;
   }
   const next = queue.find((p) => p.chosen && !offered().has(p.reg_no));
@@ -691,9 +699,9 @@ function ask(p) {
     <p><b>${esc(p.ticket)} · ${p.patient ? esc(p.patient) : ""}</b></p>
     <p>“${esc(p.complaint)}” · ${esc(person(p))} · ${esc(levelText(p.level))}</p>
     ${p.said ? `<p style="color:var(--soft)">${esc(p.said)}</p>` : ""}
-    <p><b>Are you free now?</b></p>
-    <div class="row"><button type="button" class="go" id="ask-yes" style="margin:0">Yes, let them come in</button>
-      <button type="button" class="go light" id="ask-no" style="margin:0">Not now</button></div></div>`;
+    <p><b>${inAVisit() ? "You are still in a visit. Finish it first: the patient waits under “Waiting for you”." : "Are you free now?"}</b></p>
+    <div class="row"><button type="button" class="go" id="ask-yes" style="margin:0" ${inAVisit() ? "hidden" : ""}>Yes, let them come in</button>
+      <button type="button" class="go light" id="ask-no" style="margin:0">${inAVisit() ? "OK" : "Not now"}</button></div></div>`;
   document.body.appendChild(box);
   const close = () => { box.remove(); asking = null; };
   box.querySelector("#ask-yes").addEventListener("click", () => { close(); accept(p.reg_no); });
@@ -706,7 +714,7 @@ async function accept(regNo) {
   note.textContent = "Calling…";
   try {
     const response = await fetch("/api/doctor/call", { method:"POST", headers:{ "Content-Type":"application/json" },
-                                                       body:JSON.stringify({ doctor_reg:reg, reg_no:regNo }) });
+                                                       body:JSON.stringify({ doctor_reg:reg, reg_no:regNo, one_at_a_time:true }) });
     if (response.status === 409) { note.textContent = (await response.json()).detail; check(); return; }
     if (!response.ok) throw new Error();
     const { called } = await response.json();
@@ -723,9 +731,9 @@ $("call").addEventListener("click", async () => {
   button.disabled = true; note.textContent = "Calling…";
   try {
     const response = await fetch("/api/doctor/call", { method:"POST", headers:{ "Content-Type":"application/json" },
-                                                       body:JSON.stringify({ doctor_reg:reg }) });
-    if (response.status === 409) {          // off duty: nobody is in the room, so the server calls no one
-      note.textContent = "You are off duty, so no patient was called. Go on duty first (the hospital database on the nurse's screen).";
+                                                       body:JSON.stringify({ doctor_reg:reg, one_at_a_time:true }) });
+    if (response.status === 409) {          // off duty, or still in a visit: the server calls no one
+      note.textContent = (await response.json()).detail || "No patient was called.";
       return;
     }
     if (!response.ok) throw new Error();

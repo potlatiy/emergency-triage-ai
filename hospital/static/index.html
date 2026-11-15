@@ -431,8 +431,8 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
     </div>
     <nav class="roles" aria-label="Meddy's screens">
       <a href="/" data-caption="The patient's phone" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>Patient</a>
-      <a href="/nurse" data-caption="The nurse's screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 13h6M12 10v6"/></svg>Nurse</a>
-      <a href="/doctor" data-caption="The doctor's screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg>Doctor</a>
+      <!-- The patient's page links to nothing staff-only: the nurse's and the doctor's screens are reached by their own address. -->
+      <a href="/board" data-caption="The waiting room's board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 9h4M7 12h7"/></svg>Board</a>
     </nav>
     <button class="size" id="size" type="button" aria-pressed="false"><span aria-hidden="true">A+</span>Larger text</button>
   </div>
@@ -510,7 +510,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-site.js?v=17"></script>
 <script src="/static/meddy-plan.js?v=18"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
