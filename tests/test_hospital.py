@@ -312,7 +312,7 @@ def test_the_patient_phone_never_shows_the_level():
     reg = assessed_visit("headache", 30, "Female")
     client.post("/api/line/join", json={"reg_no": reg, "level": 4})
     me = client.get(f"/api/me/{reg}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed", "estimate", "note"}
     assert not all_keys(me) & HIDDEN_FROM_PATIENT
     in_line = next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)
     assert me["status"] == "waiting" and me["position"] == in_line["position"] and me["ahead"] == me["position"] - 1
@@ -1284,7 +1284,7 @@ def test_the_summary_never_reaches_the_patients_phone_and_is_never_called_a_diag
     client.post("/api/triage", json={"reg_no": reg_no})
     refer(reg_no, department="Cardiology", reason="Looks unwell")
     me = client.get(f"/api/me/{reg_no}").json()
-    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed"}
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code", "worse", "closed", "estimate", "note"}
     summary = summary_on_the_doctors_card(reg_no)
     assert not any("diagnos" in key.lower() for key in all_keys(summary))
     assert "diagnos" not in json.dumps(summary).lower()
@@ -2410,3 +2410,95 @@ def test_the_short_list_offers_no_department_that_does_not_fit():
 
 def test_the_waiting_room_tickets_start_at_a001_each_day():
     assert sorted(p["ticket"] for p in db.line()["patients"]) == ["A001", "A002", "A003", "A004", "A005"]
+
+
+# ---------------------------------------------------------------- estimate, board, doctor's note, chief doctor
+
+def test_the_phone_gets_an_estimated_wait_as_a_range():
+    reg = assessed_visit("sore throat", age=30)
+    client.post("/api/line/join", json={"reg_no": reg, "level": 5})
+    estimate = client.get(f"/api/me/{reg}").json()["estimate"]
+    assert 0 <= estimate["low"] < estimate["high"] and estimate["high"] - estimate["low"] >= 5
+    assert estimate["low"] % 5 == 0 and estimate["high"] % 5 == 0
+    assert client.get(f"/api/me/{new_visit('cough', age=40)}").json()["estimate"] is None     # not in the line yet
+
+
+def test_more_patients_ahead_for_the_same_doctor_means_a_longer_wait():
+    first = assessed_visit("sore throat", age=30)
+    client.post("/api/line/join", json={"reg_no": first, "level": 4, "doctor_reg": "DR-1009"})
+    later = assessed_visit("ear pain", age=30)
+    client.post("/api/line/join", json={"reg_no": later, "level": 5, "doctor_reg": "DR-1009"})
+    assert db.wait_estimate(later)["minutes"] > db.wait_estimate(first)["minutes"]
+
+
+def test_the_board_is_public_and_shows_no_name_complaint_or_level(staff_pin):
+    reg = assessed_visit("cough", age=40)
+    db.join_line(reg, 4, False)
+    ticket = db.visit_for(reg)["ticket"]
+    board = client.get("/api/board").json()                         # no PIN needed
+    assert board["waiting"] == len(db.line()["patients"]) and board["typical"]["high"] > board["typical"]["low"]
+    called = db.call_next(reg)
+    board = client.get("/api/board", params={"ticket": ticket.lower()}).json()
+    assert board["called"][0] == {"ticket": ticket, "room": called["room"], "doctor": called["doctor"], "minutes_ago": 0}
+    assert board["ticket"] == {"ticket": ticket, "status": "called", "room": called["room"]}
+    text = json.dumps(board)
+    assert "cough" not in text and "level" not in text and "name" not in text and "patient" not in text
+    assert client.get("/board").status_code == 200
+
+
+def test_meddy_only_tidies_the_doctors_note():
+    note = "rest today drink water come back if pain gets worse after 2 days"
+    assert core.checked_tidy("Rest today, drink water. Come back if the pain gets worse after 2 days.", note)
+    for wrong in ["Rest today. Take ibuprofen 400 mg three times a day.",            # added advice and a number
+                  "Rest today, drink water, come back after 3 days.",                 # a number changed
+                  ""]:
+        with pytest.raises(ValueError):
+            core.checked_tidy(wrong, note)
+
+
+def test_the_doctors_note_reaches_the_patients_phone(monkeypatch):
+    reg = assessed_visit("cough", age=40)
+    db.refer(reg, 3, "Looks unwell", doctor_reg="DR-1016")
+    monkeypatch.setattr(core, "tidy_note", lambda text: "Rest today, and drink plenty of water.")
+    assert client.post("/api/doctor/tidy", json={"text": "rest today and drink plenty of water"}).json() == {
+        "text": "Rest today, and drink plenty of water.", "changed": True}
+    def off(text):
+        raise ValueError("no model")
+    monkeypatch.setattr(core, "tidy_note", off)
+    assert client.post("/api/doctor/tidy", json={"text": "rest"}).status_code == 503
+    assert client.post("/api/doctor/finish", json={"reg_no": reg, "note": "x" * 301}).status_code == 422
+    assert client.post("/api/doctor/finish", json={"reg_no": reg, "note": "Rest today."}).json()["note"] == "Rest today."
+    me = client.get(f"/api/me/{reg}").json()
+    assert me["closed"] == "seen" and me["note"] == "Rest today."
+    assert {p["reg_no"]: p["note"] for p in client.get("/api/nurse/today").json()["patients"]}[reg] == "Rest today."
+
+
+def test_the_chief_doctors_panel_has_its_own_pin(staff_pin, monkeypatch):
+    monkeypatch.setattr(server, "CHIEF_PIN", "9911")
+    client.post("/api/staff/login", json={"pin": "4821"})                      # a nurse is signed in
+    assert client.get("/api/nurse/patients").status_code == 200
+    assert client.get("/api/chief/report").status_code == 401                 # the staff PIN does not open the panel
+    assert client.get("/api/staff/session", params={"role": "chief"}).json() == {"locked": True}
+    assert client.post("/api/staff/login", json={"pin": "4821", "role": "chief"}).status_code == 401
+    assert client.post("/api/staff/login", json={"pin": "9911", "role": "chief"}).status_code == 200
+    report = client.get("/api/chief/report").json()
+    assert set(report) >= {"flow", "registered", "levels", "departments", "meddy"} and len(report["levels"]) == 5
+
+
+def test_without_its_own_pin_the_staff_pin_opens_the_chief_doctors_panel(staff_pin):
+    assert server.CHIEF_PIN is None
+    assert client.get("/api/chief/report").status_code == 401
+    client.post("/api/staff/login", json={"pin": "4821"})
+    assert client.get("/api/chief/report").status_code == 200
+
+
+def test_the_chief_doctor_sees_how_the_day_went():
+    seen = assessed_visit("cough", age=40)
+    db.refer(seen, 3, "Looks unwell", doctor_reg="DR-1016")
+    db.finish_visit(seen)
+    gone = new_visit("cough", age=40)
+    db.remove_visit(gone, "left without being seen")
+    report = db.chief_report()
+    assert report["registered"] == 2 and report["flow"]["seen and finished"] == 1 and report["flow"]["removed by the nurse"] == 1
+    assert report["levels"][2]["seen"] == 1 and report["levels"][2]["door_median"] is not None
+    assert report["meddy"]["assessed"] == 1

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meddy · Chief doctor's panel</title>
+<link rel="icon" type="image/png" href="/static/meddy-icon.png">
+<link rel="stylesheet" href="/static/meddy-site.css?v=10">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
+<style>
+  /* The chief doctor's panel: the whole department today at a glance. Read-only: it changes nothing. */
+  :root { --page:#f3f6f2; --card:#fff; --line:#dce3dd; --ink:#16252a; --soft:#45555b; --blue:#2152c4; --blue-tint:#e8eefc;
+          --rose:#b4302f; --rose-tint:#fdeeec; --amber:#9a5a00; --amber-tint:#fff4e0; --mint:#1d7a52; --mint-tint:#e8f6ee;
+          --violet:#5a45b8; --round:20px;
+          --font:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",ui-sans-serif,system-ui,sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--page); color:var(--ink); font-family:var(--font); font-size:17px; line-height:1.45; }
+  .wrap { max-width:1300px; margin:0 auto; padding:24px; }
+  header { display:flex; align-items:center; flex-wrap:wrap; gap:16px; }
+  header img { height:44px; width:auto; }
+  header h1 { margin:0; font-size:1.6rem; font-weight:800; }
+  header .when { margin-left:auto; color:var(--soft); font-size:.95rem; }
+  header nav a { color:var(--blue); font-weight:700; margin-left:14px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:14px; margin-top:22px; }
+  .tile { background:var(--card); border-radius:var(--round); padding:16px 18px; box-shadow:0 6px 20px rgba(22,37,42,.05); }
+  .tile b { display:block; font-size:2.2rem; line-height:1.1; font-variant-numeric:tabular-nums; }
+  .tile span { color:var(--soft); font-size:.95rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:18px; margin-top:18px; }
+  .card { background:var(--card); border-radius:var(--round); padding:20px 22px; box-shadow:0 6px 20px rgba(22,37,42,.05); }
+  .card h2 { margin:0 0 4px; font-size:1.2rem; }
+  .card .sub { margin:0 0 14px; color:var(--soft); font-size:.92rem; }
+  table { width:100%; border-collapse:collapse; font-size:.98rem; }
+  th { text-align:left; color:var(--soft); font-weight:700; font-size:.85rem; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:middle; font-variant-numeric:tabular-nums; }
+  td.num, th.num { text-align:right; }
+  .lv { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:50%; color:#fff; font-weight:800; margin-right:8px; }
+  .meter { position:relative; height:10px; border-radius:999px; background:#edf1ee; min-width:80px; overflow:hidden; }
+  .meter i { position:absolute; inset:0 auto 0 0; border-radius:999px; background:var(--blue); }
+  .meter.busy i { background:var(--amber); }
+  .facts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .fact { padding:12px 14px; border-radius:14px; background:var(--page); }
+  .fact b { display:block; font-size:1.6rem; font-variant-numeric:tabular-nums; }
+  .fact span { color:var(--soft); font-size:.9rem; }
+  .foot { margin-top:18px; color:var(--soft); font-size:.9rem; }
+  @media (max-width: 520px) { .grid { grid-template-columns:1fr; } .wrap { padding:14px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="/static/meddy-logo.webp" alt="Meddy" width="134" height="44">
+    <h1>Chief doctor's panel</h1>
+    <span class="when" id="when">Loading…</span>
+    <nav><a href="/nurse">Nurse</a><a href="/doctor">Doctor</a><a href="/board">Board</a></nav>
+  </header>
+
+  <section class="tiles" id="tiles" aria-label="Today's patients"></section>
+
+  <div class="grid">
+    <section class="card" aria-labelledby="levels-title">
+      <h2 id="levels-title">Waiting, by urgency level</h2>
+      <p class="sub">Now in the waiting room, and today from registering on the phone to a doctor.</p>
+      <table><thead><tr><th>Level</th><th class="num">In line</th><th class="num">Longest now</th>
+        <th class="num">Seen today</th><th class="num">Door to doctor (median)</th><th class="num">Longest</th></tr></thead>
+        <tbody id="levels"></tbody></table>
+    </section>
+    <section class="card" aria-labelledby="teams-title">
+      <h2 id="teams-title">Doctors, by department</h2>
+      <p class="sub">Who is on duty and busy now, and how many wait for each department.</p>
+      <table><thead><tr><th>Department</th><th class="num">On duty</th><th>Busy</th><th class="num">In line</th><th class="num">A visit</th></tr></thead>
+        <tbody id="teams"></tbody></table>
+    </section>
+    <section class="card" aria-labelledby="meddy-title">
+      <h2 id="meddy-title">Meddy and the nurses</h2>
+      <p class="sub">How the nurses' final levels compare with Meddy's suggestion today. The nurse always decides.</p>
+      <div class="facts" id="meddy"></div>
+    </section>
+  </div>
+  <p class="foot" id="foot"></p>
+</div>
+<script src="/static/meddy-site.js?v=15"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
+const min = (m) => m === null || m === undefined ? "–" : `${m} min`;
+const pct = (a, b) => b ? Math.round(100 * a / b) + "%" : "–";
+
+async function load() {
+  let r;
+  try { const response = await fetch("/api/chief/report", { cache:"no-store" }); if (!response.ok) return; r = await response.json(); }
+  catch (e) { $("when").textContent = "Can't reach the hospital server. Trying again."; return; }
+  $("when").textContent = "Updated " + new Date(r.at * 1000).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+  const f = r.flow;
+  $("tiles").innerHTML = [["Registered today", r.registered], ["Checking in", f["checking in"]], ["Waiting for the nurse", f["waiting for the nurse"]],
+    ["In the waiting room", f["in the waiting room"]], ["With a doctor", f["with a doctor"]], ["Seen and finished", f["seen and finished"]],
+    ["Removed by the nurse", f["removed by the nurse"]]]
+    .map(([label, n]) => `<div class="tile"><b>${n}</b><span>${esc(label)}</span></div>`).join("");
+  $("levels").innerHTML = r.levels.map((l) => `<tr>
+      <td><span class="lv" style="background:${COLOUR[l.level]}">${l.level}</span>${esc(l.name)}</td>
+      <td class="num">${l.waiting}</td><td class="num">${min(l.waiting_longest)}</td>
+      <td class="num">${l.seen}</td><td class="num">${min(l.door_median)}</td><td class="num">${min(l.door_longest)}</td></tr>`).join("");
+  $("teams").innerHTML = r.departments.map((t) => `<tr>
+      <td>${esc(t.department)}</td><td class="num">${t.on_duty}</td>
+      <td><div class="meter busy" title="${t.busy} of ${t.on_duty} busy" aria-label="${t.busy} of ${t.on_duty} busy"><i style="width:${t.on_duty ? Math.round(100 * t.busy / t.on_duty) : 0}%"></i></div></td>
+      <td class="num">${t.in_line}</td><td class="num">${min(t.visit_minutes)}</td></tr>`).join("");
+  const m = r.meddy;
+  $("meddy").innerHTML = [
+    [`${m.kept} of ${m.assessed}`, `kept Meddy's level (${pct(m.kept, m.assessed)})`],
+    [m.more_urgent, "rated more urgent than Meddy"],
+    [m.less_urgent, "rated less urgent than Meddy"],
+    [m.flags, "“look again” flags raised"],
+    [m.reviews.accepted, "reports accepted after a quick look"],
+    [m.reviews.checked, "patients checked in person"]]
+    .map(([n, label]) => `<div class="fact"><b>${esc(n)}</b><span>${esc(label)}</span></div>`).join("");
+  $("foot").textContent = "Patients are today's real patients only. The doctors' load also counts the simulated patients of other nurses"
+    + (r.simulation ? " (the simulated hospital is on)." : ".");
+}
+load();
+setInterval(() => { if (!document.hidden) load(); }, 10000);
+</script>
+</body>
+</html>

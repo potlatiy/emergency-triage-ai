@@ -827,6 +827,44 @@ def _report_for_summary(complaint, age, sex, answers, injury=False):
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- the doctor's note for the patient
+# When the doctor closes a visit they may write a short note for the patient ("Rest, drink water, come back if the
+# pain gets worse"). Meddy only tidies it: spelling, punctuation and capitals. The doctor sees the tidied note and
+# chooses it or keeps their own; the patient's phone shows what the doctor confirmed.
+TIDY_SYSTEM_PROMPT = """You correct a short note a doctor wrote for a patient.
+Fix spelling, punctuation and capital letters only. Do not add, remove or change any information, advice, number or
+medicine. Keep the doctor's words and order. Reply with the corrected note only, nothing else."""
+
+
+def checked_tidy(written, original):
+    """The tidied note as it may be offered, or ValueError when the model did more than tidy: added or dropped
+    words, changed a number, or wrote something else entirely."""
+    tidy = " ".join(str(written or "").split()).strip().strip('"')
+    before, after = _words(original), _words(tidy)
+    if not tidy or len(tidy) > 2 * len(original) + 20:
+        raise ValueError("not a tidied note")
+    if re.findall(r"\d+", tidy) != re.findall(r"\d+", original):
+        raise ValueError("a number changed")
+    if difflib.SequenceMatcher(None, before, after).ratio() < 0.7:
+        raise ValueError("words changed")
+    return tidy
+
+
+def tidy_note(text, timeout=OLLAMA_TIMEOUT):
+    """The doctor's note with spelling and punctuation put right by the language model (checked_tidy), or
+    ValueError when the model is off, too slow or did more than tidy."""
+    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "12h",
+            "messages": [{"role": "system", "content": TIDY_SYSTEM_PROMPT}, {"role": "user", "content": text}],
+            "options": {"temperature": 0, "num_ctx": 1024, "num_predict": 160}}
+    request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            written = json.loads(response.read())["message"]["content"]
+    except Exception as error:
+        raise ValueError("the language model did not answer") from error
+    return checked_tidy(written, text)
+
+
 def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=True, timeout=OLLAMA_TIMEOUT):
     """Two sentences for the nurse, written by the language model: {"source": "ai", "text": ...}.
     {"source": "none", "text": None} when the model is off, too slow, or broke the rules."""
