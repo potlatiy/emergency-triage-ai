@@ -1,5 +1,11 @@
 # Master prompt for the chain: from the patient's questionnaire to the summary on the doctor's screen
 
+> **Status: built.** The link this prompt asks for was built from it on 15 November 2026, in
+> [pull request #14](https://github.com/potlatiy/emergency-triage-ai/pull/14). The doctor's card now opens with
+> the patient summary. The text below is kept as the brief that was used: where it says the last link "does not"
+> work or names "the gap", that was true before #14 and is not true now. Do not run this prompt again as it is.
+> To use it as a pattern for another piece of work, rewrite `<context>` and `<task>` from the code first.
+
 Paste everything inside the code block into a coding assistant that can read and run this repository.
 It is told to stop after the plan and wait for feedback before it writes code.
 
