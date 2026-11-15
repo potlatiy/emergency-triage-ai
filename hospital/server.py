@@ -77,7 +77,7 @@ class Arrival(BaseModel):
 class Answer(BaseModel):
     question: str = Field(max_length=300)
     answer: str | None = Field(default=None, max_length=200)
-    kind: str = Field(max_length=20)
+    kind: Literal["danger", "extra"]         # a hand-written danger question, or one for the doctor's history
     topic: str | None = Field(default=None, max_length=30)   # the history topic, for the doctor's overview
 
 
@@ -157,6 +157,27 @@ def open_visit(reg_no):
     return visit
 
 
+def checked_answers(visit, answers, injury=False):
+    """The answers as plain dictionaries, refused (422) when they cannot have come from this visit's questionnaire.
+
+    A yes to a danger question moves the patient up the nurse's list and the line, so the server does not
+    take the phone's word for what was asked: a danger answer must belong to one of the hand-written
+    questions for this complaint, be yes or no, and appear once. Other answers are information for the
+    doctor; they must carry a topic we know, or none."""
+    allowed, seen = core.danger_questions_for(visit["complaint"], injury or bool(visit["injury"])), set()
+    answers = [a.model_dump() for a in answers]
+    for a in answers:
+        if a["kind"] == "danger":
+            if a["question"] not in allowed or a["question"] in seen:
+                raise HTTPException(422, "This is not one of the danger questions for this patient's complaint.")
+            if a["answer"] not in ("Yes", "No", None):
+                raise HTTPException(422, "A danger question is answered with Yes or No.")
+            seen.add(a["question"])
+        elif a["topic"] is not None and not core.known_topic(a["topic"]):
+            raise HTTPException(422, "Unknown topic for an answer.")
+    return answers
+
+
 def known_department(name):
     if name is not None and name not in core.DEPARTMENT_NAMES:
         raise HTTPException(422, "No such department. Choose one of: " + ", ".join(core.DEPARTMENT_NAMES) + ".")
@@ -213,9 +234,10 @@ def follow_up(reg_no: str):
 def checkin(body: CheckIn):
     """The patient's phone finishes check-in. The patient now waits for the nurse, and the phone shows a short
     code; the nurse finds the patient by it on her own screen. Refused (409) once the nurse has seen them."""
-    open_visit(body.reg_no)
+    visit = open_visit(body.reg_no)
+    answers = checked_answers(visit, body.answers, body.injury)
     try:
-        code = db.check_in(body.reg_no, body.arrival, body.injury, body.pain, [a.model_dump() for a in body.answers])
+        code = db.check_in(body.reg_no, body.arrival, body.injury, body.pain, answers)
     except db.AlreadyWithNurse:
         raise HTTPException(409, "The nurse has already seen this patient.")
     except db.AlreadySent:
@@ -254,7 +276,7 @@ def nurse_summary(reg_no: str):
 def triage(body: Assessment):
     visit = open_visit(body.reg_no)
     vitals = core.VITAL_PRESETS[body.vitals]
-    answers = [a.model_dump() for a in body.answers]
+    answers = checked_answers(visit, body.answers, body.injury)
     injury = body.injury or bool(visit["injury"])
     if answers:
         db.save_answers(body.reg_no, answers, injury)
@@ -268,7 +290,9 @@ def triage(body: Assessment):
     result["danger"] = any(a["kind"] == "danger" and a["answer"] == "Yes" for a in answers)
     result["vitals"] = vitals
     # Meddy's report for the nurse: can she accept it after a quick look, and who would the doctor be?
-    result["advice"] = core.review_advice(result, result["danger"])
+    # "asked" is false for a patient the nurse took over before they answered the danger questions on the phone.
+    result["asked"] = any(a["kind"] == "danger" and a["answer"] in ("Yes", "No") for a in answers)
+    result["advice"] = core.review_advice(result, result["danger"], result["asked"])
     for option in result["department_options"]:
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
     result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])
@@ -353,11 +377,13 @@ def doctor_patients(doctor_reg: str):
 @app.post("/api/doctor/call")
 def doctor_call(body: Calling):
     """The doctor calls their next patient: the first in line for their department. "called" is None when
-    nobody is waiting for this doctor."""
+    nobody is waiting for this doctor. A doctor who is off duty is refused (409)."""
     try:
         called = db.call_for_doctor(body.doctor_reg)
     except LookupError:
         raise HTTPException(404, "No doctor with this registration number.")
+    except db.OffDuty:
+        raise HTTPException(409, "This doctor is off duty and cannot call a patient.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"called": called, **db.line()}

@@ -456,6 +456,7 @@ function summaryBlock(p) {
       <p class="hint">${by}</p>
       ${said.own_words ? `<blockquote>“${esc(said.own_words)}”<span class="hint">in the patient's own words</span></blockquote>` : ""}
       ${said.danger_yes.length ? `<ul class="yes">${said.danger_yes.map((q) => `<li><b>⚠ Yes:</b> ${esc(q)}</li>`).join("")}</ul>` : ""}
+      ${said.danger_asked === false ? `<ul class="yes"><li><b>Danger-sign questions: not answered.</b> The nurse took this patient before check-in was finished.</li></ul>` : ""}
       ${said.facts.length ? `<div class="glance">${said.facts.map((f) => `<span>${esc(f.label)}: ${esc(f.value)}</span>`).join("")}</div>` : ""}
     </div>
     <div class="part nurse">
@@ -558,6 +559,10 @@ $("call").addEventListener("click", async () => {
   try {
     const response = await fetch("/api/doctor/call", { method:"POST", headers:{ "Content-Type":"application/json" },
                                                        body:JSON.stringify({ doctor_reg:reg }) });
+    if (response.status === 409) {          // off duty: nobody is in the room, so the server calls no one
+      note.textContent = "You are off duty, so no patient was called. Go on duty first (the hospital database on the nurse's screen).";
+      return;
+    }
     if (!response.ok) throw new Error();
     const { called } = await response.json();
     note.textContent = called
