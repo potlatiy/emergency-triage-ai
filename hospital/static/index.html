@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meddy · Digital hospital</title>
+<link rel="icon" type="image/png" href="/static/meddy-icon.png">
+<link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
+<link rel="stylesheet" href="/static/meddy-site.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -101,6 +104,14 @@
   .panel > *:nth-child(n+4) { animation-delay:.12s; }
   #result > * { animation:enter .45s cubic-bezier(.2,.7,.2,1) both; }
   @keyframes enter { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:none; } }
+  /* the step change behind the curtain: see walkTo() */
+  .panel.held { position:absolute; margin:0; z-index:50; pointer-events:none; }
+  .panel.held > * { animation:none; }
+  .panel.behind > * { visibility:hidden; }
+  .panel.fresh > * { animation-name:enter-again; }
+  @keyframes enter-again { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:none; } }
+  .panel h2:focus { outline:none; }
+  .panel h2:focus-visible { outline:4px solid var(--blue); outline-offset:4px; border-radius:6px; }
 
   /* fields: big, clear, labels always above */
   label, .label { display:block; margin:26px 0 10px; font-size:1.2rem; font-weight:800; }
@@ -390,13 +401,15 @@
 <header class="top">
   <div class="wrap">
     <div class="brand">
-      <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
-        <rect width="44" height="44" rx="14" fill="#2152c4"/>
-        <path d="M18 10h8v8h8v8h-8v8h-8v-8h-8v-8h8z" fill="#fff"/>
-      </svg>
-      <div><h1>Meddy</h1><small>Digital hospital, your triage buddy</small></div>
+      <img class="logo" src="/static/meddy-logo.webp" alt="Meddy" width="152" height="50"><span class="role-name">Digital hospital, your triage buddy</span>
+      <h1 class="sr-only">Meddy: digital hospital, the patient's phone</h1>
     </div>
     <p>This is the patient's phone. Check in here, then show your code to the nurse. The nurse and the doctor work on their own screens.</p>
+    <nav class="roles" aria-label="Meddy's screens">
+      <a href="/" data-caption="The patient's phone" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>Patient</a>
+      <a href="/nurse" data-caption="The nurse's screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 13h6M12 10v6"/></svg>Nurse</a>
+      <a href="/doctor" data-caption="The doctor's screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg>Doctor</a>
+    </nav>
     <button class="size" id="size" type="button" aria-pressed="false"><span aria-hidden="true">A+</span>Larger text</button>
   </div>
 </header>
@@ -455,6 +468,7 @@
   </div>
 </footer>
 
+<script src="/static/meddy-site.js"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -611,16 +625,55 @@ const sectionHead = (kind, title, note) => `<div class="section-head"><span clas
   <div><h3>${title}</h3>${note ? `<p>${note}</p>` : ""}</div></div>`;
 
 // ---------------------------------------------------------------- floor plan and database card
+// Moving to another step, the white curtain with the logo rolls across (MeddyCurtain in meddy-site.js).
+// The old step stays on screen until the curtain covers it; the new step is set up underneath; when the
+// curtain lifts, the "YOU" marker walks to the next room and the new step rises in.
+const CAPTION = { 1: "Welcome to Meddy", 2: "A few quick questions", 3: "Now: the nurse", 4: "To the waiting room",
+                  5: "Your turn with the doctor", 6: "Straight in: the resuscitation bay" };
+let shownStop = 0, held = null;
+function holdOldStep() {
+  letGoOfOldStep();
+  const box = panel.getBoundingClientRect();
+  held = panel.cloneNode(true);
+  held.removeAttribute("id"); held.removeAttribute("aria-live");
+  held.querySelectorAll("[id]").forEach((el) => el.removeAttribute("id"));
+  held.setAttribute("aria-hidden", "true"); held.inert = true; held.classList.add("held");
+  Object.assign(held.style, { top: box.top + scrollY + "px", left: box.left + scrollX + "px",
+                              width: box.width + "px", height: box.height + "px" });
+  document.body.appendChild(held);
+  panel.classList.add("behind");
+}
+function letGoOfOldStep() {
+  if (held) { held.remove(); held = null; }
+  panel.classList.remove("behind");
+}
 function walkTo(stop, room) {
   clearInterval(watching); tick++;
   if (stop !== 5) document.getElementById("doctor-line").textContent = "";       // no doctor of the visit before
-  const [x, y] = SPOT[room || stop];
-  document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
-  for (let i = 1; i <= 6; i++) document.getElementById("room-" + i).classList.toggle("on", i === (room || stop));
-  document.getElementById("qr").hidden = stop !== 1;
-  document.getElementById("steps").innerHTML = STOPS.map((name, i) =>
-    `<span class="${i + 1 === stop ? "on" : i + 1 < stop ? "done" : ""}"${i + 1 === stop ? ' aria-current="step"' : ""}>` +
-    `<b>${i + 1 < stop ? "✓" : i + 1}</b>${name}</span>`).join("");
+  const place = room || stop;
+  const setUp = () => {
+    for (let i = 1; i <= 6; i++) document.getElementById("room-" + i).classList.toggle("on", i === place);
+    document.getElementById("qr").hidden = stop !== 1;
+    document.getElementById("steps").innerHTML = STOPS.map((name, i) =>
+      `<span class="${i + 1 === stop ? "on" : i + 1 < stop ? "done" : ""}"${i + 1 === stop ? ' aria-current="step"' : ""}>` +
+      `<b>${i + 1 < stop ? "✓" : i + 1}</b>${name}</span>`).join("");
+  };
+  const walk = () => {
+    const [x, y] = SPOT[place];
+    document.getElementById("you").setAttribute("transform", `translate(${x} ${y})`);
+  };
+  const moved = shownStop !== 0 && stop !== shownStop && window.MeddyCurtain;
+  shownStop = stop;
+  if (!moved) { setUp(); walk(); return; }
+  holdOldStep();
+  MeddyCurtain.play(CAPTION[place], () => { letGoOfOldStep(); setUp(); window.scrollTo(0, 0); }, () => {
+    walk();
+    panel.classList.remove("fresh"); void panel.offsetWidth; panel.classList.add("fresh");
+    if (!panel.contains(document.activeElement)) {          // keyboard and screen-reader users land on the new step
+      const heading = panel.querySelector("h2");
+      if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+    }
+  });
 }
 function drawSeats(count) {
   let html = "";

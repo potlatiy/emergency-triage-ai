@@ -1,0 +1,66 @@
+/* Meddy: what every screen shares, so the patient's phone, the nurse's screen and the doctor's screen read as one
+   website. The logo in the header, the switcher between the three screens, and the white curtain with the logo
+   that rolls across between steps and between screens (see meddy-site.js). */
+
+/* ---------- the logo in the header ---------- */
+.brand { display:flex; align-items:center; gap:16px; color:inherit; text-decoration:none; }
+.brand .logo { display:block; height:50px; width:auto; }
+.brand .role-name { display:block; padding-left:16px; border-left:2px solid var(--line, #dce3dd);
+                    font-size:.95rem; font-weight:700; color:var(--soft, #45555b); line-height:1.25; max-width:16ch; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+
+/* header row: logo, then the switcher and "Larger text" on the right; the page's explanation on its own line */
+header.top .roles { margin-left:auto; }
+header.top .roles + .size { margin-left:0; }
+header.top .wrap > p { order:5; flex-basis:100%; max-width:70ch; }
+header.top .wrap > .who { order:5; }                 /* the doctor picker sits on its own row under the logo */
+
+/* ---------- one website: the three screens ---------- */
+.roles { display:inline-flex; gap:4px; padding:5px; border:1px solid var(--line, #dce3dd); border-radius:999px;
+         background:var(--page, #f3f6f2); }
+.roles a { display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:8px 18px; border-radius:999px;
+           font-weight:700; font-size:1rem; color:var(--soft, #45555b); text-decoration:none;
+           transition:background-color .15s ease, color .15s ease; }
+.roles a:hover { background:#fff; color:var(--ink, #16252a); }
+.roles a[aria-current="page"] { background:var(--blue, #2152c4); color:#fff; }
+.roles a:focus-visible { outline:4px solid var(--blue, #2152c4); outline-offset:3px; }
+.roles svg { width:18px; height:18px; flex:none; }
+
+/* ---------- the curtain ---------- */
+.curtain { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; background:#fff;
+           transform:translateY(100%); visibility:hidden; pointer-events:none; }
+.curtain::before { content:""; position:absolute; left:0; right:0; top:0; height:6px;
+                   background:linear-gradient(90deg, #5dcaa5, var(--blue, #2152c4)); }
+.curtain .stage { display:grid; justify-items:center; gap:26px; padding:24px; text-align:center; }
+.curtain img { display:block; width:min(460px, 76vw); height:auto; opacity:0; transform:translateX(-48px); }
+.curtain .bar { width:min(220px, 50vw); height:6px; border-radius:6px; background:#e8eeea; overflow:hidden; }
+.curtain .bar i { display:block; height:100%; border-radius:6px; background:linear-gradient(90deg, #5dcaa5, var(--blue, #2152c4));
+                  transform:scaleX(0); transform-origin:left; }
+.curtain p { margin:0; font-size:1.25rem; font-weight:800; color:var(--ink, #16252a); opacity:0; }
+
+/* rolling up over the screen */
+.curtain.in { visibility:visible; transform:none; pointer-events:auto; transition:transform .42s cubic-bezier(.7,0,.3,1); }
+.curtain.in img { animation:meddy-logo .55s .2s cubic-bezier(.2,.8,.2,1) forwards; }
+.curtain.in .bar i { animation:meddy-bar .95s .25s cubic-bezier(.6,0,.3,1) forwards; }
+.curtain.in p { animation:meddy-fade .4s .4s ease forwards; }
+/* already covering (a new screen opening after the curtain) */
+.curtain.cover { visibility:visible; transform:none; pointer-events:auto; }
+.curtain.cover img, .curtain.cover p { opacity:1; transform:none; }
+.curtain.cover .bar i, .curtain.out .bar i { animation:none; transform:none; }
+/* rolling away, upwards, to show the next step */
+.curtain.out { visibility:visible; transform:translateY(-100%); transition:transform .38s cubic-bezier(.7,0,.3,1); }
+.curtain.out img, .curtain.out p { opacity:1; transform:none; }
+
+@keyframes meddy-logo { to { opacity:1; transform:none; } }
+@keyframes meddy-bar { to { transform:none; } }
+@keyframes meddy-fade { to { opacity:1; } }
+
+@media (max-width: 760px) {
+  .brand .logo { height:40px; }
+  .brand .role-name { padding-left:12px; font-size:.85rem; }
+  .roles { width:100%; }
+  .roles a { flex:1; justify-content:center; padding:8px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .roles a { transition:none; }
+}
