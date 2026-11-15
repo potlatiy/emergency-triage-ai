@@ -1455,3 +1455,49 @@ def test_not_asked_is_never_summed_up_as_no_danger_signs():
     client.post("/api/line/join", json={"reg_no": done, "level": 4, "review": "checked"})
     assert json.loads(db.visit_for(done)["summary"])["patient_said"]["danger_asked"] is True
 
+
+# ---------------------------------------------------------------- the patient's name: for staff only
+
+def named_visit(first="Anna", last="Keller", complaint="chest pain since this morning"):
+    answer = client.post("/api/register", json={"complaint": complaint, "age": 52, "sex": "Female", "use_model": False,
+                                                "first_name": first, "last_name": last})
+    assert answer.status_code == 200, answer.text
+    return answer.json()["reg_no"]
+
+
+def test_the_name_is_kept_and_shown_to_the_nurse_and_the_doctor():
+    reg = named_visit("Mary-Jane", "O'Neil")
+    assert db.visit_for(reg)["first_name"] == "Mary-Jane" and db.visit_for(reg)["last_name"] == "O'Neil"
+    client.post("/api/checkin", json={"reg_no": reg, "answers": []})
+    assert next(p for p in client.get("/api/nurse/patients").json()["patients"] if p["reg_no"] == reg)["patient"] == "Mary-Jane O'Neil"
+    card = client.get(f"/api/nurse/patient/{reg}").json()
+    assert card["first_name"] == "Mary-Jane" and card["patient"] == "Mary-Jane O'Neil"
+    client.post("/api/triage", json={"reg_no": reg, "answers": []})
+    client.post("/api/line/join", json={"reg_no": reg, "level": 3, "department": "Cardiology"})
+    assert next(p for p in client.get("/api/line").json()["patients"] if p["reg_no"] == reg)["patient"] == "Mary-Jane O'Neil"
+    called = client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"]
+    doctor = client.get(f"/api/doctor/{called['doctor_reg']}/patients").json()
+    assert next(p for p in doctor["patients"] if p["reg_no"] == reg)["patient"] == "Mary-Jane O'Neil"
+
+
+def test_the_name_never_reaches_the_phone_or_the_language_model():
+    reg = named_visit("Ivanna", "Shevchenko")
+    client.post("/api/checkin", json={"reg_no": reg, "answers": [
+        {"question": "In your own words", "answer": "chest went tight on the stairs", "kind": "extra", "topic": "story"}]})
+    me = client.get(f"/api/me/{reg}").json()
+    assert "Ivanna" not in json.dumps(me) and "Shevchenko" not in json.dumps(me)
+    card = client.get(f"/api/nurse/patient/{reg}").json()
+    report = core._report_for_summary(card["complaint"], card["age"], card["sex"], card["answers"], card["injury"])
+    assert "Ivanna" not in report and "Shevchenko" not in report
+
+
+def test_names_in_any_alphabet_and_nothing_else():
+    assert named_visit("Денис", "van der Berg")
+    for first, last in [("Anna2", "Keller"), ("Anna", "<b>Keller</b>"), ("   ", "Keller"), ("A" * 41, "Keller")]:
+        body = {"complaint": "cough", "age": 30, "use_model": False, "first_name": first, "last_name": last}
+        assert client.post("/api/register", json=body).status_code == 422, (first, last)
+    assert client.post("/api/register", json={"complaint": "cough", "age": 30, "use_model": False}).status_code == 200
+
+
+def test_the_made_up_patients_have_made_up_names():
+    assert all(p["patient"] for p in client.get("/api/line").json()["patients"])

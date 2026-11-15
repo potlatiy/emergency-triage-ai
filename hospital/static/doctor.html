@@ -362,7 +362,7 @@ function drawList() {
     <button type="button" class="pt" data-reg="${esc(p.reg_no)}" aria-pressed="${p.reg_no === selected}">
       <span class="lv" style="background:${LEVEL_COLOUR[p.level]}" aria-hidden="true">${p.level}</span>
       <span>
-        <span class="what">${esc(p.complaint)}</span>
+        <span class="what">${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</span>
         <span class="sub"><span class="num">${esc(p.ticket)}</span> · ${levelText(p.level)}${person(p) ? " · " + esc(person(p)) : ""}</span>
         <span class="tags">${unseen.has(p.reg_no) ? `<span class="tag new">New</span>` : ""}${
           p.referred ? `<span class="tag red">Sent straight in</span>` : ""}${
@@ -505,8 +505,8 @@ function drawCard() {
     <div class="ids"><span class="regno num">${esc(p.reg_no)}</span><span class="regno num">Ticket ${esc(p.ticket)}</span>${
       p.insurance === undefined ? "" : `<span class="regno plain">${p.insurance === "none" ? "No insurance"
         : (p.insurance === "private" ? "Private" : "Public") + " insurance" + (p.card_end ? ", card ending " + esc(p.card_end) : "")}</span>`}</div>
-    <h2>${esc(p.complaint)}</h2>
-    <p class="lede">${person(p) ? esc(person(p)) + " · " : ""}${waited}</p>
+    <h2>${p.patient ? esc(p.patient) : esc(p.complaint)}</h2>
+    <p class="lede">${p.patient ? "“" + esc(p.complaint) + "” · " : ""}${person(p) ? esc(person(p)) + " · " : ""}${waited}</p>
     ${summaryBlock(p)}
     ${p.referred ? `<div class="note red"><b>⚠ The nurse sent this patient straight to you, past the line.</b>
       Her reason: ${esc(p.referral_reason || "not given")}</div>` : ""}
@@ -566,7 +566,7 @@ $("call").addEventListener("click", async () => {
     if (!response.ok) throw new Error();
     const { called } = await response.json();
     note.textContent = called
-      ? `Ticket ${called.ticket} (${called.who}) is on the way to ${called.room}. Their phone shows the room now.`
+      ? `Ticket ${called.ticket} (${called.patient || called.who}) is on the way to ${called.room}. Their phone shows the room now.`
       : "Nobody in the waiting room is waiting for this department right now.";
     if (called) { selected = called.reg_no; check(); }
   } catch (error) {

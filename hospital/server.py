@@ -72,6 +72,10 @@ class Arrival(BaseModel):
     # either model and never changes the level, the department or the place in line.
     insurance: Literal["public", "private", "none"] = "none"
     card: str | None = Field(default=None, max_length=40)
+    # The name lets the nurse and the doctor call the patient. Letters, spaces, hyphens and apostrophes in any
+    # alphabet. It goes into the database for staff only: never to the models or the language model.
+    first_name: str | None = Field(default=None, min_length=1, max_length=40, pattern=r"^[^\W\d_]+(?:[ '\-][^\W\d_]+)*$")
+    last_name: str | None = Field(default=None, min_length=1, max_length=40, pattern=r"^[^\W\d_]+(?:[ '\-][^\W\d_]+)*$")
 
 
 class Answer(BaseModel):
@@ -210,7 +214,7 @@ def register(body: Arrival):
     if body.insurance != "none" and db.person_key(body.card) is None:
         raise HTTPException(422, "Enter the card number: 6 to 20 letters and digits. Without a card, choose no insurance.")
     try:
-        reg_no = db.register(body.complaint, body.age, body.sex, body.insurance, body.card)
+        reg_no = db.register(body.complaint, body.age, body.sex, body.insurance, body.card, body.first_name, body.last_name)
     except db.AlreadyRegistered as already:
         # One person, one open visit. The answer points to the visit that is already open.
         raise HTTPException(409, {"message": "This card already has an open visit. One person, one visit at a time.",

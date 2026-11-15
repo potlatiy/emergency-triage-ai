@@ -505,7 +505,7 @@ const SAFETY = ["Don't take any medicine until a nurse says it's OK.",
                 "Don't eat or drink until a nurse says it's OK.",
                 "Tell the staff straight away if you feel worse."];
 const panel = document.getElementById("panel");
-const fresh = () => ({ reg:null, complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:null, feel:null,
+const fresh = () => ({ reg:null, firstName:"", lastName:"", complaint:"", age:30, sex:"Female", arrival:"Walked in", pain:null, feel:null,
                        painForm:null, insurance:null, cardEnd:null, injury:false, alert:"Alert",
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null,
                        noDanger:false, followUp:"none", nurseLevel:null, review:null, showLine:false, day:null });
@@ -652,13 +652,27 @@ const head = (who, label) => `<div class="ids">${me.reg ? regTag() : ""}${role(w
 const regTag = () => `<span class="regno">Registration no. ${esc(me.reg)}${me.ticket ? ", ticket " + esc(me.ticket) : ""}</span>`;
 
 // ---------------------------------------------------------------- 1. entrance
+// A name in any alphabet: letters, with single spaces, hyphens or apostrophes between them (the server checks the same).
+const NAME = /^\p{L}+(?:[ '\-]\p{L}+)*$/u;
+const MADE_UP_NAMES = [["Anna", "Keller"], ["Omar", "Haddad"], ["Lena", "Moretti"], ["Yusuf", "Demir"], ["Clara", "Nilsson"],
+  ["Mateo", "Ruiz"], ["Ines", "Barros"], ["Tomas", "Novak"], ["Mia", "Laurent"], ["Daniel", "Okoro"], ["Sara", "Lindgren"],
+  ["Ivan", "Petrenko"], ["Hana", "Sato"], ["Leo", "Fischer"], ["Eva", "Kowalska"], ["Amira", "Saleh"], ["Jonas", "Weber"]];
 function entrance() {
   walkTo(1);
   panel.innerHTML = `
     ${head("patient")}
     ${stepNo(1)}
     <h2>You arrive</h2>
-    <p class="lede">Tell us what is wrong, in your own words. We don't ask for your name: your visit gets a number instead.</p>
+    <p class="lede">Tell us who you are and what is wrong, in your own words. Your visit also gets a number.</p>
+    <div class="row">
+      <div><label for="first-name">First name</label><input type="text" id="first-name" maxlength="40" autocomplete="off"
+        autocapitalize="words" spellcheck="false" value="${esc(me.firstName)}"></div>
+      <div><label for="last-name">Last name</label><input type="text" id="last-name" maxlength="40" autocomplete="off"
+        autocapitalize="words" spellcheck="false" value="${esc(me.lastName)}"></div>
+    </div>
+    <div class="card-tools"><button type="button" class="mini" id="made-up-name">Make up a name</button></div>
+    <p class="hint">This is a demonstration: please use a made-up name. Only the nurse and the doctor see it, and it is
+      never given to the AI.</p>
     <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
     <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
     <div class="row">
@@ -702,20 +716,34 @@ function entrance() {
   complaintBox.focus({ preventScroll: true });
   // Whatever is typed is kept, so a reload before registering does not empty the form.
   const keepDraft = () => { me.complaint = complaintBox.value; me.arrival = document.getElementById("arrival").value;
+    me.firstName = document.getElementById("first-name").value; me.lastName = document.getElementById("last-name").value;
     const age = Number(document.getElementById("age").value); if (age) me.age = age; remember("entrance"); };
   for (const id of ["complaint", "age", "arrival"]) document.getElementById(id).addEventListener("change", keepDraft);
-  complaintBox.addEventListener("input", keepDraft);
+  for (const id of ["complaint", "first-name", "last-name"]) document.getElementById(id).addEventListener("input", () => {
+    document.getElementById(id).removeAttribute("aria-invalid"); keepDraft(); });
+  document.getElementById("made-up-name").addEventListener("click", () => {
+    const [first, last] = MADE_UP_NAMES[Math.floor(Math.random() * MADE_UP_NAMES.length)];
+    document.getElementById("first-name").value = first; document.getElementById("last-name").value = last;
+    for (const id of ["first-name", "last-name"]) document.getElementById(id).removeAttribute("aria-invalid");
+    document.getElementById("error").textContent = ""; keepDraft(); });
   complaintBox.addEventListener("input", () => {
     document.getElementById("count").textContent = complaintBox.value.length + " / 200";
     complaintBox.removeAttribute("aria-invalid"); document.getElementById("error").textContent = ""; });
-  for (const id of ["complaint", "age"]) document.getElementById(id).addEventListener("keydown", (event) => {
+  for (const id of ["first-name", "last-name", "complaint", "age"]) document.getElementById(id).addEventListener("keydown", (event) => {
     if (event.key === "Enter") document.getElementById("go").click(); });
   document.getElementById("go").addEventListener("click", async () => {
     me.complaint = document.getElementById("complaint").value.trim();
     me.age = Number(document.getElementById("age").value);
     me.arrival = document.getElementById("arrival").value;
     const error = document.getElementById("error");
-    for (const id of ["complaint", "age"]) document.getElementById(id).removeAttribute("aria-invalid");
+    for (const id of ["first-name", "last-name", "complaint", "age"]) document.getElementById(id).removeAttribute("aria-invalid");
+    me.firstName = document.getElementById("first-name").value.trim().replace(/\s+/g, " ");
+    me.lastName = document.getElementById("last-name").value.trim().replace(/\s+/g, " ");
+    for (const [id, value, word] of [["first-name", me.firstName, "first name"], ["last-name", me.lastName, "last name"]]) {
+      if (!NAME.test(value)) { error.textContent = value ? `Write the ${word} with letters only (spaces, hyphens and apostrophes are fine).`
+                                                        : `Write your ${word}, or tap “Make up a name”.`;
+        document.getElementById(id).setAttribute("aria-invalid", "true"); document.getElementById(id).focus(); return; }
+    }
     if (!me.complaint) { error.textContent = "Tell us what is wrong first.";
       complaintBox.setAttribute("aria-invalid", "true"); complaintBox.focus(); return; }
     if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Enter an age between 15 and 110.";
@@ -730,7 +758,7 @@ function entrance() {
     busy(go, "Registering…");
     try {
       const response = await fetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ complaint: me.complaint, age: me.age, sex: me.sex, use_model: false,
+        body: JSON.stringify({ first_name: me.firstName, last_name: me.lastName, complaint: me.complaint, age: me.age, sex: me.sex, use_model: false,
                                insurance: me.insurance, card: me.insurance === "none" ? null : card }) });
       if (response.status === 409) {                       // one person, one open visit
         const open = (await response.json()).detail;
