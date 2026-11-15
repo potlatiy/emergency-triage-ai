@@ -815,7 +815,7 @@ function entrance() {
     const typed = complaintBox.value.trim(), box = document.getElementById("spell");
     if (typed.length < 3) { box.hidden = true; return; }
     try {
-      const answer = await (await fetch("/api/spelling?text=" + encodeURIComponent(typed))).json();
+      const answer = await api("/api/spelling", { text: typed });      // in the body: never in the address
       if (complaintBox.value.trim() !== typed) return;
       document.getElementById("spell-text").textContent = answer.text; box.hidden = !answer.changed;
     } catch (e) { box.hidden = true; }
