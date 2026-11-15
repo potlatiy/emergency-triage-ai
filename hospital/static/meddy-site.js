@@ -54,6 +54,25 @@
     });
   }
 
+  // hold(text): a screen that has just loaded starts covered (no roll-in) while it restores itself, so the
+  // visitor never sees a blank half-built page. release(): rolls the curtain away once the screen is ready,
+  // never before the bar has filled.
+  let heldSince = 0;
+  function hold(text) {
+    finish();
+    caption.textContent = text || "";
+    el.className = base() + " cover loading";
+    heldSince = performance.now();
+  }
+  function release() {
+    if (!el.classList.contains("cover")) return;
+    const { OUT } = timing();
+    later(Math.max(0, 720 - (performance.now() - heldSince)), () => {
+      el.classList.remove("cover", "loading"); el.classList.add("out");
+      later(OUT, () => { el.className = base(); });
+    });
+  }
+
   // A short note at the bottom of the screen, for when a screen cannot be opened.
   let note = null;
   function notice(message) {
@@ -107,5 +126,6 @@
     go(link.href, link.dataset.caption || "");
   });
 
-  window.MeddyCurtain = { play, go };
+  const covering = () => el.classList.contains("cover");     // held over a screen that is restoring itself
+  window.MeddyCurtain = { play, go, hold, release, covering };
 })();
