@@ -135,6 +135,21 @@
   .glance { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 0; }
   .glance span { padding:6px 14px; border-radius:999px; background:var(--violet-tint); color:#2f2466; font-size:1rem; font-weight:700;
                  overflow-wrap:anywhere; }
+  /* the patient summary: three parts, each with the name of who it comes from */
+  .psum { margin-top:20px; padding:20px; border:2px solid #cfc8ee; border-radius:var(--round); background:#fbfaff; }
+  .psum h3 { margin:0 0 4px; font-size:1.3rem; }
+  .psum .part { margin-top:14px; padding:14px 16px; border-radius:16px; background:var(--card); border-left:6px solid; }
+  .psum .part.said { border-left-color:var(--violet); } .psum .part.nurse { border-left-color:var(--mint); }
+  .psum .part.meddy { border-left-color:var(--blue); }
+  .psum .src { display:inline-block; padding:2px 12px; border-radius:999px; font-size:.9rem; font-weight:800; }
+  .psum .said .src { background:var(--violet-tint); color:#46358f; } .psum .nurse .src { background:var(--mint-tint); color:#155c3d; }
+  .psum .meddy .src { background:var(--blue-tint); color:var(--blue-dark); }
+  .psum p { margin:8px 0 0; } .psum .main { font-size:1.12rem; font-weight:700; overflow-wrap:anywhere; }
+  .psum .hint { margin-top:4px; font-size:.95rem; }
+  .psum blockquote { margin:10px 0 0; padding:10px 14px; border-radius:12px; background:var(--page); font-size:1.05rem; overflow-wrap:anywhere; }
+  .psum blockquote .hint { display:block; }
+  .psum ul.yes { margin:10px 0 0; padding:0; list-style:none; } .psum ul.yes li { margin-top:4px; color:#7d1f1e; }
+  .psum .glance { margin-top:10px; }
   .answers .a.none { background:transparent; color:var(--soft); font-weight:500; padding-right:0; }
   .answers.extra li { grid-template-columns:minmax(0,1fr); }
   .answers.extra .a { justify-self:start; border-radius:14px; }
@@ -416,7 +431,53 @@ function answersBlock(p) {
       esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}`;
 }
 
-// The overview at the top of the card: put together by plain code from what the patient tapped. No AI summary.
+// The patient summary at the top of the card. It was written on the server when the nurse sent the patient on,
+// and stored with the visit: the doctor reads what the nurse saw. Three parts, each under its own label, so it is
+// plain who every line comes from: the patient, the nurse, or Meddy.
+function summaryBlock(p) {
+  const s = p.summary;
+  if (!s) return glance(p);                          // a server from before the summary: the overview built here
+  const said = s.patient_said, nurse = s.nurse_found, meddy = s.meddy_suggested;
+  const by = said.written_by === "ai"
+    ? "Two sentences written by a language model from the patient's answers, and read by the nurse."
+    : "Put together from the patient's own answers.";
+  const measured = !nurse.measured ? "Nothing was measured before the patient was sent in."
+    : nurse.warnings.length ? "Warning signs in the measurements: " + nurse.warnings.join(", ") + "."
+    : "No warning sign in the measurements.";
+  const review = nurse.review === "approved" ? " She accepted Meddy's report after reviewing it."
+    : nurse.review === "checked" ? " She checked the patient herself." : "";
+  const flag = !meddy ? "" : meddy.flag === "strong" ? "▲ Meddy thinks this patient is more urgent than the nurse's level."
+    : meddy.flag === "mild" ? "Meddy leaned more urgent than the nurse's level, but not strongly." : "";
+  return `<section class="psum" aria-labelledby="psum-title">
+    <h3 id="psum-title">Patient summary</h3>
+    <div class="part said">
+      <span class="src">The patient said</span>
+      <p class="main">${esc(said.text)}</p>
+      <p class="hint">${by}</p>
+      ${said.own_words ? `<blockquote>“${esc(said.own_words)}”<span class="hint">in the patient's own words</span></blockquote>` : ""}
+      ${said.danger_yes.length ? `<ul class="yes">${said.danger_yes.map((q) => `<li><b>⚠ Yes:</b> ${esc(q)}</li>`).join("")}</ul>` : ""}
+      ${said.facts.length ? `<div class="glance">${said.facts.map((f) => `<span>${esc(f.label)}: ${esc(f.value)}</span>`).join("")}</div>` : ""}
+    </div>
+    <div class="part nurse">
+      <span class="src">The nurse found</span>
+      <p class="main">${nurse.level ? esc(levelText(nurse.level)) + "." : "No level yet."}${review}</p>
+      <p>${esc(measured)}</p>
+      ${nurse.referral_reason ? `<p><b>Sent straight in.</b> Her reason: ${esc(nurse.referral_reason)}</p>` : ""}
+      ${nurse.note ? `<blockquote>“${esc(nurse.note)}”<span class="hint">the nurse's note</span></blockquote>` : ""}
+    </div>
+    <div class="part meddy">
+      <span class="src">Meddy suggested</span>
+      ${meddy ? `<p class="main">${esc(levelText(meddy.level))}${meddy.sure === null ? "" : ", " + Math.round(meddy.sure * 100) + "% sure"}.${
+          meddy.unsure ? " It was not sure of the level." : ""}${meddy.unread ? " It could not read the complaint." : ""}</p>
+        ${flag ? `<p>${flag}</p>` : ""}
+        ${meddy.department ? `<p>Department: ${esc(meddy.department)}${meddy.how ? ", chosen by the " + esc(meddy.how) : ""}.</p>` : ""}`
+        : `<p class="main">Nothing: the patient was sent on before Meddy was asked.</p>`}
+      <p class="hint">A suggestion from a model that is right less often than a nurse. Never a diagnosis.</p>
+    </div>
+  </section>`;
+}
+
+// The overview built in the browser from the raw answers. Used only when the server sends no stored summary.
 // Each history answer carries a topic label from the server ("Started", "Feels like"); older visits have none.
 function glance(p) {
   const yes = p.answers.filter((a) => a.kind === "danger" && a.answer === "Yes").length;
@@ -445,7 +506,7 @@ function drawCard() {
         : (p.insurance === "private" ? "Private" : "Public") + " insurance" + (p.card_end ? ", card ending " + esc(p.card_end) : "")}</span>`}</div>
     <h2>${esc(p.complaint)}</h2>
     <p class="lede">${person(p) ? esc(person(p)) + " · " : ""}${waited}</p>
-    ${glance(p)}
+    ${summaryBlock(p)}
     ${p.referred ? `<div class="note red"><b>⚠ The nurse sent this patient straight to you, past the line.</b>
       Her reason: ${esc(p.referral_reason || "not given")}</div>` : ""}
     <div class="verdict" style="border-color:${LEVEL_COLOUR[p.level]};background:${LEVEL_TINT[p.level]}">

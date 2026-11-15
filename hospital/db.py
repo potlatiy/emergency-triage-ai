@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS visits (
     ai_level INTEGER, vitals TEXT, referred INTEGER DEFAULT 0, referral_reason TEXT,
     ai_odds TEXT, second_check TEXT,
     ai_department TEXT, quick_advised INTEGER, review TEXT,
+    summary TEXT, nurse_note TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
     arrival TEXT, pain INTEGER, checked_in INTEGER,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
@@ -287,13 +288,38 @@ def nurse_card(reg_no):
             "answers": answers_for(reg_no)}
 
 
+def _answers(reg_no):
+    """The answers of one visit. The caller holds the lock."""
+    rows = [dict(r) for r in _conn.execute(
+        "SELECT question, answer, kind, topic FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
+    return [{**r, "label": core.topic_label(r["topic"])} for r in rows]
+
+
 def answers_for(reg_no):
     """The answers of one visit. AI-written questions carry a history topic ("onset") and its label ("Started"),
     so the doctor's screen can show them as a short overview."""
     with _lock:
-        rows = [dict(r) for r in _conn.execute(
-            "SELECT question, answer, kind, topic FROM answers WHERE visit_reg = ? ORDER BY id", (reg_no,))]
-    return [{**r, "label": core.topic_label(r["topic"])} for r in rows]
+        return _answers(reg_no)
+
+
+def _summary_of(visit, note=None, summary_ok=True, with_ai=True):
+    """The patient summary of one visit as it stands now (see core.patient_summary). The caller holds the lock.
+
+    The AI sentences are the ones the nurse already saw on her screen: they are looked up, never asked for
+    again here, so nobody waits for the language model and the doctor reads what the nurse read."""
+    visit = dict(visit)
+    answers = _answers(visit["reg_no"])
+    ai = core.nurse_summary(visit["reg_no"], visit["complaint"], visit["age"], visit["sex"], answers,
+                            bool(visit["injury"]), use_model=False) if with_ai else None
+    return core.patient_summary(visit, answers, ai, summary_ok, note)
+
+
+def _write_summary(reg_no, note, summary_ok):
+    """Write the summary down at the moment the patient leaves the nurse, in the same transaction as her
+    decision. From then on it is read, never rebuilt: a model that answers differently later cannot change it."""
+    visit = _conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+    summary = _summary_of(visit, note, summary_ok)
+    _conn.execute("UPDATE visits SET summary = ?, nurse_note = ? WHERE reg_no = ?", (json.dumps(summary), note, reg_no))
 
 
 def save_assessment(reg_no, ai_level, vitals, alert, pain, odds=None, department=None, quick=None):
@@ -365,12 +391,13 @@ def join_line(reg_no, level, danger, department=None, department_how=None, revie
         return _join(reg_no, level, danger, department, department_how, review)
 
 
-def admit(reg_no, level, danger, department=None, department_how=None, review=None):
-    """What the nurse station does through the web: join the line, and for level 1 or 2 go to the
-    resuscitation team in the same breath. One lock for all of it, so nobody else can call the patient in
-    between. Returns (ticket, where the patient was sent, or None when they wait in line)."""
+def admit(reg_no, level, danger, department=None, department_how=None, review=None, note=None, summary_ok=True):
+    """What the nurse station does through the web: join the line, write the patient summary for the doctor,
+    and for level 1 or 2 go to the resuscitation team in the same breath. One lock for all of it, so nobody
+    else can call the patient in between. Returns (ticket, where the patient was sent, or None when they wait)."""
     with _lock, _conn:
         ticket = _join(reg_no, level, danger, department, department_how, review)
+        _write_summary(reg_no, note, summary_ok)
         if level > 2:
             return ticket, None
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
@@ -493,7 +520,7 @@ def call_for_doctor(doctor_reg):
             "reason": f"Called by {doctor['name']}: first in line for {department.lower()}."}
 
 
-def refer(reg_no, level, reason, department=None):
+def refer(reg_no, level, reason, department=None, note=None, summary_ok=True):
     """The nurse sends a critical patient straight to a doctor, past the line.
 
     Her reason is stored so the doctor can read it. The doctor is chosen by the same rules as
@@ -510,6 +537,7 @@ def refer(reg_no, level, reason, department=None):
         if department:
             _conn.execute("UPDATE visits SET department = ?, department_how = 'nurse' WHERE reg_no = ?",
                           (department, reg_no))
+        _write_summary(reg_no, note, summary_ok)
         patient = dict(_conn.execute("SELECT * FROM visits WHERE reg_no = ?", (reg_no,)).fetchone())
         doctor, match_reason = _send_to_doctor(patient)
     return {"ticket": ticket, "department": doctor["department"], "doctor": doctor["name"],
@@ -609,11 +637,15 @@ def doctor_patients(doctor_reg):
         clock = _meta("clock")
         rows = [dict(r) for r in _conn.execute(
             "SELECT * FROM visits WHERE status = 'with doctor' AND doctor_reg = ?", (doctor_reg,))]
+        for row in rows:
+            # A visit that never passed the nurse's screen (the made-up patients) has no stored summary:
+            # it is put together here from what is stored, by the template, without the language model.
+            row["summary"] = json.loads(row["summary"]) if row["summary"] else _summary_of(row, with_ai=False)
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
          "level": p["level"], "ai_level": p["ai_level"], "second_check": p["second_check"], "review": p["review"],
-         "insurance": p["insurance"], "card_end": p["card_end"],
+         "insurance": p["insurance"], "card_end": p["card_end"], "summary": p["summary"],
          "vitals": _measured(p["vitals"]),
          "answers": answers_for(p["reg_no"]), "referred": bool(p["referred"]),
          "referral_reason": p["referral_reason"], "waited": clock - p["arrived"]}
@@ -659,5 +691,5 @@ with _conn:
     _conn.executescript(SCHEMA)
 _columns = {r["name"] for r in _conn.execute("PRAGMA table_info(visits)")} | {
     "answers." + r["name"] for r in _conn.execute("PRAGMA table_info(answers)")}
-if not {"department", "referral_reason", "second_check", "person", "review", "checked_in", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
+if not {"department", "referral_reason", "second_check", "person", "review", "checked_in", "summary", "answers.topic"} <= _columns or _conn.execute("SELECT COUNT(*) AS n FROM doctors").fetchone()["n"] != len(SEED_DOCTORS):
     reset()

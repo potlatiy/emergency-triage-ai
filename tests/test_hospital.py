@@ -5,6 +5,7 @@ same answer every time.
 """
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1103,3 +1104,177 @@ def test_the_same_thing_in_other_words_is_not_invented():
     report = core._report_for_summary("bad stomach pain and vomiting", 40, "Female", [])
     assert core.checked_summary("The patient reports abdominal pain and vomiting.", "bad stomach pain", report)
     assert core.checked_summary("The patient reports belly pain and feeling sick.", "bad stomach pain", report)
+
+
+# ---------------------------------------------------------------- the patient summary on the doctor's screen
+
+class FakeModel:
+    """Stands in for the language model: answers every request with the text it was given."""
+
+    def __init__(self, text):
+        self.text = text
+
+    def __call__(self, request, timeout=None):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *problem):
+        return False
+
+    def read(self):
+        return json.dumps({"message": {"content": self.text}}).encode()
+
+
+def patient_at_the_nurse(complaint="crushing chest pain and sweating", story="I was climbing the stairs when my chest went tight"):
+    """A patient who has filled in the whole questionnaire on the phone. Returns the registration number."""
+    arrival = client.post("/api/register", json={"complaint": complaint, "age": 67, "sex": "Male", "use_model": False}).json()
+    answers = [{"question": q["question"], "kind": "danger", "answer": "Yes" if i == 0 else "No"}
+               for i, q in enumerate(arrival["questions"])]
+    answers += [{"question": "When did the chest pain start?", "kind": "extra", "topic": "onset", "answer": "Under an hour ago"},
+                {"question": arrival["pain"]["feel"]["question"], "kind": "extra", "topic": "feel", "answer": "Pressure or tightness"}]
+    if story:
+        answers.append({"question": core.OWN_WORDS["question"], "kind": "extra", "topic": "story", "answer": story})
+    assert client.post("/api/checkin", json={"reg_no": arrival["reg_no"], "pain": 4, "answers": answers}).status_code == 200
+    return arrival["reg_no"]
+
+
+def summary_on_the_doctors_card(reg_no):
+    doctor = db.visit_for(reg_no)["doctor_reg"]
+    card = next(p for p in client.get(f"/api/doctor/{doctor}/patients").json()["patients"] if p["reg_no"] == reg_no)
+    return card["summary"]
+
+
+def test_the_whole_chain_from_the_questionnaire_to_the_summary_on_the_doctors_screen(monkeypatch):
+    monkeypatch.setattr(core, "OLLAMA_URL", "http://127.0.0.1:9/api/chat")       # the language model is off
+    reg_no = patient_at_the_nurse()
+    card = client.get(f"/api/nurse/patient/{reg_no}").json()
+    assert card["status"] == "nurse" and len(card["answers"]) == 6
+    report = client.post("/api/triage", json={"reg_no": reg_no, "vitals": "feverish", "pain": 4}).json()    # no answers sent
+    assert len(db.answers_for(reg_no)) == 6                  # the answers from check-in stand
+    assert report["danger"] is True
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "department": "Cardiology", "review": "checked",
+                                        "note": "  Lives alone, daughter is on her way  "})
+    called = client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"]     # a cardiology doctor
+    assert called["reg_no"] == reg_no
+    summary = summary_on_the_doctors_card(reg_no)
+    said, nurse, meddy = summary["patient_said"], summary["nurse_found"], summary["meddy_suggested"]
+    assert "crushing chest pain and sweating" in said["text"] and said["written_by"] == "code"
+    assert said["own_words"] == "I was climbing the stairs when my chest went tight"
+    assert len(said["danger_yes"]) == 1 and said["danger_yes"][0] == card["answers"][0]["question"]
+    assert {"label": "Started", "value": "Under an hour ago"} in said["facts"]
+    assert {"label": "Pain", "value": "Pressure or tightness"} in said["facts"]
+    assert nurse["level"] == 3 and nurse["review"] == "checked" and nurse["note"] == "Lives alone, daughter is on her way"
+    assert nurse["measured"]["BT"] == 38.9 and nurse["warnings"] == ["high fever"] and nurse["referral_reason"] is None
+    assert meddy["level"] == report["level"] and 0 < meddy["sure"] <= 1 and meddy["department"] == report["department"]
+    assert meddy["flag"] == report["second_check"]["3"]
+
+
+def test_without_the_language_model_the_summary_uses_only_the_patients_words(monkeypatch):
+    monkeypatch.setattr(core, "OLLAMA_URL", "http://127.0.0.1:9/api/chat")
+    reg_no = patient_at_the_nurse(story=None)
+    client.post("/api/triage", json={"reg_no": reg_no})
+    refer(reg_no, department="Cardiology")
+    said = summary_on_the_doctors_card(reg_no)["patient_said"]
+    assert said["written_by"] == "code"
+    template = set("the patient a year old man woman reports report they answered yes no to of every danger sign signs "
+                   "describe pain as and say it was caused by an injury".split())
+    patients_own = set("crushing chest pain and sweating pressure or tightness".split()) | {"67", "1", "3"}
+    words = set(re.findall(r"[a-z0-9]+", said["text"].lower()))
+    assert words <= template | patients_own, words - template - patients_own
+
+
+@pytest.mark.parametrize("written", [
+    "The patient has chest pain. It is likely a heart attack.",                         # names a condition, guesses
+    "The patient has chest pain. This is a serious emergency.",                         # judges how serious it is
+    "The patient has chest pain. You should call an ambulance.",                        # advice
+    "The patient has pain spreading to the jaw and a swollen knee.",                    # things the patient never said
+])
+def test_ai_sentences_that_break_a_rule_never_reach_the_doctor(monkeypatch, written):
+    monkeypatch.setattr(core, "_summaries", {})
+    monkeypatch.setattr(core.urllib.request, "urlopen", FakeModel(written))
+    reg_no = patient_at_the_nurse()
+    client.get(f"/api/nurse/summary/{reg_no}")                                           # the nurse's screen asks the model
+    client.post("/api/triage", json={"reg_no": reg_no})
+    refer(reg_no, department="Cardiology")
+    text = summary_on_the_doctors_card(reg_no)["patient_said"]["text"].lower()
+    for broken in ("heart attack", "likely", "serious", "emergency", "you should", "ambulance", "jaw", "knee"):
+        assert broken not in text
+
+
+def test_good_ai_sentences_reach_the_doctor_unless_the_nurse_says_they_are_not_right(monkeypatch):
+    good = "The patient reports crushing chest pain and sweating. The pain started under an hour ago and feels like pressure."
+    monkeypatch.setattr(core, "_summaries", {})
+    monkeypatch.setattr(core.urllib.request, "urlopen", FakeModel(good))
+    passed_on, held_back = patient_at_the_nurse(), patient_at_the_nurse()
+    for reg_no in (passed_on, held_back):
+        assert client.get(f"/api/nurse/summary/{reg_no}").json() == {"source": "ai", "text": good}
+        client.post("/api/triage", json={"reg_no": reg_no})
+    client.post("/api/refer", json={"reg_no": passed_on, "level": 3, "reason": "Looks unwell", "department": "Cardiology"})
+    client.post("/api/refer", json={"reg_no": held_back, "level": 3, "reason": "Looks unwell", "department": "Cardiology",
+                                    "summary_ok": False, "note": "The pain is in the back, not the chest"})
+    said = summary_on_the_doctors_card(passed_on)["patient_said"]
+    assert said["text"] == good and said["written_by"] == "ai"
+    other = summary_on_the_doctors_card(held_back)
+    assert other["patient_said"]["written_by"] == "code" and other["patient_said"]["text"] != good
+    assert other["nurse_found"]["note"] == "The pain is in the back, not the chest"
+
+
+def test_the_nurses_note_is_short_and_a_blank_one_is_dropped():
+    reg_no = assessed_visit()
+    too_long = client.post("/api/line/join", json={"reg_no": reg_no, "level": 4, "note": "x" * 301})
+    assert too_long.status_code == 422 and db.visit_for(reg_no)["status"] == "registered"
+    client.post("/api/refer", json={"reg_no": reg_no, "level": 3, "reason": "Looks unwell", "note": "     "})
+    assert summary_on_the_doctors_card(reg_no)["nurse_found"]["note"] is None
+    assert db.visit_for(reg_no)["nurse_note"] is None
+
+
+def test_the_summary_is_written_once_and_cannot_change_after_the_patient_is_called(monkeypatch):
+    monkeypatch.setattr(core, "_summaries", {})
+    monkeypatch.setattr(core.urllib.request, "urlopen", FakeModel("The patient reports chest pain. The pain feels like pressure."))
+    reg_no = patient_at_the_nurse()
+    client.get(f"/api/nurse/summary/{reg_no}")
+    client.post("/api/triage", json={"reg_no": reg_no})
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 4, "note": "first note"})
+    client.post("/api/line/join", json={"reg_no": reg_no, "level": 3, "note": "second note"})   # still in the line: rewritten
+    assert json.loads(db.visit_for(reg_no)["summary"])["nurse_found"] == {**json.loads(db.visit_for(reg_no)["summary"])["nurse_found"],
+                                                                          "level": 3, "note": "second note"}
+    assert client.post("/api/doctor/call", json={"doctor_reg": "DR-1002"}).json()["called"]["reg_no"] == reg_no
+    before = summary_on_the_doctors_card(reg_no)
+    monkeypatch.setattr(core, "_summaries", {})                                         # the model would answer differently now
+    monkeypatch.setattr(core.urllib.request, "urlopen", FakeModel("The patient reports sweating. They also report chest pain."))
+    client.get(f"/api/nurse/summary/{reg_no}")
+    assert client.post("/api/line/join", json={"reg_no": reg_no, "level": 5, "note": "third note"}).status_code == 409
+    assert summary_on_the_doctors_card(reg_no) == before
+    assert before["patient_said"]["text"] == "The patient reports chest pain. The pain feels like pressure."
+
+
+def test_a_patient_sent_in_before_any_measurement_still_has_a_summary():
+    reg_no = new_visit("collapsed at the entrance", 70, "Female")
+    refer(reg_no, level=1, reason="Collapsed, pulse not felt")
+    summary = summary_on_the_doctors_card(reg_no)
+    assert summary["nurse_found"]["measured"] is None and summary["nurse_found"]["warnings"] == []
+    assert summary["nurse_found"]["referral_reason"] == "Collapsed, pulse not felt" and summary["nurse_found"]["level"] == 1
+    assert summary["meddy_suggested"] is None
+    assert summary["patient_said"]["text"] == 'The patient, a 70-year-old woman, reports "collapsed at the entrance".'
+
+
+def test_every_patient_on_a_doctors_screen_has_a_summary_also_the_made_up_ones():
+    for doctor in db.staff()["doctors"]:
+        for patient in client.get(f"/api/doctor/{doctor['reg_no']}/patients").json()["patients"]:
+            summary = patient["summary"]
+            assert set(summary) == {"patient_said", "nurse_found", "meddy_suggested"}
+            assert patient["complaint"] in summary["patient_said"]["text"] and summary["patient_said"]["written_by"] == "code"
+
+
+def test_the_summary_never_reaches_the_patients_phone_and_is_never_called_a_diagnosis():
+    reg_no = patient_at_the_nurse()
+    client.post("/api/triage", json={"reg_no": reg_no})
+    refer(reg_no, department="Cardiology", reason="Looks unwell")
+    me = client.get(f"/api/me/{reg_no}").json()
+    assert set(me) == {"ticket", "status", "position", "ahead", "doctor", "room", "day", "code"}
+    summary = summary_on_the_doctors_card(reg_no)
+    assert not any("diagnos" in key.lower() for key in all_keys(summary))
+    assert "diagnos" not in json.dumps(summary).lower()
+

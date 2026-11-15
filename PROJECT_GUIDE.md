@@ -81,7 +81,10 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
    Every verdict is counted: that count is the **test regime**, a running test of the app in use.
 4. **Waiting room.** The electronic line orders everyone by urgency, then by waiting time.
 5. **Doctor.** When called, the patient is matched to the right department and to the least busy doctor on
-   duty there. The doctor receives the complaint, level, vital signs and questionnaire answers.
+   duty there. The doctor's card opens with a patient summary in three parts (the patient said, the nurse
+   found, Meddy suggested), written once when the nurse sends the patient on. The nurse can hold back the AI
+   sentences and add a note of her own. The complaint, level, vital signs and every answer are below it.
+   The summary is not tested with real doctors.
 
 ### What we do not claim
 
