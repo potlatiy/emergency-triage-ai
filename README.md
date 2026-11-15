@@ -67,8 +67,9 @@ The line is ordered by plain rules. The AI only supplies each patient's level.
 | Person | Sees |
 |---|---|
 | Patient | Ticket number, place in line, what happens next. Never the level, the colours or the AI's probabilities. |
-| Nurse | The level, the probability of each level, the second-look flags and the whole line. She decides. |
-| Doctor | The note on the patient, including the level. |
+| Nurse | The patient's name, the level, the probability of each level, the second-look flags and the whole line. She decides. |
+| Doctor | The patient's name and the note on the patient, including the level. |
+| The AI models | The complaint, age, sex, how the patient came, the answers and the vital signs. Never the name or the insurance. |
 
 ## What we built
 
@@ -105,8 +106,10 @@ of people that keeps one open visit per insurance card, and counters. Nothing is
 the open visits and keeps them, and registration numbers are never given twice. Online, a copy of the file is kept
 in the Space's storage bucket every few seconds and taken back at start, so a restart or a new version of the code
 loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The doctors,
-their registration numbers and the patients already in the department are made up. No patient names are asked
-for, and no card number is stored (only a one-way fingerprint).
+their registration numbers and the patients already in the department are made up. Patients give a first and last
+name so that staff can call them; the name is shown to the nurse and the doctor only, never sent to either model or
+the language model, and never sent back to the patient's phone. In the demonstration everybody uses a made-up name
+("Make up a name"). No card number is stored (only a one-way fingerprint).
 
 **Two things have been tested on real data:** the urgency level and the choice of department. The questionnaire, the line and the choice of doctor are demonstrations.
 

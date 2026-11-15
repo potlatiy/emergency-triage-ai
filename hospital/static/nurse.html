@@ -81,8 +81,8 @@
     <h2 id="list-heading">Waiting for the nurse</h2>
     <p class="hint" id="list-note">Danger signs first, then who has waited longest. Updates by itself.</p>
     <form class="find" id="find">
-      <input type="text" id="code" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Code, e.g. 0021"
-             aria-label="The code on the patient's phone">
+      <input type="text" id="code" autocomplete="off" maxlength="40" placeholder="Code or name"
+             aria-label="The code on the patient's phone, or their name">
       <button class="mini" type="submit">Open</button>
     </form>
     <p class="error" id="find-error" role="alert"></p>
@@ -142,6 +142,7 @@ const LEVEL_NAME = { 1:"Resuscitation", 2:"Emergency", 3:"Urgent", 4:"Less urgen
 const panel = document.getElementById("panel");
 let cur = null;           // the patient open on the right: { reg, card, vitals, alert, result, nurseLevel, review }
 let shown = 0;            // counts the patients opened; an answer for an earlier one is dropped
+let lastList = [];        // the patients on the list, for finding one by name
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 async function api(path, body) {
@@ -188,6 +189,7 @@ async function loadList() {
   try { data = await api("/api/nurse/patients"); }
   catch (e) { document.getElementById("list-note").textContent = "Meddy can't reach the hospital server. Retrying…"; return; }
   document.getElementById("list-note").textContent = "Danger signs first, then who has waited longest. Updates by itself.";
+  lastList = data.patients;
   const box = document.getElementById("patients");
   if (!data.patients.length) {
     box.innerHTML = `<p class="empty">Nobody is waiting for the nurse. A patient appears here as soon as they finish check-in
@@ -197,7 +199,7 @@ async function loadList() {
   box.innerHTML = data.patients.map((p) => `
     <button type="button" class="pt ${p.danger ? "danger" : ""} ${cur && cur.reg === p.reg_no ? "on" : ""}" data-reg="${esc(p.reg_no)}">
       <span class="code">${esc(p.code)}</span>
-      <b>${esc(p.complaint)}</b>
+      <b>${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</b>
       <span class="hint">${p.age} years, ${esc(sexWord(p.sex))} · waiting ${p.waited} min
         ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.injury ? `<span class="tag">injury</span>` : ""}</span>
     </button>`).join("");
@@ -208,8 +210,15 @@ document.getElementById("patients").addEventListener("click", (event) => {
 document.getElementById("find").addEventListener("submit", (event) => {
   event.preventDefault();
   const typed = document.getElementById("code").value.trim();
-  document.getElementById("find-error").textContent = typed ? "" : "Type the code shown on the patient's phone.";
-  if (typed) openPatient(regFor(typed));
+  document.getElementById("find-error").textContent = typed ? "" : "Type the code shown on the patient's phone, or their name.";
+  if (!typed) return;
+  if (/\d/.test(typed)) { openPatient(regFor(typed)); return; }
+  // A name: the first patient on the list whose name contains what was typed.
+  const plain = (s) => s.toLowerCase().replace(/['\-]/g, "");          // "oneil" finds O'Neil
+  const words = plain(typed).split(/\s+/);
+  const match = lastList.find((p) => p.patient && words.every((w) => plain(p.patient).includes(w)));
+  if (match) openPatient(match.reg_no);
+  else document.getElementById("find-error").textContent = "Nobody with this name is waiting for the nurse.";
 });
 
 // ---------------------------------------------------------------- one patient on the right
@@ -269,7 +278,8 @@ async function openPatient(reg) {
     <dd>${esc(a.answer || "not answered")}</dd>`).join("");
   panel.innerHTML = `
     ${ids(card)}
-    <h2><span class="bigcode">${esc(card.code)}</span>${esc(card.complaint)}</h2>
+    <h2><span class="bigcode">${esc(card.code)}</span>${card.patient ? esc(card.patient) : esc(card.complaint)}</h2>
+    ${card.patient ? `<p class="lede" style="font-weight:700;color:var(--ink)">“${esc(card.complaint)}”</p>` : ""}
     <p class="lede">${card.age} years, ${esc(sexWord(card.sex))}. Came: ${esc(card.arrival.toLowerCase())}.
       Waiting for the nurse ${card.waited} min.</p>
     <div class="summary" id="summary"><p class="writing" style="margin:0"><i aria-hidden="true"></i>Meddy's AI is summing up what the patient reported…</p></div>
@@ -497,7 +507,7 @@ async function loadLine(message) {
   document.getElementById("line").innerHTML = `<p class="hint">Demo clock <b class="mono">${hours}:${minutes}</b> · ${data.patients.length} waiting</p>` +
     data.patients.map((p) => `<div class="line-row">
       <div class="pos" style="background:${LEVEL_COLOUR[p.level]}">${p.position}</div>
-      <div><div class="who-line">${esc(p.ticket)} · ${esc(p.who)}</div>
+      <div><div class="who-line">${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.who)}</div>
         <div class="hint">${LEVEL_ICON[p.level]} Level ${p.level}: ${esc(p.name)}, waited ${p.waited} min
         ${p.danger ? `<span class="tag red">danger sign</span>` : ""}${p.level >= 3 && p.waited >= 45 ? `<span class="tag">moved up</span>` : ""}</div></div>
     </div>`).join("");

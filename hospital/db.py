@@ -4,7 +4,8 @@ It holds:
 - departments : the nine departments and the resuscitation team
 - doctors     : every doctor's registration number, department, room and shift, whether they are on duty,
                 and how many patients they have now (always equal to their open visits)
-- visits      : every patient visit, under its own registration number, from arrival to the doctor.
+- visits      : every patient visit, under its own registration number and the patient's first and last name,
+                from arrival to the doctor.
                 Visits are never deleted: a new day closes the open ones and keeps them
 - answers     : what each patient answered at check-in
 - events      : the log of every step of every visit (registered, checked in, assessed, in line, sent to a
@@ -17,7 +18,9 @@ Registration numbers are never given twice: the counter keeps going across days 
 Online, a copy of the file is kept on lasting storage (MEDDY_KEEP_DIR, the Space's bucket) and taken back at
 start, so a restart or a new version of the code loses nothing.
 
-No names are stored for patients. The doctors are made up for the demonstration.
+Patients give a first and last name so that staff can call them. The name is shown to the nurse and the doctor
+only: it is never sent to either model or the language model, and the patient's phone does not get it back from
+the server. In the demonstration everybody uses a made-up name. The doctors are made up too.
 """
 
 import atexit
@@ -63,7 +66,7 @@ CREATE TABLE IF NOT EXISTS visits (
     ai_department TEXT, quick_advised INTEGER, review TEXT,
     summary TEXT, nurse_note TEXT,
     person TEXT REFERENCES people(person), insurance TEXT NOT NULL DEFAULT 'none', card_end TEXT,
-    arrival TEXT, pain INTEGER, checked_in INTEGER,
+    arrival TEXT, pain INTEGER, checked_in INTEGER, first_name TEXT, last_name TEXT,
     day INTEGER, registered_at TEXT, closed_at TEXT, closed_why TEXT,
     status TEXT NOT NULL DEFAULT 'registered', doctor_reg TEXT REFERENCES doctors(reg_no));
 CREATE TABLE IF NOT EXISTS people (
@@ -164,6 +167,11 @@ SEED_ARRIVALS = [
     ("ankle sprain", 30, "Male", 4, "normal", 4),
     ("ear pain", 19, "Female", 5, "normal", 4),
 ]
+# Names of the made-up patients: made up, and given in turn.
+MADE_UP_NAMES = [("Anna", "Keller"), ("Omar", "Haddad"), ("Lena", "Moretti"), ("Yusuf", "Demir"), ("Clara", "Nilsson"),
+                 ("Mateo", "Ruiz"), ("Ines", "Barros"), ("Tomas", "Novak"), ("Mia", "Laurent"), ("Daniel", "Okoro"),
+                 ("Sara", "Lindgren"), ("Ivan", "Petrenko"), ("Hana", "Sato"), ("Leo", "Fischer"), ("Eva", "Kowalska"),
+                 ("Noah", "Brennan"), ("Amira", "Saleh"), ("Jonas", "Weber"), ("Rosa", "Pires"), ("Felix", "Dumont")]
 # Insurance of the made-up patients (type, last four characters of the card): made up as well.
 MADE_UP_INSURANCE = [("public", "4471"), ("private", "0932"), ("public", "7715"), ("none", None), ("public", "2208")]
 # Patients already in the waiting room when the demonstration starts: (complaint, level, minutes ago)
@@ -264,12 +272,12 @@ def _made_up_visit(complaint, age, sex, level, preset, pain, alert, arrived, dep
     reg_no, ticket = f"P-2026-{number:04d}", f"A{_next_number('ticket'):03d}"
     _conn.execute(
         "INSERT INTO visits (reg_no, ticket, complaint, age, sex, level, ai_level, ai_odds, second_check, vitals, arrived, "
-        "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "department, department_how, insurance, card_end, status, doctor_reg, day, registered_at, first_name, last_name) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (reg_no, ticket, complaint, age, sex, level, ai_level, json.dumps(odds), core.second_check(odds, level),
          json.dumps({**vitals, "alert": alert, "pain": pain}), arrived, department,
          "made-up patient" if department else None, *MADE_UP_INSURANCE[number % len(MADE_UP_INSURANCE)],
-         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now()))
+         "with doctor" if doctor else "waiting", doctor, _meta("day"), _now(), *MADE_UP_NAMES[number % len(MADE_UP_NAMES)]))
     _event(reg_no, "made up", "system", "with " + doctor if doctor else "in the waiting room")
     return reg_no, ticket
 
@@ -296,7 +304,12 @@ def person_key(card):
     return cleaned, hashlib.sha256(("meddy-registry:" + cleaned).encode()).hexdigest()[:24]
 
 
-def register(complaint, age, sex, insurance="none", card=None):
+def full_name(visit):
+    """"Anna Keller", or None for a visit registered without a name (older visits)."""
+    return " ".join(n for n in (visit.get("first_name"), visit.get("last_name")) if n) or None
+
+
+def register(complaint, age, sex, insurance="none", card=None, first_name=None, last_name=None):
     """A new visit gets its registration number the moment the patient arrives.
 
     One person, one open visit: a card that already has a visit which is not finished is refused with
@@ -316,9 +329,9 @@ def register(complaint, age, sex, insurance="none", card=None):
                           "ON CONFLICT(person) DO UPDATE SET visits = visits + 1, insurance = excluded.insurance",
                           (person, insurance, card_end))
         reg_no = f"P-2026-{_next_number('visit'):04d}"
-        _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you, person, insurance, card_end, day, registered_at) "
-                      "VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
-                      (reg_no, complaint, age, sex, person, insurance, card_end, _meta("day"), _now()))
+        _conn.execute("INSERT INTO visits (reg_no, complaint, age, sex, you, person, insurance, card_end, day, registered_at, "
+                      "first_name, last_name) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+                      (reg_no, complaint, age, sex, person, insurance, card_end, _meta("day"), _now(), first_name, last_name))
         _event(reg_no, "registered", "patient's phone", complaint)
     return reg_no
 
@@ -378,8 +391,8 @@ def nurse_patients():
             row["danger"] = _danger_yes(row["reg_no"])
     rows.sort(key=lambda p: (-p["danger"], p["checked_in"], p["reg_no"]))
     return {"clock": clock, "patients": [
-        {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "complaint": p["complaint"], "age": p["age"],
-         "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"]}
+        {"reg_no": p["reg_no"], "code": code_for(p["reg_no"]), "patient": full_name(p), "complaint": p["complaint"],
+         "age": p["age"], "sex": p["sex"], "injury": bool(p["injury"]), "danger": p["danger"], "waited": clock - p["checked_in"]}
         for p in rows]}
 
 
@@ -392,6 +405,7 @@ def nurse_card(reg_no):
     with _lock:
         clock = _meta("clock")
     return {"reg_no": reg_no, "code": code_for(reg_no), "status": visit["status"], "complaint": visit["complaint"],
+            "first_name": visit["first_name"], "last_name": visit["last_name"], "patient": full_name(visit),
             "age": visit["age"], "sex": visit["sex"], "arrival": visit["arrival"] or "Walked in",
             "injury": bool(visit["injury"]), "pain": visit["pain"] or 0, "pain_word": core.pain_word(visit["pain"]),
             "insurance": visit["insurance"], "card_end": visit["card_end"], "ticket": visit["ticket"],
@@ -523,6 +537,7 @@ def _called(patient, clock):
     """Send one patient to a doctor and describe where they went. The caller holds the lock."""
     doctor, reason = _send_to_doctor(patient)
     return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
+            "patient": full_name(patient),
             "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
             "department": doctor["department"], "doctor": doctor["name"], "doctor_reg": doctor["reg_no"],
             "room": doctor["room"], "reason": reason}
@@ -541,7 +556,7 @@ def line():
     with _lock:
         clock, rows = _waiting()
     return {"clock": clock, "patients": [
-        {"reg_no": p["reg_no"], "ticket": p["ticket"], "who": p["complaint"], "level": p["level"],
+        {"reg_no": p["reg_no"], "ticket": p["ticket"], "who": p["complaint"], "patient": full_name(p), "level": p["level"],
          "name": core.LEVEL_NAMES[p["level"]], "danger": bool(p["danger"]), "you": bool(p["you"]),
          "waited": clock - p["arrived"], "position": i}
         for i, p in enumerate(rows, 1)]}
@@ -631,6 +646,7 @@ def call_for_doctor(doctor_reg):
                       (doctor_reg, patient["reg_no"]))
         _event(patient["reg_no"], "called by the doctor", doctor_reg, f"{doctor['name']}, {doctor['room']}")
     return {"reg_no": patient["reg_no"], "ticket": patient["ticket"], "who": patient["complaint"],
+            "patient": full_name(patient),
             "level": patient["level"], "you": bool(patient["you"]), "waited": clock - patient["arrived"],
             "department": department, "doctor": doctor["name"], "doctor_reg": doctor_reg, "room": doctor["room"],
             "reason": f"Called by {doctor['name']}: first in line for {department.lower()}."}
@@ -762,6 +778,7 @@ def doctor_patients(doctor_reg):
     rows.sort(key=lambda p: (-p["referred"], p["level"], p["reg_no"]))
     return {"doctor": dict(doctor), "patients": [
         {"reg_no": p["reg_no"], "ticket": p["ticket"], "complaint": p["complaint"], "age": p["age"], "sex": p["sex"],
+         "first_name": p["first_name"], "last_name": p["last_name"], "patient": full_name(p),
          "level": p["level"], "ai_level": p["ai_level"], "second_check": p["second_check"], "review": p["review"],
          "insurance": p["insurance"], "card_end": p["card_end"], "summary": p["summary"],
          "vitals": _measured(p["vitals"]),

@@ -107,9 +107,11 @@ Its most likely level put 19 patients whom experts rated level 1 or 2 at level 4
 was not trained on. It asks for a re-check on about a third of patients.
 
 **Is any patient data stored?**
-No names are asked for. The insurance card only makes sure one person has one open visit: we keep a one-way
-fingerprint of the number and its last four characters, never the number, and it never reaches the models.
-The demonstration database is wiped every time the server starts.
+The patient gives a first and last name so the nurse and the doctor can call them; the models and the language
+model never see it, and the patient's phone never gets it back. In the demonstration we use made-up names. The
+insurance card only makes sure one person has one open visit: we keep a one-way fingerprint of the number and its
+last four characters, never the number, and it never reaches the models. The database keeps every visit (a new day
+closes the open ones), with a copy in the Space's private storage so a restart loses nothing.
 
 **Which parts are AI and which are plain rules?**
 AI: the urgency level, the department suggestion, the choice and wording of the three history questions. Plain
