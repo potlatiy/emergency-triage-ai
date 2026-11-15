@@ -27,19 +27,27 @@ and not medical advice; it holds no real patients.
 
 ## Putting the latest `main` online
 
-It happens by itself. `watch.py` runs inside the Space and looks at GitHub every two minutes; when `main`
-has a new commit, it rebuilds the Space, which downloads it. The site is back about five minutes later.
-A change to the files in this folder reaches the Space the same way: after the rebuild, `watch.py` sees
-that they differ, copies them to the Space and Hugging Face builds again with them.
+It happens by itself. `watch.py` runs inside the Space and looks at GitHub every two minutes. When `main`
+has a new commit, it downloads the code, puts it in place and restarts only the hospital server, which
+`start.sh` runs in a loop. **The site is away for a few seconds.** Ollama keeps running, the database stays
+where it is, and open pages offer to reload.
+
+A full rebuild, which takes the site down for about five minutes, now happens only in two cases: a file in this
+folder changed (`watch.py` copies it to the Space and Hugging Face builds again), or the server does not answer
+after an update, for example because the new code needs a library the image does not have.
+
+Before this, every commit rebuilt the whole Space. On 15 November `main` changed 45 times, so the site was away
+for a large part of the afternoon, and a browser showed its own error page instead (a black one in dark mode).
 
 Its messages start with `[auto-update]` in the Space's logs (Space page → Logs → Container).
 
-It needs the Space secret `HF_TOKEN`: a Hugging Face token with write access to this Space (Space →
-Settings → Variables and secrets → New secret). Without it the Space simply stays on the version it was
-built with. By hand at any time: Space → Settings → **Factory rebuild**.
+A rebuild needs the Space secret `HF_TOKEN`: a Hugging Face token with write access to this Space (Space →
+Settings → Variables and secrets → New secret). The quick update needs nothing. By hand at any time: Space →
+Settings → **Factory rebuild**.
 
-**Before a live demo**, add the Space variable `MEDDY_AUTO_UPDATE` = `0`: otherwise a merge during the demo
-takes the site down for a few minutes and starts a fresh day. Delete the variable afterwards.
+**Before a recording**, add the Space variable `MEDDY_AUTO_UPDATE` = `0`: otherwise a merge during it restarts
+the server for a few seconds (or, when a file in this folder changed, rebuilds the Space). Delete the variable
+afterwards.
 
 A new Python library must also be added to the `pip install` line of the `Dockerfile`, which does not read
 `requirements.txt`; otherwise the Space stops at start.
