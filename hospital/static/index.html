@@ -4,9 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meddy · Digital hospital</title>
+<script>/* a reload of an open visit: hide the half-built page until the visit is restored (see start()) */
+try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me && v.me.reg) document.documentElement.classList.add("restoring"); } catch (e) {}</script>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=26">
+<link rel="stylesheet" href="/static/meddy-site.css?v=27">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -227,6 +229,9 @@
   .tips .section-head h3 { color:#155c3d; }
   .tips ul { margin:14px 0 0; padding-left:26px; font-size:1.12rem; line-height:1.5; }
   .tips li { margin:8px 0; }
+  details.tips > summary { cursor:pointer; list-style:none; } details.tips > summary::-webkit-details-marker { display:none; }
+  details.tips > summary::after { content:"Show"; margin-left:auto; font-weight:700; color:#155c3d; }
+  details.tips[open] > summary::after { content:"Hide"; }
   .tips .safety { list-style:none; padding:0; margin-top:16px; display:grid; gap:8px; }
   .tips .safety li { margin:0; padding:12px 16px; border-radius:16px; background:#fff; font-weight:700; }
   .tips .safety li::before { content:"!"; display:inline-grid; place-items:center; width:26px; height:26px; margin-right:10px;
@@ -422,7 +427,6 @@
       <img class="logo" src="/static/meddy-logo.webp" alt="Meddy" width="152" height="50"><span class="role-name">Digital hospital, your triage buddy</span>
       <h1 class="sr-only">Meddy: digital hospital, the patient's phone</h1>
     </div>
-    <p>This is the patient's phone. Check in here, then show your code to the nurse. The nurse and the doctor work on their own screens.</p>
     <nav class="roles" aria-label="Meddy's screens">
       <a href="/" data-caption="The patient's phone" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>Patient</a>
       <a href="/nurse" data-caption="The nurse's screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 13h6M12 10v6"/></svg>Nurse</a>
@@ -499,16 +503,13 @@
 <footer class="bottom">
   <div class="wrap">
     <img class="foot-logo" src="/static/meddy-logo.webp" alt="Meddy" width="91" height="30">
-    <span class="disclaimer">This project is a prototype and is not medical advice.</span>
-    <span>Meddy never gives a diagnosis.</span>
+    <span class="disclaimer">Prototype, not medical advice. Meddy never gives a diagnosis.</span>
     <span>Made by Koch Team</span>
-    <span>Staff screens: <a href="/nurse" target="_blank" rel="noopener">nurse</a> · <a href="/doctor" target="_blank" rel="noopener">doctor</a></span>
-    <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=4"></script>
-<script src="/static/meddy-plan.js?v=17"></script>
+<script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-plan.js?v=18"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -590,7 +591,30 @@ function startOver(message) {
 // True when the hospital's answer is about the visit this page remembers, and not about another patient who
 // got the same registration number on a later day.
 const sameVisit = (now) => now.day === undefined || me.day === undefined || me.day === null || now.day === me.day;
+// A reload restores the visit under the white curtain ("Welcome back"), so the page never shows half-built,
+// and a bar at the top of the step says why the patient is not at the entrance, with a way to start again.
 async function start() {
+  const saved = kept(sessionStorage);
+  const restoring = !!(saved && saved.me && saved.me.reg) && !!window.MeddyCurtain;
+  if (restoring) MeddyCurtain.hold("Welcome back");
+  try { await restoreVisit(); }
+  finally {
+    document.documentElement.classList.remove("restoring");
+    if (restoring) {
+      MeddyCurtain.release();
+      if (me.reg && step !== "entrance") welcomeBack();
+    }
+  }
+}
+function welcomeBack() {
+  const bar = document.createElement("div");
+  bar.className = "welcome-back";
+  bar.innerHTML = `<span><b>Welcome back.</b> Your visit was kept, so you are where you left off.</span>
+    <button type="button" class="textlink" id="start-new">Start a new visit</button>`;
+  panel.prepend(bar);
+  document.getElementById("start-new").addEventListener("click", () => startOver());
+}
+async function restoreVisit() {
   const saved = kept(sessionStorage), elsewhere = saved ? null : kept(localStorage);
   if (elsewhere && elsewhere.me && elsewhere.me.reg) { entrance(); offerToContinue(elsewhere); return; }
   if (!(saved && saved.me && saved.me.reg)) {
@@ -616,7 +640,8 @@ async function start() {
     if (writing) askFollowUp();
     return;
   }
-  startOver();                                                   // the visit is finished
+  if (now.status === "finished") return thanks(now.closed, now.note);      // the visit is over: say goodbye
+  startOver();
 }
 
 function offerToContinue(other) {
@@ -724,7 +749,7 @@ function walkTo(stop, room) {
   };
   // the same step drawn again (the waiting room when the line moves) stays still: see .panel.quiet
   panel.classList.toggle("quiet", shownStop !== 0 && stop === shownStop);
-  const moved = shownStop !== 0 && stop !== shownStop && window.MeddyCurtain;
+  const moved = shownStop !== 0 && stop !== shownStop && window.MeddyCurtain && !MeddyCurtain.covering();
   shownStop = stop;
   if (!moved) { setUp(); walk(); return; }
   holdOldStep();
@@ -753,7 +778,7 @@ function drawSeats(count) {
 }
 async function refreshDatabase() {
   // The seats on the floor plan fill up with the people waiting. The staff table lives on the nurse's screen.
-  try { drawSeats((await api("/api/staff")).visits.waiting); } catch (e) {}
+  try { drawSeats((await api("/api/waiting-room")).waiting); } catch (e) {}
 }
 
 function choice(id, options, value, labelledBy) {
@@ -775,16 +800,19 @@ const regTag = () => `<span class="regno">Registration no. ${esc(me.reg)}${me.ti
 // ---------------------------------------------------------------- 1. entrance
 // A name in any alphabet: letters, with single spaces, hyphens or apostrophes between them (the server checks the same).
 const NAME = /^\p{L}+(?:[ '\-]\p{L}+)*$/u;
-const MADE_UP_NAMES = [["Anna", "Keller"], ["Omar", "Haddad"], ["Lena", "Moretti"], ["Yusuf", "Demir"], ["Clara", "Nilsson"],
-  ["Mateo", "Ruiz"], ["Ines", "Barros"], ["Tomas", "Novak"], ["Mia", "Laurent"], ["Daniel", "Okoro"], ["Sara", "Lindgren"],
-  ["Ivan", "Petrenko"], ["Hana", "Sato"], ["Leo", "Fischer"], ["Eva", "Kowalska"], ["Amira", "Saleh"], ["Jonas", "Weber"]];
+// A made-up name that fits the sex chosen below, and never a doctor's surname.
+const MADE_UP_NAMES = {
+  Female: [["Anna", "Keller"], ["Lena", "Moretti"], ["Clara", "Nilsson"], ["Ines", "Barros"], ["Mia", "Laurent"], ["Sara", "Lindgren"],
+           ["Hana", "Sato"], ["Eva", "Kowal"], ["Amira", "Saleh"], ["Rosa", "Pires"], ["Julia", "Berg"], ["Nora", "Quist"]],
+  Male: [["Omar", "Rahimi"], ["Yusuf", "Demir"], ["Mateo", "Ruiz"], ["Tomas", "Hrabal"], ["Daniel", "Okoro"], ["Ivan", "Petrenko"],
+         ["Leo", "Marchetti"], ["Noah", "Whitlock"], ["Jonas", "Weber"], ["Felix", "Dumont"], ["Karl", "Eklund"], ["Hugo", "Lemaire"]] };
 function entrance() {
   walkTo(1);
   panel.innerHTML = `
     ${head("patient")}
     ${stepNo(1)}
     <h2>You arrive</h2>
-    <p class="lede">Tell us who you are and what is wrong, in your own words. Your visit also gets a number.</p>
+    <p class="lede">Tell us who you are and what is wrong.</p>
     <div class="row">
       <div><label for="first-name">First name</label><input type="text" id="first-name" maxlength="40" autocomplete="off"
         autocapitalize="words" spellcheck="false" value="${esc(me.firstName)}"></div>
@@ -792,10 +820,12 @@ function entrance() {
         autocapitalize="words" spellcheck="false" value="${esc(me.lastName)}"></div>
     </div>
     <div class="card-tools"><button type="button" class="mini" id="made-up-name">Make up a name</button></div>
-    <p class="hint">This is a demonstration: please use a made-up name. Only the nurse and the doctor see it, and it is
-      never given to the AI.</p>
+    <p class="hint">Demo: please use a made-up name.</p>
     <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
     <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
+    <p class="hint" id="spell" hidden>Did you mean: <b id="spell-text"></b>? <button type="button" class="mini" id="spell-use">Yes, use this</button></p>
+    <p class="hint" id="english" hidden><b>Meddy reads English only.</b> Please describe it in English, for example:
+      “headache since this morning”. You can still go on: the nurse reads what you wrote.</p>
     <div class="row">
       <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" inputmode="numeric" value="${me.age}"></div>
       <div><span class="label" id="sex-label">Sex</span>${choice("sex", ["Female", "Male"], me.sex, "sex-label")}</div>
@@ -807,21 +837,26 @@ function entrance() {
     ${choice("insurance", ["Public", "Private", "No insurance"],
              { public: "Public", private: "Private", none: "No insurance" }[me.insurance], "insurance-label")}
     <div id="card-row" ${me.insurance && me.insurance !== "none" ? "" : "hidden"}>
-      <label for="card">Card number</label>
-      <input type="text" id="card" maxlength="24" autocomplete="off" autocapitalize="characters" spellcheck="false"
+      <label for="member-id">Insurance member ID</label>
+      <input type="text" id="member-id" name="member-id" maxlength="24" autocomplete="off" autocapitalize="none"
+             autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other"
              placeholder="For example: MD-4829-1375">
       <div class="card-tools">
         <button type="button" class="mini" id="made-up">Make up a number</button>
       </div>
-      <p class="hint">This is a demonstration, so never type a real card number. Meddy keeps a one-way fingerprint of the
-        number and its last four characters, never the number itself. One card, one visit at a time.</p>
+      <p class="hint">Demo: never type a real card number.</p>
     </div>
     <p class="hint" id="no-insurance" ${me.insurance === "none" ? "" : "hidden"}>You will be seen all the same.</p>
-    <p class="hint">Insurance never changes your level or your place in line.</p>
     <p class="error" id="error" role="alert"></p>
     <button class="go" id="go">Register and go to check-in</button>`;
-  bindChoice("sex", (v) => { me.sex = v; remember("entrance"); });
-  const cardBox = document.getElementById("card");
+  bindChoice("sex", (v) => {
+    me.sex = v;
+    // A made-up name follows the sex: "Anna Keller" becomes a man's made-up name when "Male" is tapped after it.
+    const first = document.getElementById("first-name"), last = document.getElementById("last-name");
+    const other = MADE_UP_NAMES[v === "Male" ? "Female" : "Male"], at = other.findIndex(([f, l]) => f === first.value && l === last.value);
+    if (at >= 0) { [first.value, last.value] = MADE_UP_NAMES[v][at % MADE_UP_NAMES[v].length]; me.firstName = first.value; me.lastName = last.value; }
+    remember("entrance"); });
+  const cardBox = document.getElementById("member-id");
   bindChoice("insurance", (v) => { me.insurance = { Public: "public", Private: "private", "No insurance": "none" }[v];
     document.getElementById("card-row").hidden = me.insurance === "none";
     document.getElementById("no-insurance").hidden = me.insurance !== "none";
@@ -835,6 +870,25 @@ function entrance() {
     cardBox.dispatchEvent(new Event("input")); });
   const complaintBox = document.getElementById("complaint");
   complaintBox.focus({ preventScroll: true });
+  // A typing slip ("hurt pain", "breating") is offered back corrected; the patient decides.
+  let spellTimer = null;
+  const checkSpelling = () => { clearTimeout(spellTimer); spellTimer = setTimeout(async () => {
+    const typed = complaintBox.value.trim(), box = document.getElementById("spell"), english = document.getElementById("english");
+    if (!box || !complaintBox.isConnected) return;          // the patient has already moved on to the next step
+    if (typed.length < 3) { box.hidden = true; english.hidden = true; return; }
+    try {
+      const answer = await api("/api/spelling", { text: typed });      // in the body: never in the address
+      if (complaintBox.value.trim() !== typed || !box.isConnected) return;
+      document.getElementById("spell-text").textContent = answer.text; box.hidden = !answer.changed;
+      // Not one word Meddy knows, and letters outside English: most likely another language.
+      english.hidden = answer.understood !== false || !/[^\u0000-\u024f\s\d.,!?'"()\-]/.test(typed);
+    } catch (e) { box.hidden = true; english.hidden = true; }
+  }, 500); };
+  complaintBox.addEventListener("input", checkSpelling);
+  checkSpelling();
+  document.getElementById("spell-use").addEventListener("click", () => {
+    complaintBox.value = document.getElementById("spell-text").textContent; document.getElementById("spell").hidden = true;
+    complaintBox.dispatchEvent(new Event("input")); complaintBox.dispatchEvent(new Event("change")); });
   // Whatever is typed is kept, so a reload before registering does not empty the form.
   const keepDraft = () => { me.complaint = complaintBox.value; me.arrival = document.getElementById("arrival").value;
     me.firstName = document.getElementById("first-name").value; me.lastName = document.getElementById("last-name").value;
@@ -843,7 +897,8 @@ function entrance() {
   for (const id of ["complaint", "first-name", "last-name"]) document.getElementById(id).addEventListener("input", () => {
     document.getElementById(id).removeAttribute("aria-invalid"); keepDraft(); });
   document.getElementById("made-up-name").addEventListener("click", () => {
-    const [first, last] = MADE_UP_NAMES[Math.floor(Math.random() * MADE_UP_NAMES.length)];
+    const names = MADE_UP_NAMES[me.sex] || MADE_UP_NAMES.Female;
+    const [first, last] = names[Math.floor(Math.random() * names.length)];
     document.getElementById("first-name").value = first; document.getElementById("last-name").value = last;
     for (const id of ["first-name", "last-name"]) document.getElementById(id).removeAttribute("aria-invalid");
     document.getElementById("error").textContent = ""; keepDraft(); });
@@ -867,7 +922,7 @@ function entrance() {
     }
     if (!me.complaint) { error.textContent = "Tell us what is wrong first.";
       complaintBox.setAttribute("aria-invalid", "true"); complaintBox.focus(); return; }
-    if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Enter an age between 15 and 110.";
+    if (!(me.age >= 15 && me.age <= 110)) { error.textContent = "Meddy is for adults: enter an age between 15 and 110. Children are seen at the desk.";
       document.getElementById("age").setAttribute("aria-invalid", "true"); document.getElementById("age").focus(); return; }
     const card = cardBox.value.replace(/[\s\-./]/g, "");
     if (!me.insurance) { error.textContent = "Choose your insurance. If you have none, tap “No insurance”.";
@@ -957,8 +1012,7 @@ function checkin() {
     ${head("patient")}
     ${stepNo(2)}
     <h2>Quick check</h2>
-    <p class="lede">A few taps, then you go to the nurse. The questions were chosen for the kind of problem you described.
-      Meddy does not tell you what is wrong: only a doctor can.</p>
+    <p class="lede">A few taps, then you go to the nurse.</p>
     <section class="section sec-danger">
       ${sectionHead("danger", "Is any of this true for you?", "Tap each one you would answer yes to. A yes moves you up the line.")}
       <div class="ticks" id="ticks" role="group" aria-label="Danger signs">
@@ -968,8 +1022,11 @@ function checkin() {
     </section>
     <section class="section sec-pain">
       ${sectionHead("pain", "About the pain")}
-      <div class="q"><p id="feel-label">${esc(me.painForm.feel.question)}</p>
-        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.concat(me.painForm.none).map((c) =>
+      ${me.painForm.mentioned === false ? `<div class="q"><p id="any-pain-label">Do you have any pain?</p>${choice("any-pain", ["Yes", "No"],
+        me.feel === null ? null : me.feel === me.painForm.none ? "No" : "Yes", "any-pain-label")}</div>` : ""}
+      <div class="q" id="feel-q" ${me.painForm.mentioned === false && (me.feel === null || me.feel === me.painForm.none) ? "hidden" : ""}>
+        <p id="feel-label">${esc(me.painForm.feel.question)}</p>
+        <div class="choice chips" id="feel" role="group" aria-labelledby="feel-label">${me.painForm.feel.choices.concat(me.painForm.mentioned === false ? [] : [me.painForm.none]).map((c) =>
           `<button type="button" data-v="${esc(c)}" class="${c === me.feel ? "on" : ""}" aria-pressed="${c === me.feel}">${esc(c)}</button>`).join("")}</div></div>
       <div class="q"><p id="injury-label">Was this caused by an injury?</p>${choice("injury", ["Yes", "No"], me.injury ? "Yes" : "No", "injury-label")}</div>
     </section>
@@ -1003,14 +1060,22 @@ function checkin() {
   // server says which score stands for "there is pain" (the typical score in our data); no pain is 0.
   bindChoice("feel", (v) => { me.feel = v; me.pain = v === me.painForm.none ? 0 : me.painForm.score;
     document.getElementById("error").textContent = ""; remember(); });
+  if (me.painForm.mentioned === false) bindChoice("any-pain", (v) => {
+    const feelQ = document.getElementById("feel-q");
+    if (v === "No") { me.feel = me.painForm.none; me.pain = 0; feelQ.hidden = true; }
+    else { if (me.feel === me.painForm.none) me.feel = null; feelQ.hidden = false; }
+    for (const b of document.getElementById("feel").children) { b.classList.toggle("on", b.dataset.v === me.feel); b.setAttribute("aria-pressed", b.dataset.v === me.feel); }
+    document.getElementById("error").textContent = ""; remember(); });
   document.getElementById("go").addEventListener("click", async () => {
     if (!me.noDanger && !danger.some(([q]) => q.answer === "Yes")) {
       document.getElementById("error").textContent = "Tap what is true for you under “Is any of this true for you?”, or tap “No, none of these”.";
       ticks.scrollIntoView({ block: "center" }); ticks.firstElementChild.focus({ preventScroll: true }); return; }
     if (me.feel === null) {
-      document.getElementById("error").textContent = "Tap what the pain feels like. If nothing hurts, tap “No pain”.";
-      document.getElementById("feel").scrollIntoView({ block: "center" });
-      document.getElementById("feel").firstElementChild.focus({ preventScroll: true }); return; }
+      const ask = me.painForm.mentioned === false && document.getElementById("feel-q").hidden;
+      document.getElementById("error").textContent = ask ? "Tap whether you have any pain."
+        : me.painForm.mentioned === false ? "Tap what the pain feels like." : "Tap what the pain feels like. If nothing hurts, tap “No pain”.";
+      const target = document.getElementById(ask ? "any-pain" : "feel");
+      target.scrollIntoView({ block: "center" }); target.firstElementChild.focus({ preventScroll: true }); return; }
     danger.forEach(([q]) => { if (q.answer !== "Yes") q.answer = "No"; });
     const story = (me.story || "").trim();
     const answers = [...me.questions, { ...me.painForm.feel, answer: me.feel },               // last, so nothing above shifts
@@ -1045,13 +1110,11 @@ function atNurse() {
     <h2>Show this code to the nurse</h2>
     <div class="place">
       <span class="num code" aria-hidden="true">${esc(me.code || me.reg.slice(-4))}</span>
-      <p>Your code<b>${esc(me.code || me.reg.slice(-4))}</b></p>
+      <p aria-label="Your code: ${esc(me.code || me.reg.slice(-4))}">Your code<b aria-hidden="true">for the nurse</b></p>
       <div class="qr-code small" id="nurse-qr" aria-hidden="true"></div>
     </div>
-    <p class="lede">Your answers are with the nurse. She will call your code, measure your blood pressure, pulse and
-      temperature, and then this screen moves on by itself.</p>
+    <p class="lede">The nurse will call your code. This screen moves on by itself.</p>
     <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
-    <p class="hint">The nurse can also scan the square code with her phone: it opens your answers on her screen.</p>
     ${shows()}
     <div id="worse-box"></div>
     <p class="error" id="error" role="alert"></p>`;
@@ -1073,20 +1136,20 @@ function atNurse() {
     if (now.status === "nurse" && Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) drawWorse(now.worse);
     if (now.status === "waiting") waiting("The nurse is done. You are in the waiting room now.");
     else if (now.status === "called") doctor({ doctor: now.doctor, room: now.room, ticket: now.ticket });
-    else if (now.status === "finished") startOver();
+    else if (now.status === "finished") thanks(now.closed, now.note);
   }, 3000);
 }
 // ---------------------------------------------------------------- 4. waiting room
 // Only patients at levels 3-5 reach the waiting room, so only they see comfort tips.
 function tipsCard() {
   const tips = TIPS[me.topic] || TIPS["General medicine"];
-  return `<section class="tips" aria-labelledby="tips-title">
-    <div class="section-head"><span class="icon">${ICON.comfort}</span><div><h3 id="tips-title">While you wait: tips from Meddy</h3></div></div>
+  // Folded: tips for whoever wants them, not a wall of text for everyone.
+  return `<details class="tips">
+    <summary class="section-head"><span class="icon">${ICON.comfort}</span><div><h3 id="tips-title">While you wait: tips</h3></div></summary>
     <ul>${tips.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
     <ul class="safety">${SAFETY.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
-    <p class="source">Comfort tips for this kind of complaint, written with an AI assistant from
-    common first-aid advice. Not yet checked by a clinician. Not medical advice.</p>
-  </section>`;
+    <p class="source">General first-aid comfort tips, not checked by a clinician. Not medical advice.</p>
+  </details>`;
 }
 // The patient's phone shows only what GET /api/me sends: the ticket and the place in line. Never the level,
 // a colour or a promised time. The whole line with levels is the nurse's screen, kept in a closed drawer.
@@ -1106,7 +1169,8 @@ async function waiting(message) {
   if (run !== tick) return;                                             // a newer screen is already being drawn
   if (!sameVisit(mine)) { startOver(); return; }
   if (mine.status === "called") { doctor({ doctor: mine.doctor, room: mine.room, ticket: mine.ticket }); return; }
-  if (mine.status !== "waiting") { startOver(); return; }               // finished, or no longer in the line
+  if (mine.status === "finished") { thanks(mine.closed, mine.note); return; }     // the nurse closed the visit
+  if (mine.status !== "waiting") { startOver(); return; }
   remember("waiting");
   const ahead = mine.ahead === 0 ? "You are next" : `${mine.ahead} ${mine.ahead === 1 ? "person is" : "people are"} ahead of you`;
   panel.innerHTML = `
@@ -1118,14 +1182,15 @@ async function waiting(message) {
       <p>Your place in line<b>${ahead}</b></p>
       <div class="clock">Your ticket<b>${esc(mine.ticket)}</b></div>
     </div>
-    <p class="lede">Please wait until your ticket is called. The most urgent patients go first, and the longer you wait,
-    the further you move up. This screen updates by itself.</p>
+    ${mine.doctor ? `<p class="lede" style="font-weight:700;color:var(--ink)">Your doctor: ${esc(mine.doctor)}, ${esc(mine.room)}</p>` : ""}
+    ${mine.estimate ? `<div class="note estimate"><b>Estimated wait: ${mine.estimate.low === 0 ? `under ${mine.estimate.high} min`
+      : `about ${mine.estimate.low}–${mine.estimate.high} min`}</b>
+      <span class="hint">An estimate from how busy the doctors are right now, not a promise: a more urgent patient may go first.</span></div>` : ""}
+    <p class="lede">Please wait until your ticket is called. This screen updates by itself.</p>
     <div id="worse-box"></div>
     ${tipsCard()}
     ${message ? `<p class="hint moved" role="status">${message}</p>` : ""}
-    <p class="hint">Your doctor calls you from their own screen, and this screen then shows the room.
-      In the demo: press “Call my next patient” on the <a href="/doctor" target="_blank" rel="noopener">doctor's screen</a>
-      (or “Call next patient” on the <a href="/nurse" target="_blank" rel="noopener">nurse's screen</a>).</p>`;
+`;
   // The patient's phone asks again every 5 seconds, so it also follows a nurse working on another screen.
   watching = setInterval(async () => {
     try {
@@ -1137,6 +1202,12 @@ async function waiting(message) {
         waiting(now.status === "called" ? "" : checked ? "The nurse has checked you again." : "The line moved.");
       else if (Boolean(now.worse) !== Boolean(me.worse) && !justPressed()) {
         mine.worse = now.worse; drawWorse(now.worse, checked ? "The nurse has checked you again." : "");
+      }
+      else if (JSON.stringify(now.estimate) !== JSON.stringify(mine.estimate)) {      // the doctors got busier or freer
+        const box = document.querySelector(".estimate b");
+        mine.estimate = now.estimate;
+        if (box && now.estimate) box.textContent = "Estimated wait: " + (now.estimate.low === 0 ? `under ${now.estimate.high} min`
+          : `about ${now.estimate.low}–${now.estimate.high} min`);
       }
     } catch (e) { if (run === tick && e.status === 404) startOver(); }     // a new day was started on another screen
   }, 5000);
@@ -1160,9 +1231,7 @@ function drawWorse(isWorse, note) {
          ${inLine ? "She has been asked to check you again. Your place in line is kept." : "She has been asked to see you first."}
          <span class="hint">If it is an emergency, call out to the staff now.</span></div>`
     : `<button type="button" class="go light" id="worse" style="margin-top:18px">I feel worse</button>
-       <p class="hint" style="margin:8px 0 0">${note ? `<b>${esc(note)}</b> ` : ""}${inLine
-         ? "Tells the nurse to check you again. It does not change your place in line."
-         : "Tells the nurse that you feel worse, so that she sees you sooner."} If it is an emergency, call out to the staff.</p>
+       <p class="hint" style="margin:8px 0 0">${note ? `<b>${esc(note)}</b> ` : ""}If it is an emergency, call out to the staff.</p>
        <p class="error" id="worse-error" role="alert"></p>`;
   const button = document.getElementById("worse");
   if (button) button.addEventListener("click", async () => {
@@ -1195,11 +1264,34 @@ function doctor(called) {
       <div class="clock">Your ticket<b>${esc(called.ticket || "")}</b></div>
     </div>
     <p class="lede">Your doctor already has your answers and the nurse's measurements, so you tell your story once.</p>
-    <div class="note" style="margin-top:24px"><b>What was real here.</b> Meddy's level comes from a model tested on 1,267 real patients;
-    it matched experts 68% of the time against 85% for nurses, so the nurse sets the level and Meddy is her second check. The department
-    comes from a second model trained on the same patients' real diagnoses. Meddy suggests a level and a department and never a diagnosis.
-    The doctors are made up. Not medical advice.</div>
-    <button class="go" id="again">Start again as a new patient</button>`;
+    <button class="go light" id="again">Start again as a new patient</button>`;
+  document.getElementById("again").addEventListener("click", () => startOver());
+  // When the doctor closes the visit, this screen says thank you by itself.
+  const run = tick;
+  watching = setInterval(async () => {
+    try {
+      const now = await api("/api/me/" + encodeURIComponent(me.reg));
+      if (run !== tick) return;
+      if (now.status === "finished") thanks(now.closed, now.note);
+    } catch (e) { if (run === tick && e.status === 404) startOver(); }
+  }, 5000);
+}
+
+// The end of the visit. After the doctor: thank you and get well. Closed by the nurse: say so plainly.
+function thanks(closed, note) {
+  const seen = closed === "seen";
+  walkTo(5);
+  forget();                                       // a reload starts a new visit; this one is over
+  panel.innerHTML = `
+    ${head("patient")}
+    <h2>${seen ? "Thank you for visiting us" : "Your visit was closed"}</h2>
+    <div class="note ${seen ? "good" : ""}" style="margin-top:18px">${seen
+      ? "<b>Your visit is finished.</b> We hope you feel better soon. Follow what your doctor told you."
+      : closed === "removed" ? "The nurse closed your visit. If you still need help, talk to the staff or register again."
+      : "The hospital closed your visit. If you still need help, please register again."}</div>
+    ${seen && note ? `<div class="note" style="margin-top:14px"><b>From your doctor</b><blockquote style="margin:8px 0 0;padding:10px 14px;border-left:4px solid #5a45b8;border-radius:10px;background:#f1eefc;font-size:1.1rem">${esc(note)}</blockquote></div>` : ""}
+    ${seen ? `<p class="lede">If you feel worse, come back straight away or call your emergency number.</p>` : ""}
+    <button class="go" id="again">Start a new visit</button>`;
   document.getElementById("again").addEventListener("click", () => startOver());
 }
 

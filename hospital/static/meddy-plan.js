@@ -11,27 +11,30 @@
 //     the line, through the doors, to the next room; they do not jump and they do not cut through walls,
 //   - every stop has its number on its room: done stops get a tick, the room the patient is in has a blue frame,
 //   - people sit on the seats in the waiting room: as many as are really waiting (twelve seats),
-//   - the staff are on the plan: the triage nurse at her desk, three of the doctors on duty in the three
-//     doctor's rooms (the patient's own doctor among them once they are called), the resuscitation team in its
-//     bay. A doctor who has a patient has one lying on the bed,
+//   - the staff are on the plan: the triage nurse at her desk, the resuscitation team in its bay, and in the
+//     three doctor's rooms the doctors who called a ticket in the last minutes (the patient's own doctor among
+//     them once they are called),
 //   - pointing at a room or at a person, tapping them or reaching them with the keyboard opens a small note.
 //     A room's note says what happens there and shows the way to it. A person's note says who they are: the
-//     patient's own visit, a doctor's name, department, room and whether they are free, how busy the nurse is.
+//     patient's own visit, a doctor's name, room and the ticket they called.
 //
-// What a patient's phone may say about OTHER patients is nothing: no name, no complaint, no level. Their note
-// only says that they are waiting, or which doctor they are with. This file never asks the server for the line.
+// A patient's phone is told nothing about OTHER patients: no name, no complaint, no level. Their note only says
+// that they are waiting. The staff table is staff only, so this page does not ask for it either: it asks for
+// the waiting room's public board (/api/board: tickets called and to which room), and the seats are counted
+// by the page itself (/api/waiting-room).
+//
 // The nurse's screen has the same plan as a view of the whole department (an empty box with the id "staff-plan"
 // turns it on). Nobody is "YOU" there. The people are the patients on the nurse's own lists: those waiting for
-// her stand in her room, the line sits on the seats in its order, patients with a doctor lie on the beds. Their
-// shoulders have the colour of their level and their notes give the name, the complaint, the level and the wait:
-// staff only, from the staff's own addresses (/api/line, /api/nurse/patients, /api/doctor/.../patients). Tapping
-// a patient opens their card on the nurse's screen. The patient's page never runs this part.
+// her stand in her room, the line sits on the seats in its order, a doctor who has patients has one on the bed.
+// Their shoulders have the colour of their level and their notes give the name, the complaint, the level and
+// the wait: staff only, from the staff's own addresses (/api/staff, /api/line, /api/nurse/patients,
+// /api/nurse/today). Tapping a patient opens their card on the nurse's screen. The plan never asks for a
+// doctor's own list: that address tells the hospital that a person sits at that doctor's screen.
 //
-// Nobody on the plan is invented: the people drawn are "YOU", the real number of people waiting, and the staff
-// as the hospital's staff table has them (/api/staff). The nurse is the nurse's station, which has no name.
-// The page's own plan stays in the page, hidden: it is still what the page updates, and this file only reads it
-// (which room is lit, where "YOU" stands, how many seats are taken, what the rooms are called). If this file
-// does not load, that plan is simply shown as before.
+// Nobody on the plan is invented. The nurse is the nurse's station, which has no name. The page's own plan
+// stays in the page, hidden: it is still what the page updates, and this file only reads it (which room is
+// lit, where "YOU" stands, how many seats are taken, what the rooms are called). If this file does not load,
+// that plan is simply shown as before.
 // Anyone who asks for reduced motion gets no walking and no pulsing: "YOU" is just put where they belong.
 (() => {
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -188,8 +191,8 @@
     // ---- what the picture shows right now
     const S = { place: 1, at: 1, walk: null, hover: 0, note: "", turn: FACE[1], doctors: [], team: null };
     const folk = {};                                          // everyone who can be pointed at: id -> where they are, their button, what their note says
-    let staff = null, loaded = 0;                             // the hospital's staff table, and when it was asked for
-    const D = { line: [], nurse: [], recheck: [], rooms: {}, now: {} };   // staff only: the lists, each shown doctor's patients, who is drawn where
+    let staff = null, board = null, loaded = 0;               // the staff table (staff only), the waiting room's public board, when they were asked for
+    const D = { line: [], nurse: [], recheck: [], today: [], now: {} };   // staff only: the nurse's lists, and who is drawn where
     const lines = {}, walked = {}, leads = {}, long = {};
     for (const w of WAY) {
       lines[w.id] = svg.querySelector(`.mp-way[data-way="${w.id}"]`);
@@ -261,7 +264,7 @@
     const tally = (n) => !staff ? "" : n === 3 ? `${many(D.nurse.length, "patient")} waiting for the nurse` + (D.recheck.length ? `, ${D.recheck.length} to see again` : "")
       : n === 4 ? `${many(D.line.length, "patient")} waiting` + (D.line.length ? `, the longest for ${Math.max(...D.line.map((p) => p.waited))} min` : "")
       : n === 5 ? duty() : n === 6 && S.team ? `${many(S.team.waiting, "patient")} with the team` : "";
-    const said = (id) => ward ? [names[id], tally(+id)] : [names[id], subs[id]].concat(+id === 5 ? [who.textContent, duty()] : []);
+    const said = (id) => ward ? [names[id], tally(+id)] : [names[id], subs[id]].concat(+id === 5 ? [who.textContent] : []);
     const stage = (n) => ward ? "" : n === S.place ? "You are here" : n === 6 ? "" : (S.place === 6 ? n <= 3 : n < S.place) ? "Done"
       : S.place < 5 && n === S.place + 1 ? "Next" : "Later";
     const frameOf = (id) => svg.querySelector(`.mp-frame[data-room="${id}"]`);
@@ -401,19 +404,14 @@
                  lines: [mine.reg && "Registration no. " + mine.reg, mine.ticket && "Ticket " + mine.ticket,
                          "Now at: " + said(S.place)[0] + (S.place === 5 && who.textContent ? ", " + who.textContent : "") + "."],
                  last: "Only you and the staff see your details." }; }, true);
-      // the nurse's station: how many patients have checked in and not yet been through her hands
-      person_("nurse", NURSE, () => {
-        const n = staff ? staff.visits["with nurse"] : 0, others = Math.max(0, n - 1), s = (k) => k === 1 ? "" : "s";
-        const line = S.place === 3 ? (others ? `Busy: you and ${others} other patient${s(others)} are waiting for the nurse.` : "You are the only one waiting for the nurse.")
-          : n ? `Busy: ${n} patient${s(n)} ${n === 1 ? "is" : "are"} waiting for the nurse.` : "Free now.";
-        return { title: "Triage nurse", lines: ["Checks every patient before a doctor: blood pressure, pulse, temperature.", line], last: "" }; });
-      CUBICLE.forEach((c, i) => {
-        person_("doc" + i, c.doctor, () => { const d = S.doctors[i] || {};
-          return { title: d.name || "Doctor", lines: [[d.department, d.room].filter(Boolean).join(" · "), busy(d.waiting || 0)], last: d.mine ? "Your doctor." : "" }; });
-        person_("bed" + i, c.bed, () => ({ title: "Another patient", lines: [`With ${(S.doctors[i] || {}).name || "the doctor"} now.`], last: PRIVATE }));
-      });
-      person_("team", RESUS.team, () => ({ title: "Resuscitation team", lines: ["Always on duty · Resus bay", busy(S.team ? S.team.waiting : 0)], last: "" }));
-      person_("resusbed", RESUS.bed, () => ({ title: "Another patient", lines: ["With the resuscitation team now."], last: PRIVATE }));
+      // the staff. A patient's phone gets no numbers about them: only who they are, and what the waiting room's
+      // board shows everyone (which ticket a doctor called, and when)
+      const ago = (n) => n < 1 ? "just now" : n === 1 ? "1 minute ago" : `${n} minutes ago`;
+      person_("nurse", NURSE, () => ({ title: "Triage nurse", lines: ["Checks every patient before a doctor: blood pressure, pulse, temperature.",
+        S.place === 3 ? "You are waiting for the nurse now." : ""], last: "" }));
+      CUBICLE.forEach((c, i) => person_("doc" + i, c.doctor, () => { const d = S.doctors[i] || {};
+        return { title: d.doctor || "Doctor", lines: [d.room, d.ticket ? `Called ticket ${d.ticket} ${ago(d.minutes_ago)}.` : ""], last: d.mine ? "Your doctor." : "" }; }));
+      person_("team", RESUS.team, () => ({ title: "Resuscitation team", lines: ["Always on duty · Resus bay"], last: "" }));
       for (let i = 0; i < 12; i++)
         person_("seat" + i, [SEAT_X[i % 6], SEAT_Y[Math.floor(i / 6)]], () => ({ title: "Another patient", lines: ["Waiting to be called."], last: PRIVATE }));
     } else {
@@ -422,6 +420,7 @@
                             p.danger && "Danger sign."].filter(Boolean).join(" ");
       const about = (id, more, open) => { const p = D.now[id];
         return !p ? { title: "Nobody here", lines: [], last: "" }
+          : p.unknown ? { title: "A patient", lines: [...more(p), "Not one of this screen's patients: their card is on the doctor's screen."], last: "" }
           : { title: [p.ticket || p.code, p.patient || "No name given"].filter(Boolean).join(" · "),
               lines: [p.who || p.complaint, p.level ? `Level ${p.level}: ${LEVEL[p.level][1]}.` : "No level yet: not measured.", ...more(p), flags(p)],
               last: open ? "Tap to open their card." : "" }; };
@@ -433,9 +432,11 @@
       CUBICLE.forEach((c, i) => {
         person_("doc" + i, c.doctor, () => { const d = S.doctors[i] || {}, list = d.list || [];
           return { title: d.name || "Doctor", lines: [[d.department, d.room].filter(Boolean).join(" · "), busy(d.waiting || 0),
-                   list.length ? "Patients: " + list.map((p) => p.ticket || p.reg_no).join(", ") + "." : ""], last: "" }; });
-        person_("bed" + i, c.bed, () => { const d = S.doctors[i] || {}, list = d.list || [];
-          return about("bed" + i, () => [`With ${d.name}, ${d.room}.`, list.length > 1 && `${many(list.length - 1, "more patient")} with this doctor.`], false); });
+                   d.queue ? `${many(d.queue, "patient")} in the line chosen for this doctor.` : "",
+                   d.free_in_minutes !== null && d.free_in_minutes !== undefined ? `Free in about ${d.free_in_minutes} min.` : "",
+                   list.length ? "From this screen: " + list.map((p) => p.ticket || p.code).join(", ") + "." : ""], last: "" }; });
+        person_("bed" + i, c.bed, () => { const d = S.doctors[i] || {};
+          return about("bed" + i, () => [`With ${d.name}, ${d.room}.`, d.waiting > 1 && `${many(d.waiting - 1, "more patient")} with this doctor.`], false); });
       });
       person_("team", RESUS.team, () => ({ title: "Resuscitation team", lines: ["Always on duty · Resus bay", busy(S.team ? S.team.waiting : 0)], last: "" }));
       for (const id of ["resusbed1", "resusbed"])
@@ -460,18 +461,22 @@
       // a patient takes a place: the colour of their level on their shoulders, a ring when the nurse should look
       const put_ = (id, p) => { D.now[id] = p || null; show(id, Boolean(p));
         if (!p) return;
-        figure(id).querySelector(".mp-top").style.fill = p.level ? LEVEL[p.level][0] : UNMEASURED;
+        figure(id).querySelector(".mp-top").style.fill = p.level && LEVEL[p.level] ? LEVEL[p.level][0] : UNMEASURED;
         folk[id].hit.classList.toggle("alert", Boolean(p.worse || p.danger));
         folk[id].hit.classList.toggle("due", Boolean(p.recheck_due) && !(p.worse || p.danger)); };
       SIT.forEach((seat, i) => put_("seat" + seat, D.line[i]));
       QUEUE.forEach((at, i) => put_("queue" + i, D.nurse[i]));
+      // Who is with a doctor: the count is the staff table's. The patients of this screen among them are known
+      // by name (today's patients say "With Dr. Petrov, Room 5"); anyone else is drawn without a name.
+      const withThem = (d) => D.today.filter((p) => p.where === `With ${d.name}, ${d.room}`);
+      const onBed = (d, list, k) => list[k] || (d.waiting > k ? { unknown: true } : null);
       const shown = staff ? busiest() : [];
-      CUBICLE.forEach((c, i) => { const d = shown[i], list = d ? D.rooms[d.reg_no] || [] : [];
+      CUBICLE.forEach((c, i) => { const d = shown[i], list = d ? withThem(d) : [];
         S.doctors[i] = d ? { ...d, list } : null;
-        show("doc" + i, Boolean(d)); put_("bed" + i, list[0]); });
+        show("doc" + i, Boolean(d)); put_("bed" + i, d ? onBed(d, list, 0) : null); });
       S.team = staff ? staff.doctors.find((d) => d.reg_no === TEAM) || null : null;
-      const critical = D.rooms[TEAM] || [];
-      show("team", Boolean(S.team)); put_("resusbed1", critical[0]); put_("resusbed", critical[1]);
+      const critical = S.team ? withThem(S.team) : [];
+      show("team", Boolean(S.team)); put_("resusbed1", S.team ? onBed(S.team, critical, 0) : null); put_("resusbed", S.team ? onBed(S.team, critical, 1) : null);
       show("nurse", Boolean(staff));
       if (staff) {
         counts[3].textContent = D.nurse.length || ""; counts[4].textContent = D.line.length || "";
@@ -493,29 +498,27 @@
     function here() {
       const taken = seats.querySelectorAll(".seat.taken").length;
       SIT.forEach((seat, i) => { chairs[seat].classList.toggle("taken", i < taken); show("seat" + seat, i < taken); });
-      const on = onDuty().sort((a, b) => number(a) - number(b));
+      // Three doctor's rooms: the doctors who called a ticket in the last minutes, newest first, as the waiting
+      // room's board has them; and, once the patient has been called, their own doctor in the middle room with them.
+      const calls = [];
+      for (const call of board ? board.called : []) if (!calls.some((k) => k.room === call.room)) calls.push(call);
       const [name, room] = who.textContent.split(", ");
-      const called = S.place === 5 && staff ? staff.doctors.find((d) => d.name === name && d.room === room) : null;
-      const others = on.filter((d) => d !== called), shown = called ? [others[0], called, others[1]] : on.slice(0, 3);
-      CUBICLE.forEach((c, i) => { const d = shown[i];
-        S.doctors[i] = d ? { ...d, mine: d === called } : null;
-        show("doc" + i, Boolean(d)); show("bed" + i, Boolean(d) && d.waiting > (d === called ? 1 : 0)); });   // the called patient sits on the chair: the bed is for a second one
-      S.team = staff ? staff.doctors.find((d) => d.reg_no === TEAM) || null : null;
-      show("team", Boolean(S.team)); show("resusbed", Boolean(S.team) && S.team.waiting > (S.place === 6 ? 1 : 0));
-      show("nurse", Boolean(staff)); show("you", true);
+      const mine = S.place === 5 && name && room ? { doctor: name, room, mine: true } : null;
+      const others = calls.filter((call) => !mine || call.room !== room), shown = mine ? [others[0], mine, others[1]] : others.slice(0, 3);
+      CUBICLE.forEach((c, i) => { S.doctors[i] = shown[i] || null; show("doc" + i, Boolean(shown[i])); });
+      show("team", true); show("nurse", true); show("you", true);
     }
-    // The patient's page asks for the staff table only. The nurse's screen also asks for her own lists and for
-    // the patients of the doctors it shows.
+    // The patient's page asks for the waiting room's public board only. The nurse's screen asks for the staff
+    // table and her own lists.
     async function load() {
       loaded = Date.now();
       const get = async (path) => { const answer = await fetch(path); if (!answer.ok) throw new Error(path); return answer.json(); };
       try {
-        if (!ward) { staff = await get("/api/staff"); people(); return; }
-        const [table, line, list] = await Promise.all([get("/api/staff"), get("/api/line"), get("/api/nurse/patients")]);
+        if (!ward) { board = await get("/api/board"); people(); return; }
+        const [table, line, list, today] = await Promise.all([get("/api/staff"), get("/api/line"), get("/api/nurse/patients"),
+                                                              get("/api/nurse/today").catch(() => ({ patients: [] }))]);
         staff = table; D.line = line.patients; D.nurse = list.patients; D.recheck = list.recheck || [];
-        const rooms = [...busiest(), { reg_no: TEAM }];
-        const cards = await Promise.all(rooms.map((d) => get("/api/doctor/" + encodeURIComponent(d.reg_no) + "/patients").catch(() => ({ patients: [] }))));
-        D.rooms = {}; rooms.forEach((d, i) => { D.rooms[d.reg_no] = cards[i].patients; });
+        D.today = today.patients.filter((p) => p.status === "with doctor");
         people();
       } catch (e) {}
     }

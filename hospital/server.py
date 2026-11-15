@@ -9,13 +9,16 @@ and a small API the pages talk to.
 Everything is kept in the internal database, hospital.db (see db.py).
 """
 
+import hashlib
+import hmac
 import os
 import socket
+import time
 from pathlib import Path
 from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,12 +28,69 @@ import core
 import db
 
 STATIC = Path(__file__).parent / "static"
+# A fingerprint of the pages and the code this server started with. An open page compares it from time to time
+# and offers a reload when a new version is online: otherwise an old tab keeps showing the old screens.
+VERSION = hashlib.sha256(b"".join(f.read_bytes() for f in sorted([*STATIC.iterdir(), *Path(__file__).parent.glob("*.py")])
+                                  if f.is_file())).hexdigest()[:12]
 PORT = int(os.environ.get("MEDDY_PORT", 8000))
 # Off by default: the demo stays on this computer unless someone starts it with MEDDY_LAN=1.
 LAN = os.environ.get("MEDDY_LAN") == "1"
 # Set when the hospital runs online (see deploy/huggingface): the QR code then points to this address.
 PUBLIC_URL = os.environ.get("MEDDY_PUBLIC_URL") or None
 app = FastAPI(title="Digital hospital")
+
+
+# ---------------------------------------------------------------- staff only
+# The nurse's and the doctor's screens show patients' names and complaints, and their buttons can close every
+# visit. Online they are locked with a staff PIN, set as the Space secret MEDDY_STAFF_PIN. Without it (on a
+# laptop, in the tests) the screens are open as before. The patient's phone never needs the PIN: it may only
+# register, answer, and ask about its own visit.
+STAFF_PIN = os.environ.get("MEDDY_STAFF_PIN") or None
+STAFF_COOKIE = "meddy_staff"
+FOR_PATIENTS = ("/api/register", "/api/follow-up/", "/api/checkin", "/api/worse", "/api/me/", "/api/version",
+                "/api/spelling", "/api/address", "/api/waiting-room", "/api/staff/login", "/api/staff/session",
+                "/api/staff/logout",
+                "/api/board")
+_wrong_pins = {}            # address -> (wrong tries, refused until)
+
+
+def _staff_token():
+    return hmac.new(STAFF_PIN.encode(), b"meddy staff screens", hashlib.sha256).hexdigest()
+
+
+def is_staff(request):
+    return STAFF_PIN is None or hmac.compare_digest(request.cookies.get(STAFF_COOKIE, ""), _staff_token())
+
+
+# The chief doctor's panel has a PIN of its own (Space secret MEDDY_CHIEF_PIN): it shows the whole department at
+# once. Without that secret the staff PIN opens it too.
+CHIEF_PIN = os.environ.get("MEDDY_CHIEF_PIN") or None
+CHIEF_COOKIE = "meddy_chief"
+
+
+def _chief_token():
+    return hmac.new(CHIEF_PIN.encode(), b"meddy chief doctor's panel", hashlib.sha256).hexdigest()
+
+
+def is_chief(request):
+    if CHIEF_PIN is None:
+        return is_staff(request)
+    return hmac.compare_digest(request.cookies.get(CHIEF_COOKIE, ""), _chief_token())
+
+
+@app.middleware("http")
+async def watched(request, call_next):
+    """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching.
+    A request for a staff screen's data without the staff PIN is refused."""
+    path = request.url.path
+    if path.startswith("/api/"):
+        db.seen()
+        if path.startswith("/api/chief/"):
+            if not is_chief(request):
+                return JSONResponse({"detail": "Chief doctor only: enter the chief doctor's PIN."}, status_code=401)
+        elif not path.startswith(FOR_PATIENTS) and not is_staff(request):
+            return JSONResponse({"detail": "Staff only: enter the staff PIN."}, status_code=401)
+    return await call_next(request)
 
 
 def lan_ip():
@@ -85,6 +145,17 @@ class Answer(BaseModel):
     topic: str | None = Field(default=None, max_length=30)   # the history topic, for the doctor's overview
 
 
+class Vitals(BaseModel):
+    """What the nurse measured, typed in by hand. The limits only keep out typing slips; they are wide enough for
+    a very sick patient, because a value the form refuses is a sick patient the model never sees."""
+    SBP: float = Field(ge=40, le=260)           # blood pressure, upper number
+    DBP: float = Field(ge=20, le=160)           # blood pressure, lower number
+    HR: float = Field(ge=20, le=250)            # pulse
+    RR: float = Field(ge=4, le=70)              # breaths a minute
+    BT: float = Field(ge=30, le=43)             # temperature, degrees Celsius
+    Saturation: float = Field(ge=50, le=100)    # oxygen, percent
+
+
 class Assessment(BaseModel):
     # Every choice is spelled out. An unknown value is refused rather than quietly read as "normal" or "alert":
     # a silent default here would make a sick patient look well.
@@ -99,7 +170,8 @@ class Assessment(BaseModel):
     injury: bool = False
     alert: Literal["Alert", "Responds to voice", "Responds to pain", "Unresponsive"] = "Alert"
     pain: int = Field(default=0, ge=0, le=10)
-    vitals: Literal["normal", "feverish", "unstable"] = "normal"       # one of core.VITAL_PRESETS
+    # One of core.VITAL_PRESETS, or the nurse's own measurements.
+    vitals: Literal["normal", "feverish", "unstable"] | Vitals = "normal"
     answers: list[Answer] = Field(default=[], max_length=20)
 
 
@@ -125,6 +197,8 @@ class Joining(BaseModel):
     # A request with no note at all keeps the note she wrote before (a re-check); an empty one clears it.
     note: str | None = Field(default=None, max_length=300)
     summary_ok: bool = True
+    # The doctor the nurse chose from the short list, if she chose one: the patient then waits for this doctor.
+    doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
 class Referral(BaseModel):
@@ -136,6 +210,8 @@ class Referral(BaseModel):
     department: str | None = None
     note: str | None = Field(default=None, max_length=300)  # for the doctor's patient summary, like in Joining
     summary_ok: bool = True
+    # The doctor the nurse chose from the short list, if she chose one: the patient then waits for this doctor.
+    doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
 class Duty(BaseModel):
@@ -144,7 +220,14 @@ class Duty(BaseModel):
 
 
 class Finished(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     reg_no: str
+    note: str | None = Field(default=None, max_length=300)      # the doctor's note for the patient, confirmed
+
+
+class Tidying(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=300)
 
 
 class Worse(BaseModel):
@@ -153,6 +236,25 @@ class Worse(BaseModel):
 
 class Calling(BaseModel):
     doctor_reg: str
+    reg_no: str | None = None          # "Accept": this patient, who must be waiting for this doctor
+
+
+class Simulation(BaseModel):
+    on: bool
+
+
+class Managing(BaseModel):
+    reg_no: str
+    why: Literal["left without being seen", "sent home by the nurse", "registered by mistake"] | None = None
+
+
+class Login(BaseModel):
+    pin: str = Field(min_length=1, max_length=40)
+    role: Literal["staff", "chief"] = "staff"
+
+
+class Matching(BaseModel):
+    match: dict[str, float] = Field(max_length=20)
 
 
 def open_visit(reg_no):
@@ -276,6 +378,135 @@ def nurse_patients():
     return db.nurse_patients()
 
 
+@app.post("/api/nurse/still-fine")
+def still_fine(body: Managing):
+    """The nurse looked again at a patient in the waiting room and nothing changed: the re-check starts again."""
+    try:
+        done = db.still_fine(body.reg_no)
+    except db.NotHere:
+        raise HTTPException(409, "This patient is not in the waiting room.")
+    if done is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return done
+
+
+@app.post("/api/nurse/remove")
+def remove(body: Managing):
+    """The nurse takes a patient off her list or out of the line, with the reason. The visit is closed and kept."""
+    if body.why is None:
+        raise HTTPException(422, "Say why the patient is removed.")
+    try:
+        done = db.remove_visit(body.reg_no, body.why)
+    except db.NotHere:
+        raise HTTPException(409, "This patient is already with a doctor or gone.")
+    if done is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    return done
+
+
+@app.get("/api/nurse/today")
+def todays_patients():
+    """Today's patients and where each one went, for the nurse."""
+    return {"patients": db.todays_patients()}
+
+
+@app.get("/api/staff/session")
+def staff_session(request: Request, role: Literal["staff", "chief"] = "staff"):
+    """Does this browser still need the staff PIN (or, for the chief doctor's panel, the chief's)? "pin": whether
+    there is a PIN at all, so the page knows whether to offer "Lock this screen"."""
+    return {"locked": not (is_chief(request) if role == "chief" else is_staff(request)),
+            "pin": (CHIEF_PIN or STAFF_PIN if role == "chief" else STAFF_PIN) is not None}
+
+
+@app.post("/api/staff/login")
+def staff_login(body: Login, request: Request):
+    """The staff PIN opens the nurse's and the doctor's screens on this browser for 12 hours. After five wrong
+    tries from one address, it waits a minute before trying again."""
+    chief = body.role == "chief" and CHIEF_PIN is not None
+    pin, cookie, token = (CHIEF_PIN, CHIEF_COOKIE, _chief_token) if chief else (STAFF_PIN, STAFF_COOKIE, _staff_token)
+    if pin is None:
+        return {"locked": False}
+    who = request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip()
+    tries, until = _wrong_pins.get(who, (0, 0))
+    if until > time.time():
+        raise HTTPException(429, "Too many wrong tries. Wait a minute.")
+    # Compared as bytes: as text, a PIN typed with letters outside English made the comparison itself fail.
+    if not hmac.compare_digest(body.pin.strip().encode(), pin.encode()):
+        _wrong_pins[who] = (0, time.time() + 60) if tries + 1 >= 5 else (tries + 1, 0)
+        raise HTTPException(401, "That is not the staff PIN.")
+    _wrong_pins.pop(who, None)
+    answer = JSONResponse({"locked": False})
+    answer.set_cookie(cookie, token(), max_age=12 * 3600, httponly=True, samesite="lax",
+                      secure=request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
+    return answer
+
+
+@app.post("/api/staff/logout")       # open to anyone: locking a screen needs no PIN
+def staff_logout():
+    answer = JSONResponse({"locked": STAFF_PIN is not None})
+    answer.delete_cookie(STAFF_COOKIE)
+    answer.delete_cookie(CHIEF_COOKIE)
+    return answer
+
+
+@app.get("/api/waiting-room")
+def waiting_room():
+    """How many people wait, for the seats on the phone's floor plan. Nothing else: the staff list is staff only."""
+    return {"waiting": db.staff()["visits"]["waiting"]}
+
+
+@app.get("/api/board")
+def waiting_room_board(ticket: str | None = None):
+    """The waiting room's board (public): tickets called and to which room, how many wait, the usual wait now,
+    and with ?ticket=A004 where that ticket stands. No names, complaints or levels."""
+    return db.board(ticket[:10] if ticket else None)
+
+
+@app.get("/board")
+def board_page():
+    """The board on the waiting room's wall (static/board.html)."""
+    return FileResponse(STATIC / "board.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/chief")
+def chief_page():
+    """The chief doctor's panel (static/chief.html): the whole department at a glance."""
+    return FileResponse(STATIC / "chief.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/chief/report")
+def chief_report():
+    """Everything the chief doctor's panel shows, worked out from the database (db.chief_report)."""
+    return db.chief_report()
+
+
+@app.get("/api/version")
+def version():
+    return {"version": VERSION}
+
+
+class Typed(BaseModel):
+    text: str = Field(default="", max_length=200)
+
+
+@app.post("/api/spelling")
+def spelling(body: Typed):
+    """The complaint with typing slips put right, for the phone's "Did you mean ...?". Nothing is stored.
+
+    The words travel in the body of the request, never in its address: what a patient types about their health
+    must not end up in the address logs of a proxy standing in front of the hospital."""
+    fixed = core.spelling(body.text)
+    # "understood": Meddy found a symptom word it knows. When it does not (another language, no symptom named),
+    # the phone asks the patient to say it in English: the models read English only.
+    return {"text": fixed, "changed": fixed != body.text, "understood": bool(core.known_words(fixed))}
+
+
+@app.get("/api/spelling")
+def spelling_from_an_older_page(text: str = ""):
+    """The same, for a phone page opened before this version (it reloads itself when it sees the new one)."""
+    return spelling(Typed(text=text[:200]))
+
+
 @app.get("/api/nurse/patient/{reg_no}")
 def nurse_patient(reg_no: str):
     """One patient's card for the nurse: the complaint, how they came, and every answer from check-in."""
@@ -298,7 +529,7 @@ def nurse_summary(reg_no: str):
 @app.post("/api/triage")
 def triage(body: Assessment):
     visit = open_visit(body.reg_no)
-    vitals = core.VITAL_PRESETS[body.vitals]
+    vitals = core.VITAL_PRESETS[body.vitals] if isinstance(body.vitals, str) else body.vitals.model_dump()
     answers = checked_answers(visit, body.answers, body.injury)
     injury = body.injury or bool(visit["injury"])
     if answers:
@@ -326,6 +557,8 @@ def triage(body: Assessment):
     for option in result["department_options"]:
         option["doctor"] = db.likely_doctor(result["level"], option["department"])
     result["likely_doctor"] = db.likely_doctor(result["level"], result["department"])
+    # The best doctor for this patient and a short list of three more, each with how busy they are now.
+    result["doctors"] = db.doctor_choices(result["department_match"])
     # Keep the AI's suggestion and the measurements: the doctor's screen and the test regime need them later.
     try:        # the state is checked again inside the database: a doctor may have called the patient meanwhile
         db.save_assessment(body.reg_no, result["level"], vitals, body.alert, body.pain,
@@ -347,9 +580,11 @@ def join(body: Joining):
     try:        # the state is checked again inside the database, together with the change (two quick clicks)
         ticket, called = db.admit(body.reg_no, body.level, body.danger, body.department, body.department_how, body.review,
                                   note=(body.note or "").strip() or None, summary_ok=body.summary_ok,
-                                  keep_note=body.note is None)
+                                  keep_note=body.note is None, doctor_reg=body.doctor_reg)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
+    except db.UnknownDoctor:
+        raise HTTPException(422, "No such doctor to choose. Choose one from the list.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"ticket": ticket, "called": called, **db.line()}
@@ -394,9 +629,12 @@ def refer(body: Referral):
     known_department(body.department)
     try:
         return db.refer(body.reg_no, body.level, body.reason, body.department,
-                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok, keep_note=body.note is None)
+                        note=(body.note or "").strip() or None, summary_ok=body.summary_ok, keep_note=body.note is None,
+                        doctor_reg=body.doctor_reg)
     except db.AlreadySent:
         raise HTTPException(409, "This patient has already been sent to a doctor.")
+    except db.UnknownDoctor:
+        raise HTTPException(422, "No such doctor to choose. Choose one from the list.")
 
 
 @app.get("/api/doctor/{doctor_reg}/patients")
@@ -405,6 +643,7 @@ def doctor_patients(doctor_reg: str):
     screen = db.doctor_patients(doctor_reg)
     if screen is None:
         raise HTTPException(404, "No doctor with this registration number.")
+    db.watching(doctor_reg)         # a person plays this doctor now: the simulation leaves them alone
     return screen
 
 
@@ -413,11 +652,13 @@ def doctor_call(body: Calling):
     """The doctor calls their next patient: the first in line for their department. "called" is None when
     nobody is waiting for this doctor. A doctor who is off duty is refused (409)."""
     try:
-        called = db.call_for_doctor(body.doctor_reg)
+        called = db.call_for_doctor(body.doctor_reg, body.reg_no)
     except LookupError:
         raise HTTPException(404, "No doctor with this registration number.")
     except db.OffDuty:
         raise HTTPException(409, "This doctor is off duty and cannot call a patient.")
+    except db.NotForYou:
+        raise HTTPException(409, "This patient is no longer waiting for you.")
     if called:
         called["answers"] = db.answers_for(called["reg_no"])
     return {"called": called, **db.line()}
@@ -428,10 +669,21 @@ def finish(body: Finished):
     """The doctor closes a visit. The patient leaves the doctor's list, which gets one shorter."""
     if db.visit_for(body.reg_no) is None:
         raise HTTPException(404, "No visit with this registration number.")
-    closed = db.finish_visit(body.reg_no)
+    closed = db.finish_visit(body.reg_no, body.note or None)
     if closed is None:
         raise HTTPException(409, "This patient is not with a doctor.")
     return closed
+
+
+@app.post("/api/doctor/tidy")
+def tidy(body: Tidying):
+    """Meddy puts spelling and punctuation right in the doctor's note, and nothing else. Nothing is stored: the
+    doctor chooses the tidied note or their own, and confirms it when closing the visit."""
+    try:
+        tidied = core.tidy_note(body.text)
+    except ValueError:
+        raise HTTPException(503, "Meddy could not tidy the note just now. Your own words are fine.")
+    return {"text": tidied, "changed": tidied != body.text}
 
 
 @app.get("/api/staff")
@@ -445,6 +697,20 @@ def duty(body: Duty):
         raise HTTPException(400, "The resuscitation team is always on duty.")
     if not db.set_duty(body.reg_no, body.on_duty):
         raise HTTPException(404, "No doctor with this registration number.")
+    return db.staff()
+
+
+@app.post("/api/doctor-choices")
+def doctor_choices(body: Matching):
+    """The doctors the nurse can choose from, asked for again while she reads the report: who is free now."""
+    match = {name: value for name, value in body.match.items() if name in core.DEPARTMENT_NAMES and 0 <= value <= 1}
+    return db.doctor_choices(match)
+
+
+@app.post("/api/staff/simulation")
+def simulation(body: Simulation):
+    """Switch the simulated rest of the hospital on or off (made-up patients coming to the doctors and leaving)."""
+    db.set_simulation(body.on)
     return db.staff()
 
 
@@ -487,5 +753,6 @@ if __name__ == "__main__":
     # The database is kept between starts: everything from earlier is still there ("Start a new day" closes the
     # open visits). Online, a copy goes to lasting storage every few seconds (see db.start_keeping).
     db.start_keeping()
+    db.start_simulation()
     online = LAN or PUBLIC_URL
     uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning")

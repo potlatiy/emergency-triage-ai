@@ -24,9 +24,14 @@
 **Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
 
 **Try it online:** [the patient's phone](https://darkshdws-meddy.hf.space) ·
-[the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor).
-Open the three side by side: check in as a patient, open your code on the nurse's screen, then call yourself in
-from the doctor's screen. The phone follows by itself. (A free server: the first visit after a quiet day takes about a minute.)
+[the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor) ·
+[the waiting room's board](https://darkshdws-meddy.hf.space/board) · [the chief doctor's panel](https://darkshdws-meddy.hf.space/chief).
+**Judges: the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md).**
+Open the three side by side: check in as a patient, open your code on the nurse's screen and choose a doctor, then
+accept yourself on that doctor's screen ("New patient for you: are you free now?"). The phone follows by itself, to
+the room and to a thank-you when the doctor finishes. The nurse's and the doctor's screens ask for a staff PIN (see
+[JUDGES.md](JUDGES.md); the lock is part of what we built, see the limits). A free server: the first visit after a
+quiet day takes about a minute.
 
 ## The problem
 
@@ -56,9 +61,9 @@ How a visit would work, and how much of it we built and tested:
 | 2. Follow-up questions | The AI chooses three history questions for this complaint (for example when it started, or what was taken for it). The patient taps a quick answer, writes their own, or both, and can describe what happened in their own words. | Built, **not tested**. The answers go to the nurse and the doctor and never change the level. |
 | 3. Suggested level | At triage the nurse measures vital signs and enters them. The AI suggests a level from 1 to 5 with the probability of each level. When no level is likely enough, it says it is not sure. | **Built and tested.** |
 | 4. Number on the phone | After check-in the phone shows a short code for the nurse. Then it shows the ticket number and place in line, and finally the room to go to: never the level and never a promised time. | Built as a demo. The phone is its own screen and the server never sends it the level. It follows the visit by itself and keeps its place after a reload. |
-| 5. Nurse decides | On her own screen the nurse opens the patient by their code, reads what they said and a two-sentence AI summary of it, measures the vital signs, sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. In a critical case she sends the patient straight to a doctor herself, skipping the line, and records the reason. | Second-look flag **tested**. The screen is a demo; the AI summary is **not tested** (it is checked in plain code for guesses and diagnoses). Levels 1 and 2 already go straight to the resuscitation team automatically. The reason is written by hand and is required; the nurse picks the department, and the least busy doctor on duty there is chosen for her. Picking a doctor by name is not built. |
+| 5. Nurse decides | On her own screen the nurse opens the patient by their code, reads what they said and a two-sentence AI summary of it, measures the vital signs, sees the whole line, confirms or changes levels, and a patient the AI rates as more urgent than the nurse did is marked for a second look. In a critical case she sends the patient straight to a doctor herself, skipping the line, and records the reason. | Second-look flag **tested**. The screen is a demo; the AI summary is **not tested** (it is checked in plain code for guesses and diagnoses). Levels 1 and 2 already go straight to the resuscitation team automatically. The reason is written by hand and is required. Meddy suggests a doctor and a short list of three more, each marked free or busy, and the nurse picks one; a busy doctor can still be chosen, and the patient then waits in line for them. |
 | 6. Order of the line | Levels 1 and 2 always go first. A less urgent patient moves up one level for every 45 minutes waited, so nobody is stuck at the back. | Plain rules. Ordering effect **simulated**. |
-| 7. Doctor gets the note | When the patient is called, the system matches them to a department and to the least busy doctor on duty, and the doctor's card opens with a **patient summary** in three parts, each marked with who it comes from: what the patient said (the two AI sentences the nurse read, or plain sentences from the patient's own answers), what the nurse found (her level, the measurements, her note), and what Meddy suggested (its level, how sure it was, its flag). It is written when the nurse sends the patient on (and again if she re-checks them in the waiting room), so the doctor reads what the nurse saw. The full answers and measurements are below it. The patient tells their story once. | Built as a demo: the note is on the doctor's own screen (`/doctor`). The doctor calls the next patient of their department from the line ("Call my next patient"), and closes the visit with "Visit finished". The department choice is **tested**, the note itself is not. |
+| 7. Doctor gets the note | The nurse chooses the doctor (Meddy suggests the best match and a short list, each marked free or busy, and warns before she sends a patient straight in to a busy one). The chosen doctor's screen asks at once "New patient for you: are you free now?"; "Yes" calls the patient in, "Not now" keeps them under "Waiting for you" with an "Accept" button. The doctor's card opens with a **patient summary** in three parts, each marked with who it comes from: what the patient said (the two AI sentences the nurse read, or plain sentences from the patient's own answers), what the nurse found (her level, the measurements, her note), and what Meddy suggested (its level, how sure it was, its flag). It is written when the nurse sends the patient on (and again if she re-checks them in the waiting room), so the doctor reads what the nurse saw. The full answers and measurements are below it. The patient tells their story once. | Built as a demo: the note is on the doctor's own screen (`/doctor`). The doctor accepts a patient sent to them, or calls the next patient of their department ("Call my next patient"), and closes the visit with "Visit finished"; the patient's phone then says thank you. The department choice is **tested**, the note itself is not. |
 
 The line is ordered by plain rules. The AI only supplies each patient's level.
 
@@ -98,14 +103,34 @@ which rebuilds itself when `main` changes.
 | Check-in (phone) | A quick check for this complaint: three danger signs to tap, what the pain feels like, three optional history questions with quick answers and room to write, and "in your own words". Then the phone shows a code for the nurse | Danger questions come from a hand-written list chosen by the kind of complaint. The three history questions are chosen from six topics and worded on the spot by a small language model running on the same computer; the answers to tap are fixed lists. Check-in never waits for the model |
 | Nurse station (nurse's screen) | The nurse's list of patients who finished check-in, danger signs first. She opens one by tapping it, typing the code or scanning the QR code on the phone, and reads what the patient said with a two-sentence summary by the language model. Then Meddy's report: the patient at a glance, a suggested level, and the likely department and doctor. The nurse presses "Everything is correct" or "I want to check the patient myself". In a personal check she gives her own level, sees a "look again" flag when Meddy rates the patient more urgent, and can change the department or send a critical patient straight to a doctor, with a reason. Next to the level Meddy shows a likely range of levels and five real patients from the data who look most like this one | The two models tested in this project. The range and the similar patients are tested in [section 6](#6-a-range-of-levels-and-patients-like-this-one). Meddy says when a quick review is reasonable and when it advises a personal check. Every verdict is counted ("test regime") |
 | Waiting room (phone) | Your place in line, updated by itself, and an "I feel worse" button. One press puts the patient on top of the nurse's list for another look; it changes neither the level nor the place in line. The nurse measures again, Meddy writes a new report, and her new decision keeps the ticket and the minutes already waited. The nurse's screen also marks patients who have waited longer than their level allows without a second look | Plain rules: urgency first, then waiting time. A yes to a danger question counts as half a level. Re-check times: level 3 every 30 minutes, 4 every 60, 5 every 120, the reassessment times of the Canadian triage scale that the Korean scale of our data was built from |
-| Doctor (doctor's screen, phone) | Department and doctor. The doctor calls the next patient; the phone shows the room | A model trained on real diagnoses picks the department when it is at least 70% sure. Otherwise a key-word rule on the complaint decides. Then the database picks the least busy doctor who is on duty. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
+| Doctor (doctor's screen, phone) | Department and doctor. The doctor calls the next patient; the phone shows the room | The patient's everyday words are first put in the nurses' words ("my heart hurts" becomes "chest pain"). A model trained on real diagnoses and a key-word rule on the complaint then rate every department together. The database suggests the least busy doctor on duty in the best one, and three more to choose from, each marked free or busy. If nobody is on duty there, general medicine covers. The doctor's note holds the complaint, level, vital signs and check-in answers |
+
+Around the three main screens:
+
+- **The waiting room's board** (`/board`): the tickets called and to which room, how many wait, and the usual wait
+  now. No names, complaints or levels, so it can hang on the wall; "Find your ticket" shows where one ticket stands.
+  It is our own, unofficial board: in a hospital it would take its calls from, or feed, the hospital's official
+  board, and the estimate would sit next to the official display.
+- **An estimated wait on the patient's phone**, as a range ("about 15–25 min"), worked out from the load right now:
+  the patients ahead for the same doctors are handed out to whichever doctor is free first, each taking that
+  doctor's usual visit. The phone says plainly that it is an estimate and not a promise, because a more urgent
+  patient goes first.
+- **The doctor's note for the patient.** On "Visit finished" the doctor may write a short note; "Tidy with Meddy"
+  asks the language model to fix spelling and punctuation only (plain code throws its answer away if it added,
+  dropped or changed words or numbers), the doctor chooses, and the patient's phone shows the confirmed note.
+- **The chief doctor's panel** (`/chief`, its own PIN): today's patients and where they are, the door-to-doctor wait
+  by level, each department's load, and how often the nurses kept Meddy's level.
 
 The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
 visits, the questionnaire answers, a log of every step of every visit (with its time and who did it), a registry
-of people that keeps one open visit per insurance card, and counters. Nothing is deleted: "Start a new day" closes
+of people that keeps one open visit per insurance card, and counters. No real patient's visit is ever deleted (finished made-up visits of the simulated hospital are removed after a day,
+so the file does not grow for ever): "Start a new day" closes
 the open visits and keeps them, and registration numbers are never given twice. Online, a copy of the file is kept
 in the Space's storage bucket every few seconds and taken back at start, so a restart or a new version of the code
-loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The doctors,
+loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The rest of the
+hospital is simulated while somebody has a screen open: made-up patients from other nurses come to the doctors and
+leave a few minutes later, so a doctor the nurse is about to choose may really be busy. The simulation never touches
+a real patient, the line, or a doctor whose own screen is open, and "Behind the scenes" can switch it off. The doctors,
 their registration numbers and the patients already in the department are made up. Patients give a first and last
 name so that staff can call them; the name is shown to the nurse and the doctor only, never sent to either model or
 the language model, and never sent back to the patient's phone. In the demonstration everybody uses a made-up name
@@ -241,11 +266,14 @@ one of nine departments ourselves (`data/diagnosis_departments.csv`, reproduce w
 | Baseline: always gastroenterology and surgery | 21% |
 | Key-word rule on the complaint | 67% |
 | Trained model | 70% |
-| What the digital hospital uses: model when 70%+ sure, key-word rule otherwise | 69% |
+| What the digital hospital uses: the model and the key-word rule together | 69% |
 
 The model's lead over the rule is 3.7 points (95% range 1.4 to 6.1). It is weaker than the rule for respiratory,
-gynaecology and general medicine patients. The right department is among its top three suggestions 88% of the time. The model was trained on complaints as nurses write them, so it decides only when it is at
-least 70% sure (about half of patients).
+gynaecology and general medicine patients. The right department is among its top three suggestions 88% of the time. The digital hospital averages the model's
+estimate with the key-word rule, because patients do not write like nurses: alone, the model read "heart pain" as
+neurology. On the nurses' own complaints the combination is as good as before (69%), and the right department is
+among the four it offers the nurse 92% of the time. Before either reads a complaint, everyday words are put in the
+nurses' words, which on 34 everyday complaints raised the urgency model's average confidence from 55% to 66%.
 
 ### 5. Does the whole chain save time? (a simulation with assumed timings)
 
@@ -310,7 +338,8 @@ The nurse's screen shows the figure for the width in front of her.
 - **The promise is an average.** Only 8 in 10 of the most urgent patients are inside the 90% range (level 1: 78%,
   level 2: 80%, level 5: 58%), and for them the simple baseline is better.
 - **For urgent patients a miss is nearly always the dangerous way.** 19% of the level 1 and 2 patients got a range
-  that was entirely less urgent than they were. The nurse's screen says this next to every range.
+  that was entirely less urgent than they were. The screens were shortened and no longer carry this warning:
+  the nurse sees how often a range that wide was right, the doctor sees the range alone.
 - **It does not travel.** With the model and the cut from one hospital tried at the other, the experts' level was
   inside for 87% of patients and for 64% of the urgent ones. The promise is for patients like those in the data.
 
@@ -360,6 +389,11 @@ not as a second opinion.
 - **Each queue order was simulated on its own 200 random days**, so a difference of a minute or two between two rows of the first table is luck. The large differences are not.
 - **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering; the kind-first step adds one point, which could be chance. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike mostly in age and measurements; the screen marks them.
 - **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: in the waiting room it only calls the nurse and never moves them up the line. A patient who is still waiting for the nurse's first look goes to the top of her list, ahead of danger signs. Like every screen in the demonstration it has no sign-in, so anyone who knows a registration number could press for that patient. While the nurse is re-checking a patient no doctor can call them, for 15 minutes at most; that number is our choice.
+- **The staff PIN is a lock on the door, not a sign-in.** One PIN is shared by all staff. It keeps a passer-by out of the patients' names and away from "Start a new day"; it does not say who did what. A real department would give every nurse and doctor their own account. A patient without insurance can still register more than once: there is nothing to recognise them by.
+- **The estimated wait, the board and the chief doctor's panel are not tested against a real department.** The estimate
+  uses the doctors' visit times in the demo, most of them from the simulated patients; with real patients it should be
+  checked against the waits that follow. The board is our own and not connected to any hospital's system.
+- **Waiting time is real time.** The clock moves by itself, so "waited 30 min" means 30 minutes; "15 minutes pass" on the nurse's screen jumps it ahead for a demonstration.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
@@ -383,6 +417,9 @@ not as a second opinion.
 - **Trained models:** both are saved in [`models/`](models/README.md), so nothing needs training. `python trained_models.py` makes them again.
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
 - **Online:** https://darkshdws-meddy.hf.space (nurse: `/nurse`, doctor: `/doctor`). See [deploy/huggingface](deploy/huggingface/README.md).
+- **Staff PIN:** when the server is started with `MEDDY_STAFF_PIN` set, the nurse's and the doctor's screens and
+  every staff action (also "Start a new day" and "15 minutes pass") ask for that PIN. The patient's phone never
+  needs it and can only ask about its own visit. Without the setting, as on a laptop, the screens are open.
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000 (the patient's phone),
   http://localhost:8000/nurse and http://localhost:8000/doctor. For AI-written questions and the nurse's summary,
   install Ollama and run `ollama pull gemma3:4b` first (the online copy uses `gemma3:1b`: set `MEDDY_OLLAMA_MODEL`);

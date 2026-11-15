@@ -6,7 +6,7 @@
 <title>Meddy · Doctor's screen</title>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=26">
+<link rel="stylesheet" href="/static/meddy-site.css?v=27">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -163,6 +163,14 @@
   .done:hover { background:var(--blue-tint); }
   .done.armed { background:var(--blue); color:#fff; }
   .done:disabled { cursor:wait; opacity:.7; }
+  #finish-box { margin-top:16px; } #finish-box label { display:block; font-weight:700; margin-bottom:8px; }
+  #finish-box textarea { width:100%; padding:12px 16px; border:2px solid #aab8b0; border-radius:16px; font:inherit; font-size:1.05rem; resize:vertical; }
+  #finish-box textarea:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 5px rgba(33,82,196,.18); }
+  .tidy-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }
+  #tidied blockquote { margin:10px 0; padding:12px 16px; border-left:5px solid var(--violet, #5a45b8); border-radius:12px; background:#f1eefc; }
+  .row-buttons { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; } .row-buttons .done { flex:1 1 200px; width:auto; }
+  #finish-box .mini { min-height:42px; padding:8px 18px; border:2px solid var(--blue); border-radius:999px; background:#fff;
+                      color:var(--blue); font:inherit; font-weight:800; cursor:pointer; }
   .empty { padding:48px 28px; text-align:center; }
   .empty h2 { font-size:1.6rem; }
   .empty p { margin:12px auto 0; max-width:46ch; color:var(--soft); }
@@ -186,6 +194,27 @@
     .answers li { grid-template-columns:minmax(0,1fr); } .answers .a { justify-self:start; }
   }
   @media (prefers-reduced-motion: reduce) { .live i { animation:none; } .pt { transition:none; } }
+  .pick { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .pick button { min-height:48px; padding:10px 18px; border:2px solid var(--line); border-radius:16px; background:var(--card);
+                 color:var(--ink); font:inherit; font-size:1rem; text-align:left; cursor:pointer; }
+  .pick button:hover { border-color:var(--blue); background:var(--blue-tint); }
+  body.picking #queue-title, body.picking #list-title, body.picking #queue, body.picking #list, body.picking #live { display:none; }
+  /* patients waiting in line for this doctor, and the question when the nurse sends one */
+  #queue { list-style:none; margin:0 0 22px; padding:0; }
+  #queue li { display:flex; align-items:center; gap:12px; margin-top:10px; padding:12px 14px; border:2px dashed #b9c6e8;
+              border-radius:18px; background:var(--card); }
+  #queue li.chosen { border-style:solid; border-color:var(--blue); background:var(--blue-tint); }
+  #queue li div { flex:1; min-width:0; } #queue li b { display:block; } #queue li span { color:var(--soft); font-size:.95rem; }
+  #queue .empty-q { border:0; padding:0; background:none; color:var(--soft); }
+  .ask { position:fixed; inset:0; z-index:900; display:grid; place-items:center; background:rgba(22,37,42,.45); }
+  .ask > div { width:min(460px, 92vw); padding:26px; border-radius:22px; background:#fff; box-shadow:0 18px 50px rgba(0,0,0,.25); }
+  .ask h2 { margin:0 0 6px; font-size:1.5rem; } .ask p { margin:8px 0; }
+  .ask .row { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; } .ask .row button { flex:1 1 180px; }
+  .ask .go, #queue .mini { min-height:48px; padding:10px 20px; border:2px solid var(--blue); border-radius:999px; background:var(--blue);
+                           color:#fff; font:inherit; font-size:1rem; font-weight:800; cursor:pointer; }
+  .ask .go.light { background:#fff; color:var(--blue); }
+  .ask .go:hover, #queue .mini:hover { filter:brightness(1.08); }
+  #queue .mini { min-height:42px; padding:8px 18px; flex:none; } #queue .mini:disabled { opacity:.6; cursor:wait; }
 </style>
 </head>
 <body>
@@ -221,6 +250,8 @@
 
 <main class="wrap">
   <section aria-labelledby="list-title">
+    <h2 class="col-title" id="queue-title">Waiting for you</h2>
+    <ul id="queue" aria-labelledby="queue-title"></ul>
     <h2 class="col-title" id="list-title">Your patients</h2>
     <ul id="list"></ul>
   </section>
@@ -231,15 +262,11 @@
 <footer class="bottom">
   <div class="wrap">
     <img class="foot-logo" src="/static/meddy-logo.webp" alt="Meddy" width="91" height="30">
-    <span class="disclaimer">This project is a prototype and is not medical advice.</span>
-    <span>Meddy suggests, the nurse decides.</span>
-    <span>Meddy never gives a diagnosis: that is yours.</span>
-    <a href="/">Patient walk-through</a>
-    <a href="https://github.com/potlatiy/emergency-triage-ai">Code and results on GitHub</a>
+    <span class="disclaimer">Prototype, not medical advice. Meddy never gives a diagnosis.</span>
   </div>
 </footer>
 
-<script src="/static/meddy-site.js?v=4"></script>
+<script src="/static/meddy-site.js?v=16"></script>
 <script>
 // The doctor's screen asks the server every 5 seconds for the patients now with this doctor:
 //   GET /api/doctor/{reg_no}/patients   (the full card: level, Meddy's level, vital signs, answers, referral)
@@ -251,7 +278,6 @@ const LEVEL_NAME = { 1:"Resuscitation", 2:"Emergency", 3:"Urgent", 4:"Less urgen
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
 const LEVEL_ICON = { 1:"⚠", 2:"⚠", 3:"▲", 4:"✓", 5:"✓" };       // never colour alone
-const FIRST_DOCTOR = "DR-1001";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
@@ -259,7 +285,7 @@ const levelText = (l) => `${LEVEL_ICON[l]} Level ${l}: ${LEVEL_NAME[l]}`;
 
 let reg = new URLSearchParams(location.search).get("reg");
 try { reg = reg || localStorage.getItem("meddy-doctor"); } catch (e) {}
-reg = reg || FIRST_DOCTOR;
+// No doctor chosen on this device yet: the screen first asks who is using it (see choosePage).
 let staffKey = "", screenKey = "";      // what was drawn last, so the page is only redrawn when something changed
 let screen = null;                      // the last answer of /api/doctor/.../patients
 let selected = null;                    // registration number of the open card
@@ -291,22 +317,55 @@ function chooseDoctor(next) {
   $("list").innerHTML = ""; $("card").innerHTML = "";
   check();
 }
-$("who").addEventListener("change", (event) => chooseDoctor(event.target.value));
+$("who").addEventListener("change", (event) => { document.body.classList.remove("picking"); pickerDrawn = false;
+  $("call").hidden = false; chooseDoctor(event.target.value); });
 
 // ---------------------------------------------------------------- asking the server
 
 let turn = 0;                                       // counts the requests, so a slow old answer cannot overwrite a newer one
+// Free, busy or off duty, in a few words for the doctor menu: "busy, 2 patients, free in ~4 min".
+function doctorState(d) {
+  if (!d.on_duty) return "off duty";
+  if (!d.busy) return "free";
+  return `busy, ${d.waiting} patient${d.waiting === 1 ? "" : "s"}${d.free_in_minutes ? `, free in ~${d.free_in_minutes} min` : ""}`;
+}
+
+// "Who are you?": the doctors on duty, by department. Asked once per device; the menu at the top changes it later.
+let pickerDrawn = false;
+async function choosePage() {
+  if (pickerDrawn) return;
+  const staff = await get("/api/staff").catch(() => null);
+  if (!staff || reg) return;
+  pickerDrawn = true;
+  const teams = {};
+  staff.doctors.filter((d) => d.on_duty).forEach((d) => (teams[d.department] = teams[d.department] || []).push(d));
+  $("who").innerHTML = `<option value="" selected disabled>Choose your name</option>` + staff.doctors.map((d) =>
+    `<option value="${esc(d.reg_no)}">${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)} — ${esc(doctorState(d))}</option>`).join("");
+  document.body.classList.add("picking");          // nothing else on the screen until a doctor is chosen
+  $("me-name").textContent = "Who are you?";
+  $("me-where").textContent = "Choose your name once. This device remembers it.";
+  $("call").hidden = true;
+  $("list").innerHTML = "";
+  $("card").innerHTML = `<h2>Choose your name</h2>` + Object.keys(teams).sort().map((team) => `
+    <h3 class="sub" style="margin-top:18px">${esc(team)}</h3>
+    <div class="pick">${teams[team].map((d) => `<button type="button" class="mini" data-reg="${esc(d.reg_no)}">${esc(d.name)} · ${esc(d.room)} · ${esc(doctorState(d))}</button>`).join("")}</div>`).join("");
+  $("card").querySelectorAll("[data-reg]").forEach((b) => b.addEventListener("click", () => {
+    pickerDrawn = false; $("call").hidden = false; document.body.classList.remove("picking"); chooseDoctor(b.dataset.reg); }));
+}
+
 async function check() {
+  if (!reg) { choosePage(); return; }
   const asked = reg, mine = ++turn;
   try {
     const [staff, answer] = await Promise.all([get("/api/staff"), get(`/api/doctor/${encodeURIComponent(asked)}/patients`)]);
     if (asked !== reg || mine !== turn) return;      // the doctor was changed, or a newer request has been sent
     if (answer === null) {                           // no doctor with this number: fall back to the first one
-      if (asked !== FIRST_DOCTOR) chooseDoctor(FIRST_DOCTOR);
+      reg = null; try { localStorage.removeItem("meddy-doctor"); } catch (e) {} choosePage();
       return;
     }
     drawStaff(staff, answer.doctor);
     drawPatients(answer);
+    drawQueue(answer.waiting_for_you || []);
     $("live").classList.remove("down");
     $("live-text").textContent = "Live. Checked at " + new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" });
   } catch (error) {
@@ -317,11 +376,11 @@ async function check() {
 }
 
 function drawStaff(staff, doctor) {
-  const key = JSON.stringify([staff.doctors.map((d) => [d.reg_no, d.name, d.department, d.on_duty]), doctor]);
+  const key = JSON.stringify([staff.doctors.map((d) => [d.reg_no, d.name, d.department, d.on_duty, d.waiting, d.free_in_minutes]), doctor]);
   if (key === staffKey) return;
   staffKey = key;
   $("who").innerHTML = staff.doctors.map((d) => `<option value="${esc(d.reg_no)}" ${d.reg_no === doctor.reg_no ? "selected" : ""}>
-    ${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)}</option>`).join("");
+    ${esc(d.name)}${d.name === d.department ? "" : " · " + esc(d.department)} — ${esc(doctorState(d))}</option>`).join("");
   const mine = staff.doctors.find((d) => d.reg_no === doctor.reg_no);
   $("me-name").textContent = doctor.name;
   $("me-where").textContent = [doctor.name === doctor.department ? null : doctor.department, doctor.room, doctor.reg_no]
@@ -348,7 +407,17 @@ function drawPatients(answer) {
   drawList();
   const open = answer.patients.find((p) => p.reg_no === selected);
   const openKey = JSON.stringify(open || null);
-  if (openKey !== cardKey) { cardKey = openKey; cardFor = selected; drawCard(); }     // an unchanged card is left alone
+  if (openKey !== cardKey) {                                                        // an unchanged card is left alone
+    // The card is redrawn every minute ("waited ... min"): a note the doctor is writing must survive that.
+    const box = $("finish-box"), same = cardFor === selected;
+    const kept = same && box ? { open: !box.hidden, note: $("doctor-note").value, focused: document.activeElement === $("doctor-note") } : null;
+    cardKey = openKey; cardFor = selected; drawCard();
+    if (kept && $("finish-box")) {
+      $("finish-box").hidden = !kept.open; $("finish").setAttribute("aria-expanded", kept.open);
+      $("doctor-note").value = kept.note;
+      if (kept.focused) $("doctor-note").focus({ preventScroll:true });
+    }
+  }
   if (heldReg) ($("list").querySelector(`[data-reg="${CSS.escape(heldReg)}"]`) || $("card")).focus({ preventScroll:true });
   else if (heldFinish && document.activeElement !== $("finish"))
     ((heldFinish === selected && $("finish")) || $("card")).focus({ preventScroll:true });
@@ -397,8 +466,7 @@ $("list").addEventListener("click", (event) => {
 function meddyLine(p) {
   if (p.ai_level === null) return `<p class="meddy">No suggestion from Meddy was saved for this visit.</p>`;
   if (lookAgain(p)) return `<div class="note amber"><b>▲ Look again: Meddy thinks this patient is more urgent.</b>
-    Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}); the final level is ${p.level}.
-    <span class="hint">About 1 flag in 3 was right in our tests. This is a prompt to re-check, not a verdict.</span></div>`;
+    Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}); the final level is ${p.level}.</div>`;
   if (p.second_check === "mild") return `<p class="meddy">Meddy's most likely level was ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
     It leaned more urgent than the final level, but not strongly enough to flag.</p>`;
   if (p.ai_level > p.level) return `<p class="meddy">Meddy suggested a less urgent level, ${p.ai_level} (${LEVEL_NAME[p.ai_level]}).
@@ -440,12 +508,9 @@ function answersBlock(p) {
   const answer = (a) => a.answer === "Yes" ? `<span class="a yes">⚠ Yes</span>`
     : a.answer ? `<span class="a">${esc(a.answer)}</span>` : `<span class="a none">Not answered</span>`;
   return `${danger.length ? `<h3>Danger signs</h3>
-    <p class="hint">${yes ? `${yes} of ${danger.length} answered yes.` : "None answered yes."}
-      A yes moves the patient up the line by half a level. It does not change the level.</p>
+    <p class="hint">${yes ? `${yes} of ${danger.length} answered yes.` : "None answered yes."}</p>
     <ul class="answers danger">${danger.map((a) => `<li><span>${esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}
     ${extra.length ? `<h3>History for the doctor</h3>
-    <p class="hint">Chosen for this complaint, most of them worded by an AI model. Information only: the answers did not
-      change the level or the line.</p>
     <ul class="answers extra">${extra.map((a) => `<li><span>${a.label ? `<span class="topic">${esc(a.label)}</span>` : ""}${
       esc(a.question)}</span>${answer(a)}</li>`).join("")}</ul>` : ""}`;
 }
@@ -466,8 +531,6 @@ function summaryBlock(p) {
   const review = nurse.review === "approved" ? " She accepted Meddy's report after reviewing it."
       + (nurse.against_advice ? " Meddy itself had advised checking the patient in person." : "")
     : nurse.review === "checked" ? " She checked the patient herself." : "";
-  const flag = !meddy ? "" : meddy.flag === "strong" ? "▲ Meddy thinks this patient is more urgent than the nurse's level."
-    : meddy.flag === "mild" ? "Meddy leaned more urgent than the nurse's level, but not strongly." : "";
   return `<section class="psum" aria-labelledby="psum-title">
     <h3 id="psum-title">Patient summary</h3>
     <div class="part said">
@@ -491,14 +554,10 @@ function summaryBlock(p) {
       <span class="src">Meddy suggested</span>
       ${meddy ? `<p class="main">${esc(levelText(meddy.level))}${meddy.sure === null ? "" : ", " + Math.round(meddy.sure * 100) + "% sure"}.${
           meddy.unsure ? " It was not sure of the level." : ""}${meddy.unread ? " It could not read the complaint." : ""}</p>
-        ${meddy.range ? `<p>Meddy's likely range: ${meddy.range.low === meddy.range.high ? `level ${meddy.range.low} only`
-            : `level ${meddy.range.low} to level ${meddy.range.high}`}. In our tests the experts' level was inside a range
-            this wide for ${meddy.range.inside ? Math.round(meddy.range.inside * 100) + "%" : "9 in 10"} of patients (8 in 10
-            of the most urgent). Not a guarantee for this patient.</p>` : ""}
-        ${flag ? `<p>${flag}</p>` : ""}
-        ${meddy.department ? `<p>Department: ${esc(meddy.department)}${meddy.how ? ", chosen by the " + esc(meddy.how) : ""}.</p>` : ""}`
+        ${meddy.range ? `<p>Likely range: ${meddy.range.low === meddy.range.high ? `level ${meddy.range.low} only`
+            : `level ${meddy.range.low} to ${meddy.range.high}`}.</p>` : ""}
+        ${meddy.department ? `<p>Department: ${esc(meddy.department)}.</p>` : ""}`
         : `<p class="main">Nothing: the patient was sent on before Meddy was asked.</p>`}
-      <p class="hint">A suggestion from a model that is right less often than a nurse. Never a diagnosis.</p>
     </div>
   </section>`;
 }
@@ -544,37 +603,118 @@ function drawCard() {
     <h3>Measured at the nurse station</h3>
     ${vitalsBlock(p.vitals)}
     ${answersBlock(p)}
-    <p class="hint" style="margin:24px 2px 0">Meddy has given no diagnosis: only a level, a department, and the patient's own answers.</p>
     <div class="finish">
-      <button type="button" class="done" id="finish">Visit finished</button>
+      <button type="button" class="done" id="finish" aria-expanded="false" aria-controls="finish-box">Visit finished</button>
+      <div id="finish-box" hidden>
+        <label for="doctor-note">A note for the patient <span class="hint" style="font-weight:400">(optional: it shows on their phone)</span></label>
+        <textarea id="doctor-note" maxlength="300" rows="3" placeholder="For example: rest today, drink plenty of water, come back if the pain gets worse"></textarea>
+        <div class="tidy-row"><button type="button" class="mini" id="tidy">Tidy with Meddy</button>
+          <span class="hint" id="tidy-hint">Meddy fixes spelling and punctuation only. You choose.</span></div>
+        <div id="tidied" hidden></div>
+        <div class="row-buttons"><button type="button" class="done armed" id="close-visit">Close the visit</button>
+          <button type="button" class="done" id="cancel-finish">Not yet</button></div>
+      </div>
       <p class="hint" id="finish-hint" role="status">Closes the visit and takes the patient off your list.</p>
     </div>`;
-  // Two taps, so a visit is not closed by accident: the first arms the button for a few seconds.
-  const finish = $("finish"), hint = $("finish-hint"), usual = hint.textContent;
-  let armed = null, armedAt = 0;
-  finish.addEventListener("click", async () => {
-    if (!armed) {
-      finish.textContent = "Tap again to close this visit"; finish.classList.add("armed");
-      hint.textContent = "Press again within 4 seconds to close this visit.";      // said aloud by a screen reader
-      armedAt = Date.now();
-      armed = setTimeout(() => { armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed");
-                                 hint.textContent = usual; }, 4000);
-      return;
-    }
-    if (Date.now() - armedAt < 600) return;          // a double-click is one decision, not two
-    clearTimeout(armed); finish.disabled = true;
+  // "Visit finished" opens a small box: an optional note for the patient, tidied by Meddy if the doctor wants,
+  // then "Close the visit". Two clear steps, so a visit is not closed by accident.
+  const finish = $("finish"), box = $("finish-box"), hint = $("finish-hint"), noteBox = $("doctor-note");
+  finish.addEventListener("click", () => { box.hidden = !box.hidden; finish.setAttribute("aria-expanded", !box.hidden);
+    if (!box.hidden) noteBox.focus(); });
+  $("cancel-finish").addEventListener("click", () => { box.hidden = true; finish.setAttribute("aria-expanded", "false"); finish.focus(); });
+  $("tidy").addEventListener("click", async () => {
+    const text = $("doctor-note").value.trim();
+    if (!text) { $("tidy-hint").textContent = "Write the note first."; return; }
+    $("tidy").disabled = true; $("tidy-hint").textContent = "Meddy is tidying…";
+    // The card may be redrawn while Meddy works: the answer goes to the elements on screen when it arrives.
+    const say = (words) => { if ($("tidy-hint")) $("tidy-hint").textContent = words; };
+    try {
+      const response = await fetch("/api/doctor/tidy", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ text }) });
+      if (!response.ok) { say((await response.json()).detail || "Meddy could not tidy it."); return; }
+      const answer = await response.json();
+      if (!answer.changed) { say("Nothing to fix: your note reads well."); return; }
+      const shown = $("tidied"); if (!shown) return;
+      say("Meddy suggests:");
+      shown.hidden = false;
+      shown.innerHTML = `<blockquote>${esc(answer.text)}</blockquote>
+        <button type="button" class="mini" id="use-tidied">Use this</button> <button type="button" class="mini" id="keep-mine">Keep mine</button>`;
+      $("use-tidied").addEventListener("click", () => { $("doctor-note").value = answer.text; $("tidied").hidden = true; say("Done: the note is tidied."); });
+      $("keep-mine").addEventListener("click", () => { $("tidied").hidden = true; say("Your own words are kept."); });
+    } catch (e) { say("Meddy could not tidy it just now. Your own words are fine."); }
+    finally { if ($("tidy")) $("tidy").disabled = false; }
+  });
+  $("close-visit").addEventListener("click", async () => {
+    const button = $("close-visit"); button.disabled = true;
     try {
       const response = await fetch("/api/doctor/finish", { method:"POST", headers:{ "Content-Type":"application/json" },
-                                                           body:JSON.stringify({ reg_no:p.reg_no }) });
+                                                           body:JSON.stringify({ reg_no:p.reg_no, note:noteBox.value.trim() || null }) });
       if (!response.ok && response.status !== 409) throw new Error();        // 409: someone already closed it
       $("say").textContent = `Visit ${p.ticket} closed.`;
       selected = null; check();
     } catch (error) {
-      finish.disabled = false; armed = null; finish.textContent = "Visit finished"; finish.classList.remove("armed");
-      $("finish-hint").textContent = "Could not close the visit: the hospital server did not answer. Try again.";
+      button.disabled = false;
+      hint.textContent = "Could not close the visit: the hospital server did not answer. Try again.";
     }
   });
 }
+
+// ---------------------------------------------------------------- waiting for this doctor
+// The patients in line for this doctor, each with "Accept". When the nurse sends one to this doctor by name, the
+// screen asks at once: "Are you free now?" Yes calls the patient in; "Not now" leaves them in the list.
+let queueKey = "", asking = null;
+const offeredKey = () => "meddy-offered-" + reg;
+function offered() { try { return new Set(JSON.parse(localStorage.getItem(offeredKey()) || "[]")); } catch (e) { return new Set(); } }
+function markOffered(regNo) {
+  const seen = offered(); seen.add(regNo);
+  try { localStorage.setItem(offeredKey(), JSON.stringify([...seen].slice(-200))); } catch (e) {}
+}
+function drawQueue(queue) {
+  $("queue-title").textContent = `Waiting for you (${queue.length})`;
+  const key = JSON.stringify(queue);
+  if (key !== queueKey) {
+    queueKey = key;
+    $("queue").innerHTML = queue.length ? queue.map((p) => `<li class="${p.chosen ? "chosen" : ""}">
+        <div><b>${esc(p.ticket)} · ${p.patient ? esc(p.patient) + " · " : ""}${esc(p.complaint)}</b>
+          <span>${esc(levelText(p.level))} · waited ${p.waited} min${p.chosen ? " · the nurse chose you" : ""}</span></div>
+        <button type="button" class="mini" data-accept="${esc(p.reg_no)}">Accept</button></li>`).join("")
+      : `<li class="empty-q">Nobody is waiting for you.</li>`;
+  }
+  const next = queue.find((p) => p.chosen && !offered().has(p.reg_no));
+  if (next && !asking) ask(next);
+}
+function ask(p) {
+  asking = p.reg_no;
+  markOffered(p.reg_no);
+  const box = document.createElement("div");
+  box.className = "ask"; box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-labelledby", "ask-title");
+  box.innerHTML = `<div><h2 id="ask-title">New patient for you</h2>
+    <p><b>${esc(p.ticket)} · ${p.patient ? esc(p.patient) : ""}</b></p>
+    <p>“${esc(p.complaint)}” · ${esc(person(p))} · ${esc(levelText(p.level))}</p>
+    ${p.said ? `<p style="color:var(--soft)">${esc(p.said)}</p>` : ""}
+    <p><b>Are you free now?</b></p>
+    <div class="row"><button type="button" class="go" id="ask-yes" style="margin:0">Yes, let them come in</button>
+      <button type="button" class="go light" id="ask-no" style="margin:0">Not now</button></div></div>`;
+  document.body.appendChild(box);
+  const close = () => { box.remove(); asking = null; };
+  box.querySelector("#ask-yes").addEventListener("click", () => { close(); accept(p.reg_no); });
+  box.querySelector("#ask-no").addEventListener("click", () => { close(); $("called-note").textContent =
+    `${p.patient || "The patient"} stays in “Waiting for you”. Press Accept when you are free.`; });
+  box.querySelector("#ask-yes").focus();
+}
+async function accept(regNo) {
+  const note = $("called-note");
+  note.textContent = "Calling…";
+  try {
+    const response = await fetch("/api/doctor/call", { method:"POST", headers:{ "Content-Type":"application/json" },
+                                                       body:JSON.stringify({ doctor_reg:reg, reg_no:regNo }) });
+    if (response.status === 409) { note.textContent = (await response.json()).detail; check(); return; }
+    if (!response.ok) throw new Error();
+    const { called } = await response.json();
+    note.textContent = `Ticket ${called.ticket} (${called.patient || called.who}) is on the way to ${called.room}. Their phone shows the room now.`;
+    selected = called.reg_no; check();
+  } catch (error) { note.textContent = "Could not call: the hospital server did not answer. Try again."; }
+}
+$("queue").addEventListener("click", (event) => { const b = event.target.closest("[data-accept]"); if (b) { b.disabled = true; accept(b.dataset.accept); } });
 
 // The doctor calls the next patient from the waiting room: the first in line for this department. The patient's
 // phone asks the server every few seconds, so it moves on by itself and tells them which room to go to.

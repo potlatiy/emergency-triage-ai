@@ -77,15 +77,16 @@ We cannot remove waiting: if ten people arrive and three doctors are free, seven
    suggested level, and the likely department and doctor, with advice on whether a quick review is
    reasonable. The nurse presses **"Everything is correct"** or **"I want to check the patient myself"**.
    In a personal check she gives her own level, sees a "look again" flag if Meddy rates the patient more
-   urgent, and can change the department or send a critical patient straight to a doctor with a reason.
+   urgent, chooses the doctor (Meddy suggests one and a short list of three more, each marked free or busy),
+   or sends a critical patient straight to a doctor with a reason.
    Every verdict is counted: that count is the **test regime**, a running test of the app in use.
 4. **Waiting room.** The electronic line orders everyone by urgency, then by waiting time. The phone has an
    **"I feel worse"** button: one press puts the patient on top of the nurse's list for another look, and changes
    neither the level nor the place in line (a patient still waiting for the nurse's first look goes first on her list). The nurse's screen also marks patients who have waited longer than
    their level allows without a second look (level 3: 30 minutes, 4: 60, 5: 120). After a re-check the patient
    keeps their ticket and the minutes they have waited.
-5. **Doctor.** When called, the patient is matched to the right department and to the least busy doctor on
-   duty there. The doctor's card opens with a patient summary in three parts (the patient said, the nurse
+5. **Doctor.** When called, the patient goes to the doctor the nurse chose, or to the least busy doctor on
+   duty in their department. The doctor's card opens with a patient summary in three parts (the patient said, the nurse
    found, Meddy suggested), written when the nurse sends the patient on, and again if she re-checks them. The nurse can hold back the AI
    sentences and add a note of her own. The complaint, level, vital signs and every answer are below it.
    The summary is not tested with real doctors.
@@ -119,7 +120,7 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
 - **A range of levels** (`triage.py`, section 9 of its output; notebook section 14). A level is in the range when
   its probability reaches a cut of about 10%. The cut was set so that the experts' level stays in the range for
   90% of patients, and on patients the cut had not seen it did for 90.6%. The range is two levels wide on average.
-  Weak spots, all on the screen or in the README: it holds for only 8 in 10 of the most urgent patients, and when
+  Weak spots, all in the README (the nurse's screen shows only how often a range this wide was right): it holds for only 8 in 10 of the most urgent patients, and when
   it misses one of them it is nearly always too low; a one-level range is right 82% of the time; and with model
   and cut from one hospital tried at the other it drops to 87% (urgent patients 64%).
 - **Patients like this one** (`similar.py`; notebook section 15). The five real patients in the data most like
@@ -142,15 +143,18 @@ There are three AI parts. Each has one narrow job, and each hands its result to 
   so what a patient says at the door does not fully determine where they belong. Scores of 90% or more are
   only possible by testing a model on the patients it trained on, which is memorising. We do not do that.
 - **What comes close to 90%:** the right department is among the model's top three 88% of the time. The hospital
-  therefore shows the nurse three suggestions and she chooses.
+  therefore shows the nurse a suggested doctor and a short list of three more, and she chooses.
 - **Where it is weaker than the rule:** respiratory, gynaecology and general medicine patients. It is stronger for neurology,
   cardiology and gastroenterology.
 - **How the hospital uses it:** the model was trained on complaints as nurses write them ("ant. chest pain").
-  A patient typing "it burns when I pee" is less familiar to it, and at middling confidence it made some odd
-  choices in our trials. So the model decides only when it is at least 70% sure (about half of patients) and
-  the key-word rule decides otherwise. That combination is right 69% of the time. The screen always says which
-  of the two decided.
-- **What it outputs:** a department. A plain rule then picks the least busy doctor on duty there from the database.
+  A patient typing "my heart hurts" is less familiar to it: it read "heart pain" as neurology. So two things
+  happen first. Everyday words are put in the nurses' words ("chest pain"), which on 34 everyday complaints
+  raised the urgency model's average confidence from 55% to 66%. Then the model's estimate is averaged with the
+  key-word rule. On the nurses' own complaints this combination is right 69% of the time, as before, and the right
+  department is among the four it offers 92% of the time. The screen shows the match for each department.
+- **What it outputs:** how well each department matches. The database then suggests the least busy doctor on duty
+  in the best one and three more (the next doctor of that department, then the next-best departments), each marked
+  free or busy. The nurse chooses; a busy doctor can be chosen, and the patient waits in line for them.
 - **A limit to state:** the answer key depends on our own diagnosis-to-department table. 83 rarer diagnoses
   matched no rule and default to general medicine. We reviewed it ourselves; no clinician has.
 

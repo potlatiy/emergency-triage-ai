@@ -5,10 +5,11 @@ What is here, and what uses AI:
                    local language model chooses and words for the exact complaint
 2. triage        - the urgency level, from the model tested in the notebook
 3. line order    - who is seen next (plain rules)
-4. department    - which department a complaint belongs to (a trained model when it is sure, plain rules otherwise)
+4. department    - which department a complaint belongs to (the trained model and key-word rules together)
 The doctors, the registration numbers and the line itself live in the database (db.py).
 """
 
+import difflib
 import json
 import os
 import re
@@ -41,6 +42,9 @@ def recheck_due(patient, clock):
     allowed = RECHECK_AFTER.get(patient.get("level"))
     return bool(allowed and seen is not None and clock - seen >= allowed)
 OLLAMA_URL = "http://localhost:11434/api/chat"
+# How long Gemma stays in memory after an answer. With half an hour, the first patient after a quiet spell waited
+# for the model to load again and often got no AI summary at all.
+KEEP_GEMMA_LOADED = "12h"
 # The online copy runs on a plain processor, so it can choose a smaller Gemma and wait longer for it.
 OLLAMA_MODEL = os.environ.get("MEDDY_OLLAMA_MODEL", "gemma3:4b")
 OLLAMA_TIMEOUT = int(os.environ.get("MEDDY_OLLAMA_TIMEOUT", 20))
@@ -67,6 +71,53 @@ VITAL_PRESETS = {
     "feverish": {"SBP": 132, "DBP": 82, "HR": 108, "RR": 22, "BT": 38.9, "Saturation": 96},
     "unstable": {"SBP": 88, "DBP": 54, "HR": 128, "RR": 28, "BT": 36.4, "Saturation": 89},
 }
+
+
+# ---------------------------------------------------------------- patients' words, nurses' words
+# Both models learned from complaints as nurses write them: "abd pain", "dyspnea", "ant. chest pain". A patient
+# types "my heart hurts" or "i cant breathe", and the models, which read letter patterns, half recognise it at
+# best: "heart pain" came out as neurology. So before the models read a complaint, everyday words are put in
+# the nurses' words and filler words are left out. Staff still see what the patient wrote, word for word.
+# On 34 everyday complaints this raised the urgency model's average confidence from 55% to 66%.
+EVERYDAY_TO_NURSE = [
+    (r"\b(can'?t|cannot|can not|hard to|struggling to|trouble|difficulty|problems?)( catch(ing)?)?( my)? breath(e|ing)?\b", "dyspnea"),
+    (r"\bshort(ness)? of breath\b|\bbreathless(ness)?\b|\bout of breath\b", "dyspnea"),
+    (r"\b(vomit(ing|ed)?|throw(ing)? up|threw up) blood\b|\bblood in (my )?vomit\b", "hematemesis"),
+    (r"\b(throw(ing|s)? up|threw up|being sick|puk(e|ed|ing))\b", "vomiting"),
+    (r"\bblood in (my )?(pee|urine)\b", "hematuria"),
+    (r"\b(blood in (my )?(poo|poop|stool)|black (poo|poop|stool))\b", "melena"),
+    (r"\b(it )?burns? when i (pee|urinate)\b|\bpain(ful)? when (i )?(pee|peeing|urinat\w*)\b|\bpainful (peeing|urination)\b",
+     "dysuria"),
+    (r"\b(passed out|blacked out|fainted|fainting|collapsed)\b", "syncope"),
+    (r"\bnose ?bleed(s|ing)?\b|\bbleeding from (my )?nose\b", "epistaxis"),
+    (r"\b(had a |having a )?fits?\b|\bconvulsions?\b", "seizure"),
+    (r"\bheart (is )?(racing|pounding|beating fast|fluttering|skipping)\b|\bracing heart\b", "palpitation"),
+    (r"\bheart(?!burn)\b", "chest"),
+    (r"\b(stomach|belly|tummy)( ?ache)?\b", "abd pain"),
+    (r"\b(broken|broke)\b", "fracture"),
+    (r"\b(cut|cuts)\b", "laceration"),
+    (r"\bdizzy\b", "dizziness"),
+    (r"\bpoo(p)?\b", "stool"),
+    (r"\b(pee|peeing|wee)\b", "urination"),
+    (r"\b(feel(ing)? )?(very )?(weak|tired|exhausted)\b", "general weakness"),
+    (r"\b(hurts?|hurting|aches?|aching|painful)\b", "pain"),
+    (r"\bpain (in|on) (the |my |both )?([a-z]+)", r"\3 pain"),
+]
+_FILLER = re.compile(r"\b(i|my|me|a|an|the|have|has|had|got|am|is|are|was|it|its|im|ive|been|also|very|really|so|bad|badly|"
+                     r"lot|since|for|this|that|morning|today|yesterday|tonight|all|day|days|week|weeks|hour|hours|ago|at|"
+                     r"work|home|when|after|before|of|with|feel|feeling|think|some)\b")
+
+
+def nurse_words(complaint):
+    """The complaint as the models read it: everyday words in the nurses' words, filler words left out.
+    "My heart hurts since this morning" becomes "chest pain"."""
+    text = f" {spelling(complaint).lower()} "
+    for pattern, nurse in EVERYDAY_TO_NURSE:
+        text = re.sub(pattern, nurse, text)
+    text = _FILLER.sub(" ", text)
+    text = re.sub(r"\b(\w+ )?pain( pain)+\b", lambda m: (m.group(1) or "") + "pain", text)
+    text = re.sub(r"\s+", " ", text).strip(" ,.")
+    return text or (complaint or "").lower().strip()
 
 
 # ---------------------------------------------------------------- can Meddy read this complaint?
@@ -112,11 +163,52 @@ def known_words(complaint):
             forms.add(word.removesuffix("ing") + "e")          # "breathing" -> "breathe"
         forms = {form for form in forms if len(form) >= 3}     # "died" must not become the shorthand "di"
         return bool(forms & _NURSE_WORDS or forms & _EVERYDAY or _SYMPTOM_RULES.search(word))
-    words = [w for w in _words(complaint) if w not in _NOT_A_SYMPTOM]
+    words = [w for w in _words(spelling(complaint)) if w not in _NOT_A_SYMPTOM]
     found = [w for w in words if len(w) >= 3 and known(w)]
     if not found and words and all(w in _NURSE_WORDS for w in words):
         return words
     return found
+
+
+# ---------------------------------------------------------------- typing slips
+# Patients type in a hurry: "breating", "stomache", "headake", "hurt pain". A word that is not a word we know is
+# replaced by the symptom or body word it is closest to, and only when it is very close (80% of the letters line
+# up). The phone shows the correction to the patient before they register ("Did you mean ...?"), and the models
+# and the summary read the corrected words. Staff still see what the patient typed.
+SYMPTOM_WORDS = sorted(_EVERYDAY | set("""
+abdomen abdominal ache aching allergic ankle anxiety arm asthma attack back bladder bleeding blister blood blurry
+breathe breathing breathless broken bruise burning burns chest chills choking collapse confused constipation cough
+coughing cramps diarrhea diarrhoea dizziness dizzy drowsy dysuria ear earache elbow epistaxis eye eyes face fainted
+fainting fever finger fingers flank foot fracture groin hand head headache hearing heart heartburn heel hip itchy jaw
+kidney knee leg legs lip lump migraine mouth muscle nausea nauseous neck nose nosebleed numbness pain painful pelvis
+period pregnant pressure pulse rash ribs seizure shaking shortness shoulder sick skin sneezing sore spine sprain
+stomach stomachache sweating swallow swallowing swelling swollen temperature testicle thigh throat throbbing thumb
+tingling toe tongue tooth toothache twisted unconscious urinate urine vagina vaginal vision vomit vomiting weakness
+wheezing wound wrist""".split()))
+_FINE_WORDS = _NOT_A_SYMPTOM | set("""cant dont wont isnt also every other since until while then into onto over under
+around about again always never often sometimes really very much many little lot lots after before during walking
+running eating drinking sleeping working moving lying sitting standing lifting playing warm cold hot cool wet dry hard soft red blue white black yellow green
+weird strange funny tight loose high low fast slow""".split())
+_HEART_SLIPS = re.compile(r"\b(hurt|hart|heat|hearth)(?= (pain|attack|rate|beat|beating|racing|problem|ache)\b)", re.I)
+
+
+def spelling(complaint):
+    """The complaint with typing slips put right: "hurt pain for one hour" becomes "heart pain for one hour",
+    "breating problems" becomes "breathing problems". Words Meddy knows, and short words, are left alone."""
+    text = _HEART_SLIPS.sub("heart", complaint or "")
+
+    def fix(found):
+        word = found.group(0)
+        low = word.lower()
+        forms = {low, low.removesuffix("s"), low.removesuffix("es"), low.removesuffix("ed"), low.removesuffix("d"),
+                 low.removesuffix("ing"), low.removesuffix("ing") + "e", low.removesuffix("ly"), low.removesuffix("y")}
+        if len(low) < 4 or forms & (_FINE_WORDS | _NURSE_WORDS | set(SYMPTOM_WORDS)):
+            return word
+        # A slip rarely hits the first letter or changes the length much: "warm" must not become "arm".
+        close = [w for w in difflib.get_close_matches(low, SYMPTOM_WORDS, n=3, cutoff=0.8)
+                 if w[0] == low[0] and abs(len(w) - len(low)) <= 2]
+        return close[0] if close else word
+    return re.sub(r"[^\W\d_]+", fix, text)
 
 
 def vital_warnings(vitals, alert="Alert", pain=0):
@@ -192,8 +284,18 @@ def kind_of_complaint(complaint, injury=False):
     finds no word it knows. It lets a patient who writes in everyday words find the patients the data describes
     in clinical words."""
     kind = department_for(complaint, injury)
-    recognised = bool(_SYMPTOM_RULES.search(f" {(complaint or '').lower()} ")) or injury
+    recognised = bool(_SYMPTOM_RULES.search(f" {spelling(complaint).lower()} ")) or injury
     return kind if recognised else None
+
+
+# Words that do not say what a complaint is about: they fit every complaint.
+_NOT_TELLING = set("""pain pains painful ache aches hurt hurts sore left right both side lt rt bilateral upper lower
+problem problems feeling feel bad very severe mild acute chronic general since after with and the for""".split())
+
+
+def _telling_words(text):
+    """The first four letters of every word that says what a complaint is about ("ches", "abd", "dysp")."""
+    return {word[:4] for word in re.findall(r"[a-z]{2,}", (text or "").lower()) if word not in _NOT_TELLING}
 
 
 def similar_patients(row, complaint, injury=False):
@@ -206,8 +308,14 @@ def similar_patients(row, complaint, injury=False):
         data = load()
         _similar = similar.Similar(data, [kind_of_complaint(c, i == 2) for c, i in zip(data[TEXT], data["Injury"])])
     found = _similar.nearest(row, kind_of_complaint(complaint, injury))
-    for patient in found:           # alike in the measurements but with another complaint: the nurse is told
-        patient["other_complaint"] = not patient.pop("same_kind") and patient["complaint_alike"] < COMPLAINT_ALIKE_ENOUGH
+    mine = _telling_words(nurse_words(complaint)) | _telling_words(spelling(complaint))
+    for patient in found:
+        # The same complaint: the same kind by the key-word rule, or letter patterns alike AND a telling word in
+        # common. "pain" alone is not telling: a patient who wrote only "pain" got five patients with "abd pain"
+        # shown as alike. Everyone else is alike in the measurements only, and the nurse is told.
+        shares = bool(mine & _telling_words(patient["complaint"]))
+        patient["other_complaint"] = not patient.pop("same_kind") and not (
+            shares and patient["complaint_alike"] >= COMPLAINT_ALIKE_ENOUGH)
     return {"patients": found, "under_rated": sum(p["nurse_level"] > p["expert_level"] for p in found),
             "complaint_matched": not found[0]["other_complaint"]}
 
@@ -216,7 +324,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
     """Suggested urgency level for one patient, with the probability of each level."""
     vitals = {**VITAL_PRESETS["normal"], **(vitals or {})}
     row = pd.DataFrame([{
-        TEXT: (complaint or "").lower(),
+        TEXT: nurse_words(complaint),
         "Age": age,
         "Sex": 1 if sex == "Female" else 2,
         "Arrival mode": {"Walked in": 1, "Public ambulance": 2, "Private car": 3, "Private ambulance": 4}.get(arrival, 1),
@@ -233,23 +341,15 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
     # rates higher when in doubt, is kept for the second check: shown as the suggestion it rated 1 patient
     # in 3 too high.
     level = int(LEVELS[int(probabilities.argmax())])
-    # Which department? The trained model answers when it is sure enough, the key-word rule otherwise.
-    department_odds = _assignment.predict_proba(row)[0]
-    best = int(department_odds.argmax())
-    if department_odds[best] >= ASSIGN_SURE_ENOUGH:
-        department = str(_assignment.classes_[best])
-        how = f"trained model, {department_odds[best]:.0%} sure"
-    else:
-        department = department_for(complaint, injury)
-        how = f"key-word rule (the model was only {department_odds[best]:.0%} sure)"
-    # Three departments for the nurse to choose from: the one picked above, then the model's next most likely.
-    names = [str(c) for c in _assignment.classes_]
-    order = [names.index(department)] + [i for i in np.argsort(-department_odds) if names[i] != department]
+    # Which department? The trained model and the key-word rule together (see department_match).
+    match, how = department_match(complaint, injury, _assignment.predict_proba(row)[0])
+    order = sorted(match, key=match.get, reverse=True)
     return {
-        "department": department,
+        "department": order[0],
         "department_how": how,
-        "department_options": [{"department": names[i], "chance": round(float(department_odds[i]), 3)}
-                               for i in order[:3]],
+        # The best department and three more for the nurse to choose from, each with how well it matches.
+        "department_options": [{"department": name, "chance": round(match[name], 3)} for name in order[:4]],
+        "department_match": {name: round(match[name], 3) for name in order},      # every department, for the doctors
         "level": level,
         "name": LEVEL_NAMES[level],
         "probabilities": {str(l): round(float(p), 3) for l, p in zip(LEVELS, probabilities)},
@@ -292,11 +392,37 @@ DEPARTMENT_NAMES = [name for name, _ in DEPARTMENTS] + [DEFAULT_DEPARTMENT]
 _SYMPTOM_RULES = re.compile("|".join(pattern for _, pattern in DEPARTMENTS))
 
 def department_for(complaint, injury=False):
-    text = f" {(complaint or '').lower()} "
+    text = f" {spelling(complaint).lower()} "          # "breating problems" is a breathing problem
     for name, pattern in DEPARTMENTS:
         if re.search(pattern, text):
             return name
     return "Trauma and orthopaedics" if injury else DEFAULT_DEPARTMENT
+
+
+def department_match(complaint, injury, odds):
+    """How well each department matches a complaint, from 0 to 1, and how that was decided.
+
+    Half of it is the trained model's estimate, half the key-word rule. The rule looks at the patient's words
+    and at the nurses' words they were put in; the first department it names counts fully, any other it names
+    counts half. When the rule names nothing, the model decides alone, unless it is less than 70% sure: then
+    the complaint goes to general medicine, as before (or to trauma for an injury).
+    Both together fix what each gets wrong alone: the model read "heart pain" as neurology, the rule cannot
+    weigh "chest pain and cough" between the heart and the lungs."""
+    model = {str(name): float(p) for name, p in zip(_assignment.classes_, odds)}
+    for name in DEPARTMENT_NAMES:
+        model.setdefault(name, 0.0)
+    texts = [f" {(complaint or '').lower()} ", f" {nurse_words(complaint)} "]
+    named = [name for name, pattern in DEPARTMENTS if any(re.search(pattern, t) for t in texts)]
+    if not named and (injury or max(model.values()) < ASSIGN_SURE_ENOUGH):
+        named = ["Trauma and orthopaedics" if injury else DEFAULT_DEPARTMENT]
+    best_model = max(model, key=model.get)
+    if not named:
+        return model, f"trained model, {model[best_model]:.0%} sure"
+    weight = {name: 1.0 if i == 0 else 0.5 for i, name in enumerate(named)}
+    total = sum(weight.values())
+    match = {name: 0.5 * p + 0.5 * weight.get(name, 0) / total for name, p in model.items()}
+    best = max(match, key=match.get)
+    return match, f"trained model and key words, {match[best]:.0%} match"
 
 
 # ---------------------------------------------------------------- the questionnaire
@@ -475,7 +601,7 @@ def checked_questions(written, skip=(), complaint=""):
 def questions_from_model(complaint, skip=(), timeout=OLLAMA_TIMEOUT):
     """History questions for this exact complaint, chosen and worded by the local language model."""
     allowed = [t for t in TOPICS if t not in skip]
-    body = {"model": OLLAMA_MODEL, "stream": False, "format": _extra_schema(allowed), "keep_alive": "30m",
+    body = {"model": OLLAMA_MODEL, "stream": False, "format": _extra_schema(allowed), "keep_alive": KEEP_GEMMA_LOADED,
             "messages": [{"role": "system", "content": QUESTION_SYSTEM_PROMPT},
                          {"role": "user", "content": f'Complaint: "{complaint}". Allowed topics: {", ".join(allowed)}'}],
             "options": {"temperature": 0.2, "num_ctx": 2048}}
@@ -530,6 +656,11 @@ def follow_up(complaint, injury=False, use_model=True):
         except Exception:
             pass                      # model switched off, too slow, or broke the rules
     questions = questions or standard_questions(complaint, skip)
+    # When it started is the first thing a doctor asks. Gemma 3 1B copied the example in its prompt and chose
+    # "doing, before, medicine" for almost every complaint on the live site, so when the complaint does not say
+    # when, "When did it start?" takes the place of its last question.
+    if "onset" not in skip and all(q["topic"] != "onset" for q in questions):
+        questions = [{"question": TOPICS["onset"]["ask"], "topic": "onset"}] + list(questions)[:FOLLOW_UPS - 1]
     return {"source": source, "questions": [
         {**q, "kind": "extra", "label": TOPICS[q["topic"]]["label"], "choices": TOPICS[q["topic"]]["choices"]}
         for q in questions]}
@@ -547,7 +678,16 @@ def questionnaire(complaint, injury=False, use_model=True):
     extra = follow_up(complaint, injury) if use_model else {"source": "list", "questions": []}
     return {"topic": department, "source": extra["source"],
             "questions": [{"question": q, "kind": "danger"} for q in DANGER_QUESTIONS[department]] + extra["questions"],
-            "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL}}
+            "pain": {"feel": PAIN_FEEL, "none": PAIN_NONE, "score": PAIN_TYPICAL, "mentioned": mentions_pain(complaint)}}
+
+
+_PAIN_WORDS = re.compile(r"\b(pain\w*|hurt\w*|ach(e|es|ing)|\w+ache|sore|burn\w*|cramp\w*|sting\w*|tender|throb\w*)\b", re.I)
+
+
+def mentions_pain(complaint):
+    """Does the complaint speak of pain? Then the phone asks straight away what it feels like. Otherwise it first
+    asks whether there is any pain at all: "What does the pain feel like?" puzzled a patient with breathing problems."""
+    return bool(_PAIN_WORDS.search(spelling(complaint)))
 
 
 # ---------------------------------------------------------------- the nurse's summary (language model)
@@ -572,7 +712,10 @@ _GUESSES = re.compile(r"\b(likely|probably|possibly|perhaps|due to|suggest\w*|in
 # A small model copies words from its instructions or invents them: with an example in the prompt, Gemma 3 1B told
 # the nurse that a patient with knee pain had pain "spreading to the arm, jaw and back". A sentence that names a
 # part of the body or a symptom the patient never mentioned is dropped.
-_BODY_AND_SYMPTOMS = re.compile(r"\b(arms?|jaw|back|chest|head|neck|legs?|knees?|ankles?|feet|foot|hands?|fingers?|wrists?|hips?|shoulders?|stomach|belly|abdom\w*|eyes?|ears?|nose|throat|skin|breath\w*|bleed\w*|blood|vomit\w*|fever|faint\w*|dizz\w*|numb\w*|rash|swell\w*|swollen|cough\w*|sweat\w*|nause\w*|seiz\w*|speech|slurred|confus\w*)\b", re.I)
+_BODY_AND_SYMPTOMS = re.compile(r"\b(arms?|jaw|back|chest|head|neck|legs?|knees?|ankles?|feet|foot|hands?|fingers?|wrists?|hips?|shoulders?|stomach|belly|abdom\w*|eyes?|ears?|nose|throat|skin|breath\w*|bleed\w*|blood|vomit\w*|fever|faint\w*|dizz\w*|numb\w*|rash|swell\w*|swollen|cough\w*|sweat\w*|nause\w*|seiz\w*|speech|slurred|confus\w*|sharp|stab\w*|dull|ach(e|ing)|burn\w*|throb\w*|pressure|tight\w*|cramp\w*|persist\w*|constant|intermittent|severe|mild|moderate|intense|excruciating|unbearable|sudden\w*|gradual\w*|radiat\w*|spread\w*)\b", re.I)
+# The last group came from the live site: for "hurt pain for one hour", with no answer about the pain, the model
+# wrote "a sharp, persistent pain". How the pain feels is the patient's to say; a word for it they did not use is
+# made up, and the sentence is dropped.
 
 
 # How serious it is, is the nurse's call: "with no signs of a serious condition" (seen on the live site) is dropped.
@@ -590,7 +733,8 @@ def _without_guess(sentence):
 
 
 # The same thing in other words counts as said: "stomach pain" summed up as "abdominal pain" is not invented.
-_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
+_SAME_THING = [{"stom", "bell", "abdo", "tumm"}, {"ches", "hear"}, {"shar", "stab"}, {"dull", "achi", "ache"},
+               {"pres", "tigh"}, {"seve", "inte", "exce", "unbe"}, {"vomi", "sick", "thro", "naus"}, {"brea", "dysp"},
                {"blee", "bloo"}, {"swel", "swol"}, {"dizz", "ligh"}, {"numb", "ting"}]
 
 
@@ -635,9 +779,42 @@ def checked_summary(text, complaint="", report=None):
     return text
 
 
+_NUMBER_WORDS = set("one two three four five six seven eight nine ten half few couple".split())
+
+
+# Words that say little about what is wrong: a summary need not repeat them ("bad", "problems", "pain" alone).
+_SAYS_LITTLE = set("pain pains painful ache aches hurt hurts hurting bad really problem problems issue issues trouble "
+                   "since last night morning today hour hours day days week weeks".split())
+
+
+def with_complaint(text, complaint):
+    """The summary, opened with the patient's own complaint when the model left out what the patient came with.
+
+    A small model sometimes skips the complaint and writes only about an answer: for "Hurt pain for one hour" it
+    wrote just "She describes the pain as sharp and stabbing." Then the complaint, word for word, goes first.
+    The summary is compared with the complaint as Meddy read it (typing slips put right), the same thing in other
+    words counts ("stomach" summed up as "abdominal"), and words that say little are not looked for: half of the
+    words that matter is enough. (The first version wanted every word, and the line was added to almost every
+    summary: "Came with "crushing chest pain and sweating"" above "The patient reported chest pain and sweating".)"""
+    complaint = " ".join(str(complaint or "").split()).strip(" .")
+    words = [w for w in _words(spelling(complaint))
+             if w not in _NOT_A_SYMPTOM and w not in _NUMBER_WORDS and w not in _SAYS_LITTLE]
+    said = text.lower()
+
+    def found(word):
+        stem = word[:4]
+        stems = next((group for group in _SAME_THING if stem in group), {stem})
+        return any(re.search(r"\b" + re.escape(s), said) for s in stems)
+    if complaint and words and sum(found(w) for w in words) * 2 < len(words):
+        return f'Came with "{complaint}". {text}'
+    return text
+
+
 def _report_for_summary(complaint, age, sex, answers, injury=False):
     """What the patient reported, as plain lines for the model. Only answers the patient actually gave."""
     lines = [f'Complaint, in the patient\'s words: "{complaint}"', f"Age {age:g}, {str(sex).lower()}"]
+    if spelling(complaint) != complaint:          # "hurt pain" was meant as "heart pain": the model gets both
+        lines.insert(1, f'The same complaint with typing slips corrected: "{spelling(complaint)}"')
     if injury:
         lines.append("Caused by an injury: yes")
     danger = [a["question"] for a in answers if a.get("kind") == "danger" and a.get("answer") == "Yes"]
@@ -650,6 +827,44 @@ def _report_for_summary(complaint, age, sex, answers, injury=False):
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- the doctor's note for the patient
+# When the doctor closes a visit they may write a short note for the patient ("Rest, drink water, come back if the
+# pain gets worse"). Meddy only tidies it: spelling, punctuation and capitals. The doctor sees the tidied note and
+# chooses it or keeps their own; the patient's phone shows what the doctor confirmed.
+TIDY_SYSTEM_PROMPT = """You correct a short note a doctor wrote for a patient.
+Fix spelling, punctuation and capital letters only. Do not add, remove or change any information, advice, number or
+medicine. Keep the doctor's words and order. Reply with the corrected note only, nothing else."""
+
+
+def checked_tidy(written, original):
+    """The tidied note as it may be offered, or ValueError when the model did more than tidy: added or dropped
+    words, changed a number, or wrote something else entirely."""
+    tidy = " ".join(str(written or "").split()).strip().strip('"')
+    before, after = _words(original), _words(tidy)
+    if not tidy or len(tidy) > 2 * len(original) + 20:
+        raise ValueError("not a tidied note")
+    if re.findall(r"\d+", tidy) != re.findall(r"\d+", original):
+        raise ValueError("a number changed")
+    if difflib.SequenceMatcher(None, before, after).ratio() < 0.7:
+        raise ValueError("words changed")
+    return tidy
+
+
+def tidy_note(text, timeout=OLLAMA_TIMEOUT):
+    """The doctor's note with spelling and punctuation put right by the language model (checked_tidy), or
+    ValueError when the model is off, too slow or did more than tidy."""
+    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "12h",
+            "messages": [{"role": "system", "content": TIDY_SYSTEM_PROMPT}, {"role": "user", "content": text}],
+            "options": {"temperature": 0, "num_ctx": 1024, "num_predict": 160}}
+    request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            written = json.loads(response.read())["message"]["content"]
+    except Exception as error:
+        raise ValueError("the language model did not answer") from error
+    return checked_tidy(written, text)
+
+
 def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=True, timeout=OLLAMA_TIMEOUT):
     """Two sentences for the nurse, written by the language model: {"source": "ai", "text": ...}.
     {"source": "none", "text": None} when the model is off, too slow, or broke the rules."""
@@ -659,7 +874,7 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
         return _summaries[cache]
     if not use_model:
         return {"source": "none", "text": None}
-    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "30m",
+    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": KEEP_GEMMA_LOADED,
             "messages": [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": report}],
             "options": {"temperature": 0.2, "num_ctx": 2048, "num_predict": 120}}
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),
@@ -667,7 +882,7 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             written = json.loads(response.read())["message"]["content"]
-        result = {"source": "ai", "text": checked_summary(written, complaint, report)}
+        result = {"source": "ai", "text": with_complaint(checked_summary(written, complaint, report), complaint)}
     except Exception:
         return {"source": "none", "text": None}          # not kept: the next look may find the model ready
     if len(_summaries) >= 500:
