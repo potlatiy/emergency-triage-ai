@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import core
 import db
+import guard
 
 STATIC = Path(__file__).parent / "static"
 # A fingerprint of the pages and the code this server started with. An open page compares it from time to time
@@ -83,14 +84,45 @@ async def watched(request, call_next):
     """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching.
     A request for a staff screen's data without the staff PIN is refused."""
     path = request.url.path
+    headers = guard.security_headers(path, request.headers.get("x-forwarded-proto", request.url.scheme) == "https")
+
+    def refuse(status, detail, more=None):
+        return JSONResponse({"detail": detail}, status_code=status, headers={**headers, **(more or {})})
+
     if path.startswith("/api/"):
+        # The guard against spam and abuse (guard.py): nothing oversized, and nobody calls the open addresses
+        # more often than a real phone would.
+        if request.method == "POST" and guard.body_too_large(request.headers):
+            return refuse(413, "This request is larger than anything Meddy asks for.")
+        wait = guard.too_many(who_asks(request), path)
+        if wait:
+            return refuse(429, "Too many requests from this connection. Wait a moment, then try again.",
+                          {"Retry-After": str(wait)})
         db.seen()
         if path.startswith("/api/chief/"):
             if not is_chief(request):
-                return JSONResponse({"detail": "Chief doctor only: enter the chief doctor's PIN."}, status_code=401)
+                return refuse(401, "Chief doctor only: enter the chief doctor's PIN.")
         elif not path.startswith(FOR_PATIENTS) and not is_staff(request):
-            return JSONResponse({"detail": "Staff only: enter the staff PIN."}, status_code=401)
-    return await call_next(request)
+            return refuse(401, "Staff only: enter the staff PIN.")
+    answer = await call_next(request)
+    for name, value in headers.items():
+        answer.headers[name] = value
+    return answer
+
+
+def who_asks(request):
+    """The address a request really comes from (see guard.client_address)."""
+    return guard.client_address(request.headers, request.client.host if request.client else None)
+
+
+def own_phone(visit, request):
+    """Only the phone that registered a visit may change it. Registration numbers follow one another, so without
+    this anybody could finish somebody else's check-in, or press "I feel worse" for every patient in the waiting
+    room. The phone proves itself with the key it was given at registration (see db.phone_key). A visit without
+    a key (the nurse took the patient over, or it is from before keys) is left as it was."""
+    key = visit.get("phone_key")
+    if key and not hmac.compare_digest((request.headers.get("x-meddy-visit") or "").encode(), key.encode()):
+        raise HTTPException(403, "This visit was registered on another phone. Use that phone, or speak to the staff.")
 
 
 def lan_ip():
@@ -352,10 +384,12 @@ def follow_up(reg_no: str):
 
 
 @app.post("/api/checkin")
-def checkin(body: CheckIn):
+def checkin(body: CheckIn, request: Request):
     """The patient's phone finishes check-in. The patient now waits for the nurse, and the phone shows a short
-    code; the nurse finds the patient by it on her own screen. Refused (409) once the nurse has seen them."""
+    code; the nurse finds the patient by it on her own screen. Refused (409) once the nurse has seen them, and
+    (403) for any phone but the one that registered the visit."""
     visit = open_visit(body.reg_no)
+    own_phone(visit, request)
     answers = checked_answers(visit, body.answers, body.injury)
     try:
         code = db.check_in(body.reg_no, body.arrival, body.injury, body.pain, answers)
@@ -369,9 +403,14 @@ def checkin(body: CheckIn):
 
 
 @app.post("/api/worse")
-def worse(body: Worse):
+def worse(body: Worse, request: Request):
     """The patient pressed "I feel worse" while waiting. Nothing about their level or place changes: the nurse is
-    told, and the patient goes to the top of her list for another look. Refused (409) when they are not waiting."""
+    told, and the patient goes to the top of her list for another look. Refused (409) when they are not waiting,
+    and (403) for any phone but the one that registered the visit."""
+    visit = db.visit_for(body.reg_no)
+    if visit is None:
+        raise HTTPException(404, "No visit with this registration number.")
+    own_phone(visit, request)
     try:
         status = db.feel_worse(body.reg_no)
     except db.NotWaiting:
@@ -436,7 +475,7 @@ def staff_login(body: Login, request: Request):
     pin, cookie, token = (CHIEF_PIN, CHIEF_COOKIE, _chief_token) if chief else (STAFF_PIN, STAFF_COOKIE, _staff_token)
     if pin is None:
         return {"locked": False}
-    who = request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip()
+    who = who_asks(request)         # not the first address in X-Forwarded-For: the visitor can write that one
     tries, until = _wrong_pins.get(who, (0, 0))
     if until > time.time():
         raise HTTPException(429, "Too many wrong tries. Wait a minute.")
@@ -792,4 +831,6 @@ if __name__ == "__main__":
     db.start_keeping()
     db.start_simulation()
     online = LAN or PUBLIC_URL
-    uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning")
+    # proxy_headers=False: uvicorn would otherwise take the caller's address from a header for callers on this
+    # machine. Who is asking is decided in one place, guard.client_address.
+    uvicorn.run(app, host="0.0.0.0" if online else "127.0.0.1", port=PORT, log_level="warning", proxy_headers=False)

@@ -975,6 +975,7 @@ function entrance() {
         cardBox.setAttribute("aria-invalid", "true"); idle(go); return; }
       if (response.status === 422) { error.textContent = "The hospital did not accept the card number. Use 6 to 20 letters and digits.";
         cardBox.setAttribute("aria-invalid", "true"); idle(go); return; }
+      if (response.status === 429) { error.textContent = "Too many registrations from this connection just now. Please wait a minute, then try again."; idle(go); return; }
       if (!response.ok) throw new Error();
       const data = await response.json();
       me.cardEnd = me.insurance === "none" ? null : card.slice(-4).toUpperCase();      // the number itself is not kept
@@ -1123,6 +1124,8 @@ function checkin() {
       idle(go);
       if (e.status === 404) { startOver("The hospital started a new day, so your visit was cleared. Please register again."); return; }
       if (e.status === 409) { atNurse(); return; }                // the nurse already has the answers
+      if (e.status === 403) { document.getElementById("error").textContent = "This visit was registered on another phone. Finish check-in there, or tell the staff."; return; }
+      if (e.status === 429) { document.getElementById("error").textContent = "Too many tries from this connection just now. Please wait a minute, then try again."; return; }
       document.getElementById("error").textContent = "Meddy can't reach the hospital server. Check that it is running, then try again.";
     }
   });
@@ -1285,6 +1288,8 @@ function drawWorse(isWorse, note) {
       button.disabled = false;
       const error = document.getElementById("worse-error");       // gone when the screen has moved on meanwhile
       if (error) error.textContent = e.status === 409 ? "You are not in the line right now. Please speak to the staff."
+        : e.status === 403 ? "This visit was registered on another phone. Please tell the staff in person."
+        : e.status === 429 ? "Please wait a moment before pressing again, or tell the staff in person."
         : e.status === 404 ? "The hospital no longer has this visit. Please speak to the staff."
         : "Meddy can't reach the hospital server. Please tell the staff in person.";
     }
