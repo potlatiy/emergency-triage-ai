@@ -21,7 +21,7 @@
   el.className = base();
   el.setAttribute("aria-hidden", "true");
   el.innerHTML = '<div class="stage"><img src="/static/meddy-logo.webp" alt="" width="876" height="288">' +
-                 '<div class="bar"><i></i></div><p></p></div>';
+                 '<div class="curtain-bar"><i class="curtain-fill"></i></div><p></p></div>';
   document.body.appendChild(el);
   const caption = el.querySelector("p");
   let timers = [], swapLater = null, revealLater = null;
@@ -30,10 +30,10 @@
   // It climbs one percent at a time and shows the number under the bar. The curtain never lifts and the
   // page never leaves before it reads 100%: topUp() speeds up whatever is left, then resolves at 100.
   // A hidden tab draws no frames, so there it simply completes.
-  const bar = el.querySelector(".bar i");
+  const bar = el.querySelector(".curtain-fill");
   const pctLabel = document.createElement("span");
-  pctLabel.className = "pct"; pctLabel.textContent = "0%";
-  el.querySelector(".bar").after(pctLabel);
+  pctLabel.className = "curtain-pct"; pctLabel.textContent = "0%";
+  el.querySelector(".curtain-bar").after(pctLabel);
   let pct = 0, raf = 0, from = 0, startAt = 0, span = 0, done = null, doneWait = null;
   function draw(p) {
     pct = p;
