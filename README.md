@@ -1,7 +1,7 @@
 # Meddy, a triage queue assistant: the nurse decides, the app double-checks her and puts the most urgent patients first
 
 **Track:** Health
-**Team:** Yegor ([potlatiy](https://github.com/potlatiy), backend), Denys ([darkshdwss](https://github.com/darkshdwss), project decisions), Ostap ([ken2ki1](https://github.com/ken2ki1), front end)
+**Team:** Yegor ([potlatiy](https://github.com/potlatiy), backend), Denys ([darkshdwss](https://github.com/darkshdwss), project lead and backend), Ostap ([ken2ki1](https://github.com/ken2ki1), front end)
 
 *This project is a prototype and is not medical advice.*
 

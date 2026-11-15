@@ -255,7 +255,7 @@ the question writer is **instructed**, not **trained**. The real-data claim belo
 |---|---|---|---|
 | **Yegor** | Backend | `hospital/core.py`, `hospital/db.py`, `hospital/server.py`, `triage.py`, `assignment.py` | Run `python assignment.py` and check the results. Check the database rules. Confirm the notebook runs in Colab |
 | **Ostap** | Front end | `hospital/static/index.html`, `docs/index.html`, `app.py` | Try the digital hospital on a phone and a laptop. Fix anything unclear on screen. Record the video |
-| **Denys** | Project decisions | `README.md`, this guide | Review the diagnosis-to-department table. Decide what the video says. Rewrite the README. Send the submission form |
+| **Denys** | Project lead and backend | `README.md`, this guide | Review the diagnosis-to-department table. Decide what the video says. Rewrite the README. Send the submission form |
 
 Everyone, whatever their role, must be able to answer three questions:
 
