@@ -656,10 +656,50 @@ const head = (who, label) => `<div class="ids">${me.reg ? regTag() : ""}${role(w
 const regTag = () => `<span class="regno">Registration no. ${esc(me.reg)}${me.ticket ? ", ticket " + esc(me.ticket) : ""}</span>`;
 
 // ---------------------------------------------------------------- scanning the insurance card
-// The camera reads a barcode or QR code on the card (BarcodeDetector, built into Chrome). Nothing is uploaded:
-// the picture stays in the browser and only the number that was read goes into the field. In a browser without
-// it, or without a camera, the patient types the number or makes one up.
+// The camera reads a barcode or QR code on the card. Chrome on Android and Mac has a reader built in
+// (BarcodeDetector); everywhere else (Chrome on Windows, Safari on iPhone) a small open-source reader, ZXing, is
+// loaded once from a CDN and reads the camera's pictures in the browser. Nothing is uploaded either way: the
+// picture stays in the browser and only the number that was read goes into the field. Without a camera, the
+// patient types the number or makes one up.
 let scanTimer = null;
+let zxing = null;
+function loadZxing() {
+  if (!zxing) zxing = new Promise((ready, failed) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+    script.onload = () => window.ZXing ? ready(window.ZXing) : failed(new Error("no reader"));
+    script.onerror = () => { zxing = null; failed(new Error("no reader")); };      // offline: try again next time
+    document.head.appendChild(script);
+  });
+  return zxing;
+}
+// A reader for the barcodes on cards: the one built into the browser if it knows them, otherwise ZXing.
+// Either way it is a function that looks at the video once and gives back the text it read, or null.
+async function cardReader(video) {
+  const wanted = ["code_39", "code_128", "qr_code", "ean_13"];
+  if ("BarcodeDetector" in window) {
+    try {
+      const known = (await BarcodeDetector.getSupportedFormats()).filter((f) => wanted.includes(f));
+      if (known.length) {
+        const detector = new BarcodeDetector({ formats: known });
+        return async () => { const codes = await detector.detect(video); return codes.length ? codes[0].rawValue : null; };
+      }
+    } catch (e) {}
+  }
+  const ZX = await loadZxing();
+  const hints = new Map([[ZX.DecodeHintType.POSSIBLE_FORMATS,
+    [ZX.BarcodeFormat.CODE_39, ZX.BarcodeFormat.CODE_128, ZX.BarcodeFormat.QR_CODE, ZX.BarcodeFormat.EAN_13]],
+    [ZX.DecodeHintType.TRY_HARDER, true]]);
+  // Each look copies one picture of the video onto a canvas at full size and reads it there.
+  const reader = new ZX.MultiFormatReader(), canvas = document.createElement("canvas");
+  reader.setHints(hints);
+  return async () => {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    try { return reader.decodeWithState(new ZX.BinaryBitmap(new ZX.HybridBinarizer(new ZX.HTMLCanvasElementLuminanceSource(canvas)))).getText(); }
+    catch (e) { return null; }                       // nothing readable in this picture yet
+  };
+}
 function stopScan() {
   clearInterval(scanTimer); scanTimer = null;
   const video = document.getElementById("scan-video");
@@ -670,26 +710,33 @@ async function scanCard(field) {
   stopScan();
   const box = document.getElementById("scanner"), hint = document.getElementById("scan-hint"), video = document.getElementById("scan-video");
   box.hidden = false; video.hidden = true;
-  if (!("BarcodeDetector" in window) || !navigator.mediaDevices) {
-    hint.textContent = "This browser cannot scan. Type the number, or open Meddy in Chrome."; return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    hint.textContent = "This browser cannot use the camera. Type the number, or tap “Make up a number”."; return; }
+  let read;
+  try { hint.textContent = "Getting the scanner ready…"; read = await cardReader(video); }
+  catch (e) { hint.textContent = "Meddy could not load the scanner (no internet?). Type the number instead."; return; }
+  if (box.hidden) return;                                            // the patient closed it in the meantime
   try {
     hint.textContent = "Starting the camera…";
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 } } });
     if (video.srcObject || !video.isConnected || box.hidden) {      // the patient moved on while the camera was asked for
       stream.getTracks().forEach((track) => track.stop()); return; }
     video.srcObject = stream;
     video.hidden = false; await video.play();
-    const detector = new BarcodeDetector();
-    hint.textContent = "Hold the barcode or QR code of the card in front of the camera.";
+    hint.textContent = "Hold the barcode or QR code of the card in front of the camera, filling most of the picture.";
+    let busy = false;
     scanTimer = setInterval(async () => {
+      if (busy || !video.videoWidth) return;
+      busy = true;
       try {
-        const codes = await detector.detect(video);
-        if (!codes.length) return;
-        field.value = codes[0].rawValue.trim().slice(0, 24);
-        field.dispatchEvent(new Event("input"));
-        stopScan();
-      } catch (e) {}
-    }, 300);
+        const text = await read();
+        if (text && video.srcObject) {
+          field.value = text.trim().slice(0, 24);
+          field.dispatchEvent(new Event("input"));
+          stopScan();
+        }
+      } catch (e) {} finally { busy = false; }
+    }, 250);
   } catch (e) {
     video.hidden = true;
     hint.textContent = "Meddy could not use the camera. Allow the camera for this page, or type the number.";
