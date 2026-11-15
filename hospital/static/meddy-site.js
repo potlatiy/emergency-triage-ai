@@ -28,29 +28,62 @@
   }
   function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
 
-  function play(text, swap, reveal) {
+  // until (optional): a promise for "the next step is ready". The curtain stays down until it settles, at most
+  // 5 seconds, so a slow answer from the server never shows the old step again under a lifting curtain.
+  let playing = 0;
+  function play(text, swap, reveal, until) {
     finish();
     if (calm.matches) { run(swap); run(reveal); return; }
+    const mine = ++playing;
     caption.textContent = text || "";
     swapLater = swap; revealLater = reveal;
     void el.offsetWidth;                                // start from below the screen every time
     el.classList.add("in");
     later(IN, () => { const s = swapLater; swapLater = null; run(s); });
     later(IN + HOLD, () => {
-      const r = revealLater; revealLater = null; run(r);
-      el.classList.remove("in"); el.classList.add("out");
+      const wait = new Promise((done) => setTimeout(done, 5000));
+      Promise.race([until || Promise.resolve(), wait]).then(() => {
+        if (mine !== playing || !el.classList.contains("in")) return;   // a newer change already took over
+        const r = revealLater; revealLater = null; run(r);
+        el.classList.remove("in"); el.classList.add("out");
+        later(OUT, () => { if (mine === playing) el.className = "curtain"; });
+      });
     });
-    later(IN + HOLD + OUT, () => { el.className = "curtain"; });
+  }
+
+  // A short note at the bottom of the screen, for when a screen cannot be opened.
+  let note = null;
+  function notice(message) {
+    if (!note) {
+      note = document.createElement("div");
+      note.className = "meddy-notice"; note.setAttribute("role", "status");
+      document.body.appendChild(note);
+    }
+    note.textContent = message;
+    note.classList.add("on");
+    clearTimeout(note.hide); note.hide = setTimeout(() => note.classList.remove("on"), 7000);
   }
 
   function go(url, text) {
-    const leave = () => {
+    // Check the next screen answers before leaving, so a server that does not have it yet never leaves
+    // the visitor on an error page: the curtain rolls back and the note says what to do.
+    const ready = fetch(url, { cache: "no-store" }).then((r) => r.ok).catch(() => false);
+    const leave = () => ready.then((ok) => {
+      if (!ok) {
+        notice((text || "That screen") + " isn't available on this server yet. Restart the server, then try again.");
+        return;
+      }
       try { sessionStorage.setItem(KEY, text || ""); } catch (e) {}
       window.location.href = url;
-    };
+    });
     if (calm.matches) { leave(); return; }
     play(text, leave);
   }
+
+  // Safari and Firefox can bring a page back from memory (the Back button) with the curtain frozen half-way.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) { timers.forEach(clearTimeout); timers = []; swapLater = revealLater = null; el.className = "curtain"; }
+  });
 
   // A screen opened by go(): start covered, then roll the curtain away.
   let arriving = null;

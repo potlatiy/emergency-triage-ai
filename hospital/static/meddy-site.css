@@ -2,6 +2,100 @@
    website. The logo in the header, the switcher between the three screens, and the white curtain with the logo
    that rolls across between steps and between screens (see meddy-site.js). */
 
+/* ---------- the look every screen shares ----------
+   Colour comes from the logo: Meddy blue, mint, and a sky and lavender that sit between them. It lives in the
+   background wash, the brand stripes and the step icons. Red, amber and green stay reserved for urgency.
+   ":root" in front of a rule lets it win over each page's own older styles. */
+:root { --sky:#38a8e0; --lilac:#7b6cf0; --mint-bright:#5dcaa5;
+        --lift:0 1px 2px rgba(22,37,42,.05), 0 8px 24px -12px rgba(22,37,42,.18);
+        --lift-high:0 2px 6px rgba(22,37,42,.06), 0 24px 48px -20px rgba(33,82,196,.28); }
+:root body {
+  background-color:#f4f7f6;
+  background-image:
+    radial-gradient(42rem 28rem at 8% -6%, rgba(93,202,165,.22), transparent 70%),
+    radial-gradient(40rem 26rem at 96% 2%, rgba(56,168,224,.18), transparent 70%),
+    radial-gradient(46rem 30rem at 70% 108%, rgba(123,108,240,.12), transparent 70%);
+  background-attachment:fixed;
+}
+:root header.top { background:rgba(255,255,255,.86); backdrop-filter:saturate(1.4) blur(10px);
+                   border-bottom:1px solid rgba(220,227,221,.8); box-shadow:0 6px 24px -18px rgba(22,37,42,.35); }
+:root .card { border-color:rgba(220,227,221,.9); box-shadow:var(--lift); }
+:root .panel { border-color:transparent; box-shadow:var(--lift-high); }
+:root .panel::after { content:""; position:absolute; left:0; right:0; top:0; height:5px; border-radius:20px 20px 0 0;
+                      background:linear-gradient(90deg, var(--mint-bright), var(--sky), var(--blue, #2152c4)); }
+:root .go:not(.light):not(:disabled) { background:linear-gradient(135deg, #2b63d8, #1d48b0); border:0;
+                      box-shadow:0 10px 24px -10px rgba(33,82,196,.6), inset 0 1px 0 rgba(255,255,255,.18);
+                      transition:transform .15s ease, box-shadow .15s ease, filter .15s ease; }
+:root .go:not(.light):not(:disabled):hover { transform:translateY(-1px); filter:brightness(1.06);
+                      box-shadow:0 14px 28px -12px rgba(33,82,196,.65), inset 0 1px 0 rgba(255,255,255,.18); }
+:root .go:not(.light):not(:disabled):active { transform:translateY(1px); }
+:root .steps { border-color:transparent; box-shadow:var(--lift); }
+:root .steps span.on { background:linear-gradient(135deg, #2b63d8, #1d48b0); box-shadow:0 8px 18px -10px rgba(33,82,196,.7); }
+:root .steps span.done { background:#e9f7f0; color:#155c3d; }
+:root .steps span.done b { background:#1d7a52; border-color:#1d7a52; color:#fff; }
+
+/* the step's own icon, next to "Step 2 of 5" */
+.step-ic { display:inline-grid; place-items:center; width:34px; height:34px; margin-right:10px; border-radius:11px;
+           vertical-align:middle; }
+.step-ic svg { width:19px; height:19px; }
+.step-ic.s1 { background:#e6efff; color:#2152c4; } .step-ic.s2 { background:#efecff; color:#5a45b8; }
+.step-ic.s3 { background:#e3f6ef; color:#1d7a52; } .step-ic.s4 { background:#e3f2fb; color:#16679a; }
+.step-ic.s5 { background:#e8f3f2; color:#11706b; }
+
+/* "you are here" on the floor plan */
+.here { display:inline-flex; align-items:center; gap:8px; margin-left:8px; padding:3px 12px; border-radius:999px;
+        background:#e6efff; color:#173f9c; font-size:.9rem; font-weight:800; vertical-align:middle; }
+.here::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--blue, #2152c4);
+                box-shadow:0 0 0 4px rgba(33,82,196,.18); }
+
+/* the footer: the logo, the disclaimer, and where things are */
+:root footer.bottom { background:rgba(255,255,255,.9); border-top:0; position:relative; }
+:root footer.bottom::before { content:""; position:absolute; left:0; right:0; top:0; height:4px;
+                              background:linear-gradient(90deg, var(--mint-bright), var(--sky), var(--blue, #2152c4), var(--lilac)); }
+footer.bottom .foot-logo { height:30px; width:auto; display:block; }
+
+/* ---------- the welcome on the patient's first step ---------- */
+.welcome { margin-top:24px; }
+.welcome[hidden] { display:none; }
+.welcome-card { position:relative; overflow:hidden; display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);
+                gap:28px; align-items:center; padding:36px 40px; border-radius:28px; color:#fff;
+                background:
+                  radial-gradient(30rem 20rem at 100% 0%, rgba(93,202,165,.55), transparent 65%),
+                  radial-gradient(26rem 18rem at 0% 100%, rgba(123,108,240,.45), transparent 70%),
+                  linear-gradient(135deg, #1d48b0, #2b63d8 55%, #2a8fd0);
+                box-shadow:0 30px 60px -30px rgba(29,72,176,.7); }
+.welcome-card::after { content:""; position:absolute; right:-60px; bottom:-90px; width:300px; height:300px; border-radius:50%;
+                       border:44px solid rgba(255,255,255,.07); pointer-events:none; }
+.welcome h2 { margin:0; font-size:clamp(1.9rem, 3.6vw, 2.75rem); font-weight:800; line-height:1.08; letter-spacing:-0.02em;
+              max-width:17ch; color:#fff; }
+.welcome .intro { margin:14px 0 0; font-size:1.15rem; line-height:1.55; color:rgba(255,255,255,.9); max-width:46ch; }
+.promises { display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 0; padding:0; list-style:none; }
+.promises li { display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:999px;
+               background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.22); font-weight:700; font-size:.98rem; }
+.promises svg { width:18px; height:18px; flex:none; color:#a8f0d4; }
+.journey { position:relative; display:grid; gap:14px; padding:22px; border-radius:22px;
+           background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.22); }
+.journey::before { content:""; position:absolute; left:47px; top:46px; bottom:46px; border-left:3px dashed rgba(255,255,255,.4); }
+.journey li { position:relative; display:flex; align-items:center; gap:14px; list-style:none; padding:12px 14px;
+              border-radius:16px; background:#fff; color:#16252a; box-shadow:0 10px 24px -14px rgba(10,30,80,.6); }
+.journey li b { display:block; font-size:1.02rem; }
+.journey li span { display:block; font-size:.9rem; color:#45555b; }
+.journey .ic { display:grid; place-items:center; flex:none; width:44px; height:44px; border-radius:14px; }
+.journey .ic svg { width:22px; height:22px; }
+.journey li:nth-child(1) .ic { background:#e6efff; color:#2152c4; }
+.journey li:nth-child(2) .ic { background:#e3f6ef; color:#1d7a52; }
+.journey li:nth-child(3) .ic { background:#efecff; color:#5a45b8; }
+.journey ol { display:contents; }
+@media (max-width: 860px) {
+  .welcome-card { grid-template-columns:minmax(0,1fr); padding:28px 22px; border-radius:24px; }
+}
+@media (max-width: 640px) {                       /* on a phone the check-in comes first: keep the welcome short */
+  .welcome { margin-top:16px; }
+  .journey { display:none; }
+  .welcome .intro { font-size:1.05rem; }
+  .promises li { font-size:.9rem; padding:6px 12px; }
+}
+
 /* ---------- the logo in the header ---------- */
 .brand { display:flex; align-items:center; gap:16px; color:inherit; text-decoration:none; }
 .brand .logo { display:block; height:50px; width:auto; }
@@ -50,6 +144,13 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 /* rolling away, upwards, to show the next step */
 .curtain.out { visibility:visible; transform:translateY(-100%); transition:transform .38s cubic-bezier(.7,0,.3,1); }
 .curtain.out img, .curtain.out p { opacity:1; transform:none; }
+
+/* a short note when a screen cannot be opened */
+.meddy-notice { position:fixed; left:50%; bottom:24px; z-index:1100; max-width:min(560px, calc(100vw - 32px));
+                padding:14px 20px; border-radius:16px; background:var(--ink, #16252a); color:#fff; font-weight:700;
+                font-size:1rem; line-height:1.4; box-shadow:0 18px 40px -16px rgba(0,0,0,.45);
+                transform:translate(-50%, 140%); opacity:0; transition:transform .3s ease, opacity .3s ease; }
+.meddy-notice.on { transform:translate(-50%, 0); opacity:1; }
 
 @keyframes meddy-logo { to { opacity:1; transform:none; } }
 @keyframes meddy-bar { to { transform:none; } }
