@@ -628,7 +628,10 @@ def test_a_card_number_must_look_like_one():
 
 def test_the_registry_never_keeps_the_card_number():
     reg_no = arrive(card="MD-4829 1375").json()["reg_no"]
-    everything = json.dumps([dict(r) for table in ("people", "visits") for r in db._conn.execute(f"SELECT * FROM {table}")])
+    # Every piece of text the two tables hold. (Numbers are left out: a clock time such as 1794748291.4 can hold
+    # "4829" by chance, which made this test fail for ten seconds now and then.)
+    everything = json.dumps([value for table in ("people", "visits") for r in db._conn.execute(f"SELECT * FROM {table}")
+                             for value in dict(r).values() if isinstance(value, str)])
     assert "MD48291375" not in everything and "4829" not in everything
     visit = db.visit_for(reg_no)
     assert visit["insurance"] == "public" and visit["card_end"] == "1375" and len(visit["person"]) == 24
@@ -2220,3 +2223,45 @@ def test_the_summary_drops_a_kind_of_pain_the_patient_never_described():
         core.checked_summary("The patient reported experiencing a sharp, persistent pain for one hour.", "hurt pain for one hour", report)
     described = core._report_for_summary("chest pain", 30, "Female", [{**core.PAIN_FEEL, "answer": "Sharp or stabbing"}])
     assert core.checked_summary("She describes the pain as sharp.", "chest pain", described) == "She describes the pain as sharp."
+
+
+# ---------------------------------------------------------------- what the review list still left open
+
+def test_old_made_up_visits_are_removed_and_a_real_one_never():
+    real = assessed_visit("chest pain", age=40)
+    db.refer(real, 3, "Looks unwell", doctor_reg="DR-1001")
+    client.post("/api/doctor/finish", json={"reg_no": real})
+    db.simulate(FixedDice(0.99), now=1000)
+    db.simulate(FixedDice(0.99), now=50_000)                                             # the morning's made-up patients have left
+    made_up_done = db._conn.execute("SELECT COUNT(*) AS n FROM visits WHERE you = 0 AND status = 'done'").fetchone()["n"]
+    assert made_up_done >= len(db.SEED_WITH_DOCTOR) - 1
+    assert db.forget_old_made_up() == 0                                                  # closed today: all kept
+    with db._lock, db._conn:
+        db._conn.execute("UPDATE visits SET closed_at = '2026-01-01T00:00:00+00:00' WHERE status = 'done'")
+    assert db.forget_old_made_up() == made_up_done
+    assert db._conn.execute("SELECT COUNT(*) AS n FROM visits WHERE you = 0 AND status = 'done'").fetchone()["n"] == 0
+    assert db.visit_for(real)["status"] == "done" and client.get(f"/api/visit/{real}/history").json()["steps"]
+    assert db._conn.execute("SELECT COUNT(*) AS n FROM events WHERE visit_reg NOT IN (SELECT reg_no FROM visits)").fetchone()["n"] == 0
+    assert len(db.line()["patients"]) == len(db.SEED_WAITING)                            # the waiting ones are untouched
+
+
+def test_sharing_the_word_pain_is_not_sharing_a_complaint():
+    """A patient who wrote only "pain" was shown five patients with "abd pain" as alike."""
+    vague = core.assess("pain", 40)["similar"]
+    assert vague["complaint_matched"] is False and all(p["other_complaint"] for p in vague["patients"])
+    chest = core.assess("chest pain", 40)["similar"]
+    assert chest["complaint_matched"] is True and not any(p["other_complaint"] for p in chest["patients"])
+    assert core._telling_words("abd pain, lt") == {"abd"} and core._telling_words("pain") == set()
+
+
+def test_a_pin_typed_in_another_alphabet_is_a_wrong_pin_and_not_a_crash(monkeypatch):
+    monkeypatch.setattr(server, "STAFF_PIN", "4821")
+    server._wrong_pins.clear()
+    assert client.post("/api/staff/login", json={"pin": "пин-код"}).status_code == 401
+    assert client.post("/api/staff/login", json={"pin": "4821"}).status_code == 200
+    server._wrong_pins.clear(); client.cookies.clear()
+
+
+def test_gemma_stays_loaded_between_patients():
+    assert core.KEEP_GEMMA_LOADED == "12h"
+

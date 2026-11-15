@@ -27,11 +27,16 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
 
 1. Open the three windows: https://darkshdws-meddy.hf.space, `/nurse` and `/doctor`. (Or locally:
    `python hospital/server.py` and http://localhost:8000.) A free Space that has been quiet for two days takes
-   about a minute to wake up.
+   about a minute to wake up. If the Space has a staff PIN (`MEDDY_STAFF_PIN`), the nurse's and the doctor's
+   windows ask for it once: type it before the recording starts. On the doctor's window choose your name.
 2. Add the Space variable `MEDDY_AUTO_UPDATE` = `0` (Space → Settings → Variables), so a teammate's merge cannot
    restart the site during the recording. Delete it afterwards.
-3. Run both patients of the script through once first. The AI model needs a few seconds to load the first time,
-   and a complaint it has already seen is answered at once, so the recording will not wait.
+3. Run both patients of the script through once first. The AI model needs a few seconds to load the first time
+   (the first patient after the Space wakes often gets no AI summary at all), and a complaint it has already
+   seen is answered at once, so the recording will not wait.
+   To show the nurse choosing a doctor, do not use "heart pain" or chest pain in an adult: Meddy reads it as
+   chest pain, suggests level 2, and the patient goes straight to the resuscitation team with no doctor to choose.
+   A twisted ankle, a sore throat or a headache shows the choice.
 4. On the nurse's screen open "Behind the scenes" and press "Start a new day", so the recording begins with a
    clean waiting room. Then reload the patient's window.
 5. The rest of the hospital runs by itself while a screen is open: doctors get made-up patients from other nurses
@@ -80,7 +85,7 @@ probability is at least about 10%. We chose that cut so that the experts' level 
 then checked it on patients the cut had not seen: 90.6%. The method is called conformal prediction. The weak spots:
 for the most urgent patients it is only 8 in 10, a miss on them is nearly always too low, and there the simple "one
 level either side" does better. It also does not travel: with the other hospital's model and cut it is 87%. The
-nurse's screen shows only how often a range this wide was right; the doctor's summary also gives the 8 in 10.
+nurse's screen shows only how often a range this wide was right; the doctor's screen shows the range alone.
 
 **What are the "patients like this one"?**
 Five real patients from the 1,267 who look most like the new one: same kind of complaint first, then closest in the

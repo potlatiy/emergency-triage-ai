@@ -37,7 +37,7 @@ import shutil
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import core
@@ -1280,17 +1280,42 @@ def simulate(rng=None, now=None):
     return {"left": left, "came": came}
 
 
+KEEP_MADE_UP = 24 * 3600        # seconds a finished made-up visit is kept
+
+
+def forget_old_made_up(older_than=KEEP_MADE_UP):
+    """Remove finished made-up visits older than a day, with their answers and log lines. A real patient's visit
+    is never removed. The simulation writes a few hundred made-up visits an hour; kept for ever they would only
+    make the file, and its copy to lasting storage every few seconds, heavier. Returns how many were removed."""
+    before = (datetime.now(timezone.utc) - timedelta(seconds=older_than)).isoformat(timespec="seconds")
+    with _lock, _conn:
+        old = [r["reg_no"] for r in _conn.execute(
+            "SELECT reg_no FROM visits WHERE you = 0 AND status = 'done' AND closed_at IS NOT NULL AND closed_at < ?",
+            (before,))]
+        for start in range(0, len(old), 500):
+            some = old[start:start + 500]
+            marks = ",".join("?" * len(some))
+            _conn.execute(f"DELETE FROM events WHERE visit_reg IN ({marks})", some)
+            _conn.execute(f"DELETE FROM answers WHERE visit_reg IN ({marks})", some)
+            _conn.execute(f"DELETE FROM visits WHERE reg_no IN ({marks})", some)
+    return len(old)
+
+
 def start_simulation(every=SIM_EVERY):
     """Run the rest of the hospital in the background while somebody is watching. MEDDY_SIMULATION=0 turns it off."""
     if os.environ.get("MEDDY_SIMULATION", "1") == "0":
         return
     def loop():
+        steps = 0
         while True:
             time.sleep(every)
             if time.monotonic() - _last_seen > SIM_AWAKE:
                 continue
             try:
                 simulate()
+                steps += 1
+                if steps % 240 == 1:                # at the first step, then about once an hour
+                    forget_old_made_up()
             except Exception as error:             # never take the hospital down: say it and try again
                 print(f"The simulation stumbled: {error}", flush=True)
     threading.Thread(target=loop, daemon=True, name="simulate-hospital").start()
