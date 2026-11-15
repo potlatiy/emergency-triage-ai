@@ -25,7 +25,8 @@
   header .clock b { display:block; font-size:clamp(1.8rem,3.4vw,3.4rem); line-height:1; }
   header .clock span { color:var(--soft); }
   main { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:clamp(16px,2vw,32px); margin-top:clamp(16px,2.5vw,36px); }
-  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  @media (max-width: 900px) { main { grid-template-columns:minmax(0,1fr); } }
+  .side { min-width:0; } form button { flex:none; }
   .card { background:var(--card); border-radius:var(--round); padding:clamp(18px,2vw,32px); box-shadow:0 10px 30px rgba(22,37,42,.06); }
   h2 { margin:0 0 14px; font-size:clamp(1.1rem,1.6vw,1.6rem); color:var(--soft); font-weight:700; letter-spacing:.01em; }
   .calls { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
