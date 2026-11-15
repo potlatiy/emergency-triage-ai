@@ -359,7 +359,8 @@ def staff_login(body: Login, request: Request):
     tries, until = _wrong_pins.get(who, (0, 0))
     if until > time.time():
         raise HTTPException(429, "Too many wrong tries. Wait a minute.")
-    if not hmac.compare_digest(body.pin.strip(), STAFF_PIN):
+    # Compared as bytes: as text, a PIN typed with letters outside English made the comparison itself fail.
+    if not hmac.compare_digest(body.pin.strip().encode(), STAFF_PIN.encode()):
         _wrong_pins[who] = (0, time.time() + 60) if tries + 1 >= 5 else (tries + 1, 0)
         raise HTTPException(401, "That is not the staff PIN.")
     _wrong_pins.pop(who, None)

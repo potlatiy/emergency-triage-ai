@@ -42,6 +42,9 @@ def recheck_due(patient, clock):
     allowed = RECHECK_AFTER.get(patient.get("level"))
     return bool(allowed and seen is not None and clock - seen >= allowed)
 OLLAMA_URL = "http://localhost:11434/api/chat"
+# How long Gemma stays in memory after an answer. With half an hour, the first patient after a quiet spell waited
+# for the model to load again and often got no AI summary at all.
+KEEP_GEMMA_LOADED = "12h"
 # The online copy runs on a plain processor, so it can choose a smaller Gemma and wait longer for it.
 OLLAMA_MODEL = os.environ.get("MEDDY_OLLAMA_MODEL", "gemma3:4b")
 OLLAMA_TIMEOUT = int(os.environ.get("MEDDY_OLLAMA_TIMEOUT", 20))
@@ -285,6 +288,16 @@ def kind_of_complaint(complaint, injury=False):
     return kind if recognised else None
 
 
+# Words that do not say what a complaint is about: they fit every complaint.
+_NOT_TELLING = set("""pain pains painful ache aches hurt hurts sore left right both side lt rt bilateral upper lower
+problem problems feeling feel bad very severe mild acute chronic general since after with and the for""".split())
+
+
+def _telling_words(text):
+    """The first four letters of every word that says what a complaint is about ("ches", "abd", "dysp")."""
+    return {word[:4] for word in re.findall(r"[a-z]{2,}", (text or "").lower()) if word not in _NOT_TELLING}
+
+
 def similar_patients(row, complaint, injury=False):
     """The five patients in the data most like this one, for the nurse to look at. Never their diagnosis.
 
@@ -295,8 +308,14 @@ def similar_patients(row, complaint, injury=False):
         data = load()
         _similar = similar.Similar(data, [kind_of_complaint(c, i == 2) for c, i in zip(data[TEXT], data["Injury"])])
     found = _similar.nearest(row, kind_of_complaint(complaint, injury))
-    for patient in found:           # alike in the measurements but with another complaint: the nurse is told
-        patient["other_complaint"] = not patient.pop("same_kind") and patient["complaint_alike"] < COMPLAINT_ALIKE_ENOUGH
+    mine = _telling_words(nurse_words(complaint)) | _telling_words(spelling(complaint))
+    for patient in found:
+        # The same complaint: the same kind by the key-word rule, or letter patterns alike AND a telling word in
+        # common. "pain" alone is not telling: a patient who wrote only "pain" got five patients with "abd pain"
+        # shown as alike. Everyone else is alike in the measurements only, and the nurse is told.
+        shares = bool(mine & _telling_words(patient["complaint"]))
+        patient["other_complaint"] = not patient.pop("same_kind") and not (
+            shares and patient["complaint_alike"] >= COMPLAINT_ALIKE_ENOUGH)
     return {"patients": found, "under_rated": sum(p["nurse_level"] > p["expert_level"] for p in found),
             "complaint_matched": not found[0]["other_complaint"]}
 
@@ -582,7 +601,7 @@ def checked_questions(written, skip=(), complaint=""):
 def questions_from_model(complaint, skip=(), timeout=OLLAMA_TIMEOUT):
     """History questions for this exact complaint, chosen and worded by the local language model."""
     allowed = [t for t in TOPICS if t not in skip]
-    body = {"model": OLLAMA_MODEL, "stream": False, "format": _extra_schema(allowed), "keep_alive": "30m",
+    body = {"model": OLLAMA_MODEL, "stream": False, "format": _extra_schema(allowed), "keep_alive": KEEP_GEMMA_LOADED,
             "messages": [{"role": "system", "content": QUESTION_SYSTEM_PROMPT},
                          {"role": "user", "content": f'Complaint: "{complaint}". Allowed topics: {", ".join(allowed)}'}],
             "options": {"temperature": 0.2, "num_ctx": 2048}}
@@ -798,7 +817,7 @@ def nurse_summary(key, complaint, age, sex, answers, injury=False, use_model=Tru
         return _summaries[cache]
     if not use_model:
         return {"source": "none", "text": None}
-    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": "30m",
+    body = {"model": OLLAMA_MODEL, "stream": False, "keep_alive": KEEP_GEMMA_LOADED,
             "messages": [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": report}],
             "options": {"temperature": 0.2, "num_ctx": 2048, "num_predict": 120}}
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),

@@ -102,7 +102,8 @@ which rebuilds itself when `main` changes.
 
 The internal database is one SQLite file with seven tables: departments, 37 doctors with day and night shifts,
 visits, the questionnaire answers, a log of every step of every visit (with its time and who did it), a registry
-of people that keeps one open visit per insurance card, and counters. Nothing is deleted: "Start a new day" closes
+of people that keeps one open visit per insurance card, and counters. No real patient's visit is ever deleted (finished made-up visits of the simulated hospital are removed after a day,
+so the file does not grow for ever): "Start a new day" closes
 the open visits and keeps them, and registration numbers are never given twice. Online, a copy of the file is kept
 in the Space's storage bucket every few seconds and taken back at start, so a restart or a new version of the code
 loses nothing; a newer version adds its tables and columns to the old file instead of wiping it. The rest of the
@@ -316,8 +317,8 @@ The nurse's screen shows the figure for the width in front of her.
 - **The promise is an average.** Only 8 in 10 of the most urgent patients are inside the 90% range (level 1: 78%,
   level 2: 80%, level 5: 58%), and for them the simple baseline is better.
 - **For urgent patients a miss is nearly always the dangerous way.** 19% of the level 1 and 2 patients got a range
-  that was entirely less urgent than they were. The doctor's summary gives the 8 in 10 next to the range; the
-  nurse's screen was shortened and shows only the figure for the range's width.
+  that was entirely less urgent than they were. The screens were shortened and no longer carry this warning:
+  the nurse sees how often a range that wide was right, the doctor sees the range alone.
 - **It does not travel.** With the model and the cut from one hospital tried at the other, the experts' level was
   inside for 87% of patients and for 64% of the urgent ones. The promise is for patients like those in the data.
 
@@ -367,6 +368,8 @@ not as a second opinion.
 - **Each queue order was simulated on its own 200 random days**, so a difference of a minute or two between two rows of the first table is luck. The large differences are not.
 - **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering; the kind-first step adds one point, which could be chance. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike mostly in age and measurements; the screen marks them.
 - **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: in the waiting room it only calls the nurse and never moves them up the line. A patient who is still waiting for the nurse's first look goes to the top of her list, ahead of danger signs. Like every screen in the demonstration it has no sign-in, so anyone who knows a registration number could press for that patient. While the nurse is re-checking a patient no doctor can call them, for 15 minutes at most; that number is our choice.
+- **The staff PIN is a lock on the door, not a sign-in.** One PIN is shared by all staff. It keeps a passer-by out of the patients' names and away from "Start a new day"; it does not say who did what. A real department would give every nurse and doctor their own account. A patient without insurance can still register more than once: there is nothing to recognise them by.
+- **Waiting time is real time.** The clock moves by itself, so "waited 30 min" means 30 minutes; "15 minutes pass" on the nurse's screen jumps it ahead for a demonstration.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
 - **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The card scanner reads a barcode or QR code in Chrome; we tested it on our own sample card, not on real insurance cards or with a real camera in a department.
@@ -390,6 +393,9 @@ not as a second opinion.
 - **Trained models:** both are saved in [`models/`](models/README.md), so nothing needs training. `python trained_models.py` makes them again.
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
 - **Online:** https://darkshdws-meddy.hf.space (nurse: `/nurse`, doctor: `/doctor`). See [deploy/huggingface](deploy/huggingface/README.md).
+- **Staff PIN:** when the server is started with `MEDDY_STAFF_PIN` set, the nurse's and the doctor's screens and
+  every staff action (also "Start a new day" and "15 minutes pass") ask for that PIN. The patient's phone never
+  needs it and can only ask about its own visit. Without the setting, as on a laptop, the screens are open.
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000 (the patient's phone),
   http://localhost:8000/nurse and http://localhost:8000/doctor. For AI-written questions and the nurse's summary,
   install Ollama and run `ollama pull gemma3:4b` first (the online copy uses `gemma3:1b`: set `MEDDY_OLLAMA_MODEL`);
