@@ -6,7 +6,7 @@
 <title>Meddy · Nurse's screen</title>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=10">
+<link rel="stylesheet" href="/static/meddy-site.css?v=27">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -127,6 +127,14 @@
 </main>
 
 <div class="wrap linebox">
+  <section class="card" aria-labelledby="ward-heading">
+    <h2 id="ward-heading">The department now</h2>
+    <p class="hint" style="margin:6px 0 14px">With names and levels: staff only. Everyone on the plan comes from the lists on this screen.</p>
+    <div id="staff-plan"></div>
+  </section>
+</div>
+
+<div class="wrap linebox">
   <section class="card" aria-labelledby="line-heading">
     <h2 id="line-heading">The waiting room line</h2>
     <div class="row">
@@ -178,6 +186,7 @@
 </footer>
 
 <script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-plan.js?v=18"></script>
 <script>
 const LEVEL_COLOUR = { 1:"#b4302f", 2:"#b4302f", 3:"#b06a00", 4:"#1d7a52", 5:"#1d7a52" };
 const LEVEL_TINT = { 1:"#fdeeec", 2:"#fdeeec", 3:"#fff4e0", 4:"#e8f6ee", 5:"#e8f6ee" };
@@ -867,6 +876,8 @@ document.getElementById("new-day").addEventListener("click", async (event) => {
 const asked = new URLSearchParams(location.search).get("reg");
 if (asked) openPatient(asked); else welcome();
 loadList(); loadLine(); refreshDatabase();
+// A patient tapped on the plan of the department opens here, like a patient tapped in the list.
+document.addEventListener("meddy-open", (event) => { openPatient(event.detail.reg); panel.scrollIntoView({ block: "nearest" }); });
 setInterval(loadList, 4000);
 setInterval(() => loadLine(), 8000);
 // Today's patients: drawn when opened, and kept current while open. A row, like a row of the line, opens the patient.

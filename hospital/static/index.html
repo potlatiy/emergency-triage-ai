@@ -8,7 +8,7 @@
 try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me && v.me.reg) document.documentElement.classList.add("restoring"); } catch (e) {}</script>
 <link rel="icon" type="image/png" href="/static/meddy-icon.png">
 <link rel="apple-touch-icon" href="/static/meddy-touch-icon.png">
-<link rel="stylesheet" href="/static/meddy-site.css?v=10">
+<link rel="stylesheet" href="/static/meddy-site.css?v=27">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;600;700;800&display=swap">
@@ -93,6 +93,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   #you text { font:800 10.5px var(--font); fill:#fff; text-anchor:middle; }
   #you .pulse { fill:var(--blue); transform-origin:center; transform-box:fill-box; animation:pulse 2.2s ease-out infinite; }
   @keyframes pulse { from { transform:scale(1); opacity:.35; } to { transform:scale(2.1); opacity:0; } }
+
 
   /* ---------- the step card ---------- */
   .panel { position:relative; padding:36px; box-shadow:0 2px 4px rgba(22,37,42,.04), 0 18px 40px -18px rgba(22,37,42,.22); }
@@ -294,6 +295,14 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
   .ticks .none.on { background:var(--mint); border-color:var(--mint); }
   .choice.chips button { flex:0 1 auto; white-space:normal; min-height:54px; font-size:1.08rem; }
   .sec-doctor .q input { margin-top:12px; }
+  /* two short looping pictures of what happens at the nurse's desk: the picture on one side, the words beside it */
+  .shows { display:grid; gap:12px; margin:22px 0 0; }
+  .show { display:grid; grid-template-columns:176px minmax(0, 1fr); gap:16px; align-items:center; margin:0; }
+  .show[hidden] { display:none; }
+  .show video { display:block; width:100%; height:auto; aspect-ratio:640 / 358; border:1px solid var(--line); border-radius:14px;
+                background:#fff; }
+  .show figcaption { font-size:1.05rem; font-weight:700; line-height:1.35; }
+  .shows-note { margin:10px 0 0; font-size:.9rem; }
   .writing { display:flex; align-items:center; gap:12px; margin:24px 4px 0; color:var(--soft); font-size:1.02rem; }
   .writing i { flex:none; width:18px; height:18px; border:3px solid rgba(90,69,184,.25); border-top-color:var(--violet);
                border-radius:50%; animation:spin .7s linear infinite; }
@@ -392,6 +401,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
     .card, .panel { padding:22px; }
     .panel h2 { font-size:1.75rem; }
     .steps { gap:4px; padding:6px; }
+    .show { grid-template-columns:132px minmax(0, 1fr); gap:12px; } .show figcaption { font-size:.95rem; }
     .steps span { font-size:.78rem; min-height:64px; }
     .row { grid-template-columns:1fr; gap:0; }
     .panel { order:-1; }        /* on a phone the step comes first; the floor plan is below it */
@@ -499,6 +509,7 @@ try { const v = JSON.parse(sessionStorage.getItem("meddy-visit")); if (v && v.me
 </footer>
 
 <script src="/static/meddy-site.js?v=16"></script>
+<script src="/static/meddy-plan.js?v=18"></script>
 <script>
 const STOPS = ["Entrance", "Check‑in", "Nurse", "Waiting room", "Doctor"];   // ‑: a hyphen that never breaks
 const SPOT = { 1:[64,228], 2:[195,108], 3:[345,108], 4:[280,300], 5:[530,250], 6:[530,98] };
@@ -554,6 +565,8 @@ const fresh = () => ({ reg:null, firstName:"", lastName:"", complaint:"", age:30
                        vitals:"normal", topic:"", questions:[], source:"list", result:null, ticket:null,
                        noDanger:false, followUp:"none", nurseLevel:null, review:null, showLine:false, day:null });
 let me = fresh();
+// What the floor plan may say about the patient when they tap themself on it: their own visit and nothing else.
+window.MeddyVisit = () => ({ reg: me.reg, ticket: me.ticket, name: [me.firstName, me.lastName].filter(Boolean).join(" ") });
 let watching = null;                    // the timer of the patient's phone in the waiting room
 let tick = 0;                           // counts the changes of step; an answer that arrives for an older step is dropped
 
@@ -677,6 +690,18 @@ function idle(button) {
 // each step has its own icon and colour, next to "Step 2 of 5"
 const STEP_ICON = { 1: '<path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3M13 20h9M10 12v.01"/><path d="M13 4.56v16.88a.5.5 0 0 1-.63.48L5 20V5.24a2 2 0 0 1 1.47-1.93l5.9-1.48a.5.5 0 0 1 .63.48z"/>', 2: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6M9 16h4"/>', 3: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', 4: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', 5: '<path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/>' };
 const stepNo = (n) => `<span class="stepno"><i class="step-ic s${n}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STEP_ICON[n]}</svg></i>Step ${n} of 5</span>`;
+// Two short animations of what happens at the nurse's desk (static/media: drawn by an AI video tool in the
+// style of the site's pictures, see static/media/README.md). They loop silently; anyone who asks for reduced
+// motion gets the still pictures, and a clip that cannot be loaded is simply left out.
+const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const show = (name, text) => `<figure class="show"><video src="/static/media/${name}.mp4?v=2" poster="/static/media/${name}.jpg?v=2"
+    width="640" height="358" muted loop playsinline preload="metadata" aria-hidden="true"${still ? "" : " autoplay"}
+    onerror="this.closest('figure').hidden = true"></video><figcaption>${text}</figcaption></figure>`;
+const shows = () => `<div class="shows">
+    ${show("nurse-scan", "The nurse scans your code")}
+    ${show("nurse-check", "She checks your blood pressure, pulse and temperature")}
+  </div>
+  <p class="hint shows-note">Pictures drawn by an AI video tool to show what happens. Not a real hospital.</p>`;
 const sectionHead = (kind, title, note) => `<div class="section-head"><span class="icon">${ICON[kind]}</span>
   <div><h3>${title}</h3>${note ? `<p>${note}</p>` : ""}</div></div>`;
 
@@ -1090,6 +1115,7 @@ function atNurse() {
     </div>
     <p class="lede">The nurse will call your code. This screen moves on by itself.</p>
     <p class="writing"><i aria-hidden="true"></i>Waiting for the nurse…</p>
+    ${shows()}
     <div id="worse-box"></div>
     <p class="error" id="error" role="alert"></p>`;
   drawQr(document.getElementById("nurse-qr"), nurseLink, 112);
