@@ -8,10 +8,13 @@
 // Nothing waits on an animation event: plain timers drive it, and a second call finishes the first one at once.
 // Anyone who asks for reduced motion gets the change straight away, without the curtain.
 (function () {
-  const IN = 420, HOLD = 640, OUT = 380, KEY = "meddy-curtain";
+  const KEY = "meddy-curtain";
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+  // rolling: 460 ms up (sheet curve), the logo holds, 380 ms away. Reduced motion: a 200 ms fade each way.
+  const timing = () => calm.matches ? { IN: 200, HOLD: 520, OUT: 200 } : { IN: 460, HOLD: 600, OUT: 380 };
+  const base = () => "curtain" + (calm.matches ? " calm" : "");
   const el = document.createElement("div");
-  el.className = "curtain";
+  el.className = base();
   el.setAttribute("aria-hidden", "true");
   el.innerHTML = '<div class="stage"><img src="/static/meddy-logo.webp" alt="" width="876" height="288">' +
                  '<div class="bar"><i></i></div><p></p></div>';
@@ -24,7 +27,7 @@
     timers.forEach(clearTimeout); timers = [];
     const swap = swapLater, reveal = revealLater; swapLater = revealLater = null;
     run(swap); run(reveal);
-    el.className = "curtain";
+    el.className = base();
   }
   function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
 
@@ -33,7 +36,7 @@
   let playing = 0;
   function play(text, swap, reveal, until) {
     finish();
-    if (calm.matches) { run(swap); run(reveal); return; }
+    const { IN, HOLD, OUT } = timing();
     const mine = ++playing;
     caption.textContent = text || "";
     swapLater = swap; revealLater = reveal;
@@ -46,7 +49,7 @@
         if (mine !== playing || !el.classList.contains("in")) return;   // a newer change already took over
         const r = revealLater; revealLater = null; run(r);
         el.classList.remove("in"); el.classList.add("out");
-        later(OUT, () => { if (mine === playing) el.className = "curtain"; });
+        later(OUT, () => { if (mine === playing) el.className = base(); });
       });
     });
   }
@@ -76,23 +79,23 @@
       try { sessionStorage.setItem(KEY, text || ""); } catch (e) {}
       window.location.href = url;
     });
-    if (calm.matches) { leave(); return; }
     play(text, leave);
   }
 
   // Safari and Firefox can bring a page back from memory (the Back button) with the curtain frozen half-way.
   window.addEventListener("pageshow", (event) => {
-    if (event.persisted) { timers.forEach(clearTimeout); timers = []; swapLater = revealLater = null; el.className = "curtain"; }
+    if (event.persisted) { timers.forEach(clearTimeout); timers = []; swapLater = revealLater = null; el.className = base(); }
   });
 
   // A screen opened by go(): start covered, then roll the curtain away.
   let arriving = null;
   try { arriving = sessionStorage.getItem(KEY); sessionStorage.removeItem(KEY); } catch (e) {}
-  if (arriving !== null && !calm.matches) {
+  if (arriving !== null) {
+    const { OUT } = timing();
     caption.textContent = arriving;
     el.classList.add("cover");
-    later(420, () => { el.classList.remove("cover"); el.classList.add("out"); });
-    later(420 + OUT, () => { el.className = "curtain"; });
+    later(360, () => { el.classList.remove("cover"); el.classList.add("out"); });
+    later(360 + OUT, () => { el.className = base(); });
   }
 
   // The switcher between the three screens uses the curtain; a click with a modifier key still opens a new tab.

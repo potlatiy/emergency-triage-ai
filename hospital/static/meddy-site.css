@@ -6,7 +6,10 @@
    Colour comes from the logo: Meddy blue, mint, and a sky and lavender that sit between them. It lives in the
    background wash, the brand stripes and the step icons. Red, amber and green stay reserved for urgency.
    ":root" in front of a rule lets it win over each page's own older styles. */
-:root { --sky:#38a8e0; --lilac:#7b6cf0; --mint-bright:#5dcaa5;
+:root { --ease-out:cubic-bezier(0.23, 1, 0.32, 1);          /* entering and leaving */
+        --ease-in-out:cubic-bezier(0.77, 0, 0.175, 1);  /* moving across the screen */
+        --ease-drawer:cubic-bezier(0.32, 0.72, 0, 1);   /* a full-screen sheet rising */
+        --sky:#38a8e0; --lilac:#7b6cf0; --mint-bright:#5dcaa5;
         --lift:0 1px 2px rgba(22,37,42,.05), 0 8px 24px -12px rgba(22,37,42,.18);
         --lift-high:0 2px 6px rgba(22,37,42,.06), 0 24px 48px -20px rgba(33,82,196,.28); }
 :root body {
@@ -24,11 +27,16 @@
 :root .panel::after { content:""; position:absolute; left:0; right:0; top:0; height:5px; border-radius:20px 20px 0 0;
                       background:linear-gradient(90deg, var(--mint-bright), var(--sky), var(--blue, #2152c4)); }
 :root .go:not(.light):not(:disabled) { background:linear-gradient(135deg, #2b63d8, #1d48b0); border:0;
-                      box-shadow:0 10px 24px -10px rgba(33,82,196,.6), inset 0 1px 0 rgba(255,255,255,.18);
-                      transition:transform .15s ease, box-shadow .15s ease, filter .15s ease; }
-:root .go:not(.light):not(:disabled):hover { transform:translateY(-1px); filter:brightness(1.06);
-                      box-shadow:0 14px 28px -12px rgba(33,82,196,.65), inset 0 1px 0 rgba(255,255,255,.18); }
-:root .go:not(.light):not(:disabled):active { transform:translateY(1px); }
+                      box-shadow:0 10px 24px -10px rgba(33,82,196,.6), inset 0 1px 0 rgba(255,255,255,.18); }
+:root .go { transition:transform 140ms var(--ease-out), box-shadow 200ms ease, filter 200ms ease, background-color 150ms ease; }
+@media (hover: hover) and (pointer: fine) {
+  :root .go:not(.light):not(:disabled):hover { transform:translateY(-1px); filter:brightness(1.06);
+                        box-shadow:0 14px 28px -12px rgba(33,82,196,.65), inset 0 1px 0 rgba(255,255,255,.18); }
+}
+/* press feedback: a small, quick squeeze on every tappable pill */
+:root .choice button, :root .roles a, :root .pain button {
+  transition:background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out); }
+:root .go:not(:disabled):active, :root .choice button:active, :root .roles a:active, :root .size:active { transform:scale(0.97); }
 :root .steps { border-color:transparent; box-shadow:var(--lift); }
 :root .steps span.on { background:linear-gradient(135deg, #2b63d8, #1d48b0); box-shadow:0 8px 18px -10px rgba(33,82,196,.7); }
 :root .steps span.done { background:#e9f7f0; color:#155c3d; }
@@ -126,30 +134,30 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 .curtain::before { content:""; position:absolute; left:0; right:0; top:0; height:6px;
                    background:linear-gradient(90deg, #5dcaa5, var(--blue, #2152c4)); }
 .curtain .stage { display:grid; justify-items:center; gap:26px; padding:24px; text-align:center; }
-.curtain img { display:block; width:min(460px, 76vw); height:auto; opacity:0; transform:translateX(-48px); }
+.curtain img { display:block; width:min(460px, 76vw); height:auto; opacity:0; transform:translateX(-40px); }
 .curtain .bar { width:min(220px, 50vw); height:6px; border-radius:6px; background:#e8eeea; overflow:hidden; }
 .curtain .bar i { display:block; height:100%; border-radius:6px; background:linear-gradient(90deg, #5dcaa5, var(--blue, #2152c4));
                   transform:scaleX(0); transform-origin:left; }
 .curtain p { margin:0; font-size:1.25rem; font-weight:800; color:var(--ink, #16252a); opacity:0; }
 
 /* rolling up over the screen */
-.curtain.in { visibility:visible; transform:none; pointer-events:auto; transition:transform .42s cubic-bezier(.7,0,.3,1); }
-.curtain.in img { animation:meddy-logo .55s .2s cubic-bezier(.2,.8,.2,1) forwards; }
-.curtain.in .bar i { animation:meddy-bar .95s .25s cubic-bezier(.6,0,.3,1) forwards; }
-.curtain.in p { animation:meddy-fade .4s .4s ease forwards; }
+.curtain.in { visibility:visible; transform:none; pointer-events:auto; transition:transform 460ms var(--ease-drawer); }
+.curtain.in img { animation:meddy-logo 520ms 160ms var(--ease-out) forwards; }
+.curtain.in .bar i { animation:meddy-bar 900ms 220ms linear forwards; }
+.curtain.in p { animation:meddy-fade 300ms 320ms var(--ease-out) forwards; }
 /* already covering (a new screen opening after the curtain) */
 .curtain.cover { visibility:visible; transform:none; pointer-events:auto; }
 .curtain.cover img, .curtain.cover p { opacity:1; transform:none; }
 .curtain.cover .bar i, .curtain.out .bar i { animation:none; transform:none; }
 /* rolling away, upwards, to show the next step */
-.curtain.out { visibility:visible; transform:translateY(-100%); transition:transform .38s cubic-bezier(.7,0,.3,1); }
+.curtain.out { visibility:visible; transform:translateY(-100%); transition:transform 380ms var(--ease-in-out); }
 .curtain.out img, .curtain.out p { opacity:1; transform:none; }
 
 /* a short note when a screen cannot be opened */
 .meddy-notice { position:fixed; left:50%; bottom:24px; z-index:1100; max-width:min(560px, calc(100vw - 32px));
                 padding:14px 20px; border-radius:16px; background:var(--ink, #16252a); color:#fff; font-weight:700;
                 font-size:1rem; line-height:1.4; box-shadow:0 18px 40px -16px rgba(0,0,0,.45);
-                transform:translate(-50%, 140%); opacity:0; transition:transform .3s ease, opacity .3s ease; }
+                transform:translate(-50%, 140%); opacity:0; transition:transform 300ms var(--ease-out), opacity 300ms var(--ease-out); }
 .meddy-notice.on { transform:translate(-50%, 0); opacity:1; }
 
 @keyframes meddy-logo { to { opacity:1; transform:none; } }
@@ -164,4 +172,48 @@ header.top .wrap > .who { order:5; }                 /* the doctor picker sits o
 }
 @media (prefers-reduced-motion: reduce) {
   .roles a { transition:none; }
+}
+
+/* ---------- motion (built with the "animate" skill: Emil Kowalski's rules) ----------
+   Every motion here has a job: the curtain hides a jarring jump between steps, the marker shows where you
+   walked, the welcome greets a first-time visitor, a press confirms a tap. Nothing moves for decoration. */
+
+/* the "YOU" marker walks between rooms: on-screen movement, so a strong ease-in-out */
+:root #you { transition:transform 700ms var(--ease-in-out); }
+
+/* a step that redraws itself (the waiting room when the line moves) stays still; only the changed number pops */
+:root .panel.quiet > *, :root .panel.quiet.fresh > * { animation:none; }
+/* a new step rising in as the curtain lifts: quick, strong ease-out */
+:root .panel.fresh > * { animation-duration:380ms; animation-timing-function:var(--ease-out); }
+
+/* the welcome, a first visit: one entrance, staggered 40-70 ms, the card first and the details after it */
+.welcome-card { animation:meddy-welcome 560ms var(--ease-out) both; }
+.welcome h2 { animation:meddy-rise 520ms 80ms var(--ease-out) both; }
+.welcome .intro { animation:meddy-rise 520ms 140ms var(--ease-out) both; }
+.promises li { animation:meddy-rise 420ms var(--ease-out) both; }
+.promises li:nth-child(1) { animation-delay:220ms; } .promises li:nth-child(2) { animation-delay:255ms; }
+.promises li:nth-child(3) { animation-delay:280ms; }
+.journey li { animation:meddy-slide 480ms var(--ease-out) both; }
+.journey li:nth-child(1) { animation-delay:260ms; } .journey li:nth-child(2) { animation-delay:320ms; }
+.journey li:nth-child(3) { animation-delay:365ms; }
+@keyframes meddy-welcome { from { opacity:0; transform:translateY(16px) scale(0.985); } }
+@keyframes meddy-rise { from { opacity:0; transform:translateY(10px); } }
+@keyframes meddy-slide { from { opacity:0; transform:translateX(18px); } }
+@keyframes meddy-fade-only { from { opacity:0; } }
+
+/* the curtain for people who ask for reduced motion: it fades instead of rolling, and nothing slides */
+.curtain.calm { transform:none; opacity:0; transition:none; }
+.curtain.calm.in { opacity:1; transition:opacity 200ms ease; }
+.curtain.calm.cover { opacity:1; }
+.curtain.calm.out { transform:none; opacity:0; transition:opacity 200ms ease; }
+.curtain.calm img, .curtain.calm p { animation:none; opacity:1; transform:none; }
+.curtain.calm .bar i { animation:none; transform:none; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* fewer and gentler, not none: what helps understanding fades, nothing travels */
+  :root #you { transition:transform 200ms ease; }
+  .welcome-card, .welcome h2, .welcome .intro, .promises li, .journey li { animation-name:meddy-fade-only; }
+  :root .go, :root .choice button, :root .roles a, :root .pain button { transition-property:background-color, border-color, color; }
+  :root .go:not(:disabled):active, :root .choice button:active, :root .roles a:active, :root .size:active { transform:none; }
+  .meddy-notice { transition:opacity 200ms ease; transform:translate(-50%, 0); }
 }
