@@ -51,6 +51,7 @@ A new Python library must also be added to the `pip install` line of the `Docker
 | Space secret | `HF_TOKEN` | none | Lets `watch.py` rebuild the Space |
 | Space variable | `MEDDY_AUTO_UPDATE` | on | `0` pauses the automatic updates |
 | Space secret | `MEDDY_STAFF_PIN` | none | Locks the nurse's and the doctor's screens with this PIN (the patient's phone never needs it). Without it they are open to anyone with the link |
+| Space secret | `MEDDY_CHIEF_PIN` | the staff PIN | Locks the chief doctor's panel (`/chief`) with a PIN of its own |
 | `Dockerfile` | `MEDDY_OLLAMA_MODEL` | `gemma3:1b` | The Gemma that writes the questions, downloaded while building. `gemma3:4b` is better but too slow without a graphics card |
 | Space variable | `MEDDY_OLLAMA_TIMEOUT` | `45` | Seconds to wait for Gemma before the standard questions are used |
 

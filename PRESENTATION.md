@@ -38,7 +38,9 @@ phone on the left (https://darkshdws-meddy.hf.space, narrow like a phone), the n
    chest pain, suggests level 2, and the patient goes straight to the resuscitation team with no doctor to choose.
    A twisted ankle, a sore throat or a headache shows the choice.
 4. On the nurse's screen open "Behind the scenes" and press "Start a new day", so the recording begins with a
-   clean waiting room. Then reload the patient's window.
+   clean waiting room (or, on the chief doctor's panel `/chief`, "Erase everything" for an empty hospital). Then
+   reload the patient's window. A doctor sees one patient at a time: if Dr. Baptiste is still busy with a made-up
+   patient, wait a minute or pick a doctor the list shows as free.
 5. The rest of the hospital runs by itself while a screen is open: doctors get made-up patients from other nurses
    and are free again a few minutes later, so the nurse's doctor list shows who is free and who is busy. Keep it on
    for the recording ("Simulated hospital: on" in "Behind the scenes"). It never touches your own patient, the
@@ -151,8 +153,9 @@ last four characters, never the number, and it never reaches the models. The dat
 closes the open ones), with a copy in the Space's private storage so a restart loses nothing.
 
 **Which parts are AI and which are plain rules?**
-AI: the urgency level, the department suggestion, the choice and wording of the three history questions. Plain
-rules: the order of the line, the choice of doctor, the danger-sign questions, and how the doctor's patient summary is
+AI: the urgency level, the department suggestion, the choice and wording of the three history questions, the
+nurse's two-sentence summary, and tidying the doctor's note (the doctor sees every changed word and decides). Plain
+rules: the estimated wait, the chief doctor's suggestions, the order of the line, the choice of doctor, the danger-sign questions, and how the doctor's patient summary is
 put together (the only AI text in it is the two checked sentences, and the nurse can hold them back).
 
 ## Submission form

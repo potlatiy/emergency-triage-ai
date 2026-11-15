@@ -1,5 +1,9 @@
 # Plan: one device per role (patient, nurse, doctor)
 
+> **Historical note:** this is the team's first-day plan, kept to show how the project started. Everything in it
+> has since been built and more; the [README](README.md) describes the finished project and [JUDGES.md](JUDGES.md)
+> shows how to try it.
+
 *Draft for the team. Nothing here is built yet; the backend for the doctor's screen, the patient's phone and the
 referral is already in pull request #3.*
 
