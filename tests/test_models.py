@@ -255,7 +255,7 @@ def test_the_notebook_reads_the_kind_of_complaint_with_the_hospitals_own_rule():
     root = Path(triage.__file__).parent
     sys.path.insert(0, str(root / "hospital"))
     import core
-    cells = json.loads((root / "triage.ipynb").read_text())["cells"]
+    cells = json.loads((root / "triage.ipynb").read_text(encoding="utf-8"))["cells"]
     copy = next("".join(c["source"]) for c in cells if "KINDS = [" in "".join(c["source"]))
     scope = {}
     exec(copy[copy.index("KINDS = ["):copy.index("def kind_of")], scope)       # only the list of patterns
