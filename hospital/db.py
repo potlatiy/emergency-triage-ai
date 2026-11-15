@@ -786,14 +786,22 @@ class NotHere(Exception):
 
 def still_fine(reg_no):
     """The nurse looked at a waiting patient again and nothing changed: the re-check time starts again and an
-    "I feel worse" is answered. Level, ticket and place in line stay as they are. None for an unknown visit."""
+    "I feel worse" is answered. Level, ticket and place in line stay as they are. None for an unknown visit.
+
+    It is her decision on the re-check, so it ends one: it counts as a second look, the patient is no longer kept
+    with her out of the doctors' calls, and if she measured again first, the summary for the doctor is written
+    again from those measurements. (Before, the patient stayed held for fifteen minutes and the doctor read
+    "measured again and had not decided".)"""
     with _lock, _conn:
-        visit = _conn.execute("SELECT status FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
+        visit = _conn.execute("SELECT status, remeasured, summary FROM visits WHERE reg_no = ?", (reg_no,)).fetchone()
         if visit is None:
             return None
         if visit["status"] != "waiting":
             raise NotHere(reg_no)
-        _conn.execute("UPDATE visits SET seen_at = ?, worse_at = NULL WHERE reg_no = ?", (_clock(), reg_no))
+        _conn.execute("UPDATE visits SET seen_at = ?, worse_at = NULL, rechecks = COALESCE(rechecks, 0) + 1, "
+                      "remeasured = 0, held_at = NULL, ai_level_then = ai_level WHERE reg_no = ?", (_clock(), reg_no))
+        if visit["remeasured"]:
+            _write_summary(reg_no, None, not _held_back(visit["summary"]), keep_note=True)
         _event(reg_no, "looked at again", "nurse", "still fine, nothing changed")
     return {"reg_no": reg_no, "status": "waiting"}
 
@@ -1585,6 +1593,8 @@ def simulate(rng=None, now=None):
         clock = _clock()
         for patient in _conn.execute("SELECT * FROM visits WHERE status = 'waiting' AND you = 0").fetchall():
             if clock - patient["arrived"] < SIM_LINE_WAIT or rng.random() >= SIM_CALLED:
+                continue
+            if _with_nurse(patient, clock):         # the nurse is re-checking them: her decision comes first
                 continue
             department = patient["department"] or core.department_for(patient["complaint"])
             doctor = next((d for d in free if d["department"] == department), None) or \
