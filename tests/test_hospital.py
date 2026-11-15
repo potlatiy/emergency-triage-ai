@@ -679,7 +679,7 @@ def report_for(complaint, age=30, sex="Female", yes=False, **more):
 def test_a_quick_review_is_advised_only_for_a_sure_calm_report():
     _, calm = report_for("ankle pain", pain=4)
     assert max(calm["probabilities"].values()) >= core.QUICK_SURE and calm["level"] >= 3
-    assert calm["advice"] == {"quick": True, "emergency": False, "reasons": []}
+    assert calm["advice"] == {"quick": True, "emergency": False, "reasons": [], "rule_only": False}
     _, danger = report_for("ankle pain", pain=4, yes=True)                      # the same patient, one danger sign
     assert danger["advice"]["quick"] is False and "danger sign" in " ".join(danger["advice"]["reasons"])
     _, feverish = report_for("ankle pain", pain=4, vitals="feverish")           # the same patient, with a fever
@@ -1419,7 +1419,8 @@ def test_answering_no_to_every_danger_question_is_not_the_same_as_not_being_aske
     result = {"level": 4, "probabilities": {"4": 0.9}, "sure": 0.9, "unread": False, "warnings": []}
     assert core.review_advice(result, danger=False, asked=True)["quick"] is True
     assert core.review_advice(result, danger=False, asked=False)["quick"] is False
-    assert core.review_advice({**result, "level": 2}, asked=False) == {"quick": True, "emergency": True, "reasons": []}
+    assert core.review_advice({**result, "level": 2}, asked=False) == {"quick": True, "emergency": True, "reasons": [],
+                                                                               "rule_only": False}
 
 
 def test_a_doctor_who_is_off_duty_cannot_call_a_patient():
@@ -1501,3 +1502,44 @@ def test_names_in_any_alphabet_and_nothing_else():
 
 def test_the_made_up_patients_have_made_up_names():
     assert all(p["patient"] for p in client.get("/api/line").json()["patients"])
+
+
+# ---------------------------------------------------------------- honest advice: figures only where they were measured
+
+def test_a_test_figure_is_only_shown_for_a_reason_the_tests_measured():
+    """The 1,267 test patients have no check-in answers. Advice that rests only on a danger-sign answer is a
+    safety rule, and the nurse's screen must not print "right only 63% of the time" next to it."""
+    sure = {"level": 4, "probabilities": {"4": 0.92}, "sure": 0.92, "unread": False, "warnings": []}
+    assert core.review_advice(sure)["rule_only"] is False                                    # quick: its own figure
+    assert core.review_advice(sure, danger=True) == {
+        "quick": False, "emergency": False, "reasons": ["the patient answered yes to a danger sign"], "rule_only": True}
+    assert core.review_advice(sure, asked=False)["rule_only"] is True
+    assert core.review_advice({**sure, "unread": True})["rule_only"] is True
+    unsure = {**sure, "probabilities": {"4": 0.5}, "sure": 0.5}
+    assert core.review_advice(unsure, danger=True)["rule_only"] is False                     # measured: 63% against 84%
+    assert core.review_advice({**sure, "warnings": ["low oxygen"]}, danger=True)["rule_only"] is False
+    assert core.review_advice({**sure, "level": 2}, danger=True)["rule_only"] is False
+
+
+def test_the_doctor_is_told_when_the_nurse_accepted_against_meddys_advice():
+    reg = checked_in("sore throat", danger_yes=True)
+    report = client.post("/api/triage", json={"reg_no": reg}).json()
+    assert report["advice"]["quick"] is False
+    client.post("/api/line/join", json={"reg_no": reg, "level": report["level"], "review": "approved"})
+    assert json.loads(db.visit_for(reg)["summary"])["nurse_found"]["against_advice"] is True
+    checked = checked_in("sore throat", danger_yes=True)
+    client.post("/api/triage", json={"reg_no": checked})
+    client.post("/api/line/join", json={"reg_no": checked, "level": 4, "review": "checked"})
+    assert json.loads(db.visit_for(checked)["summary"])["nurse_found"]["against_advice"] is False
+
+
+def test_the_log_says_when_the_nurse_took_a_patient_over():
+    reg = new_visit("sore throat", age=30)
+    client.post("/api/triage", json={"reg_no": reg})
+    client.post("/api/triage", json={"reg_no": reg})                              # measuring again is not a second take-over
+    steps = [step["what"] for step in client.get(f"/api/visit/{reg}/history").json()["steps"]]
+    assert steps == ["registered", "taken by the nurse", "assessed", "assessed"]
+    done = checked_in("sore throat")
+    client.post("/api/triage", json={"reg_no": done})
+    assert "taken by the nurse" not in [s["what"] for s in client.get(f"/api/visit/{done}/history").json()["steps"]]
+
