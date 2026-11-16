@@ -35,7 +35,9 @@ by side (the phone narrow, like a phone).
    you and shows the note.
 5. **Board and chief doctor.** The board on the waiting room's wall shows the called tickets (the patient's page
    links to it). The chief doctor's panel shows the whole department today, Meddy's suggestions from the numbers,
-   saves the day's summary as a PDF, and can erase everything to start from scratch.
+   saves the day's summary as a PDF, shows what the server refused and whether the log of the visits is unchanged
+   (the "Security" card), and can erase everything to start from scratch. **Please do not press "Erase
+   everything":** all judges share this one hospital, and what is erased cannot be brought back.
 
 A chest pain in an adult is usually rated level 2 and goes straight to the resuscitation team, with no doctor to
 choose: to see the choice of doctor, try a sore throat, a twisted ankle or "it burns when I pee".
@@ -46,4 +48,4 @@ choose: to see the choice of doctor, try a sore throat, a twisted ankle or "it b
   README for every figure and its limits).
 - **Made up:** the doctors and the other patients. Made-up patients from "other nurses" keep the doctors busy and
   free again, so the screens look like a working department; they never touch a real patient.
-- Meddy never gives a diagnosis, and the nurse always decides. This is a prototype and not medical advice.
+- Meddy never gives a diagnosis, and the nurse always decides. This project is a prototype and is not medical advice.

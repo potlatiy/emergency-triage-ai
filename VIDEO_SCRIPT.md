@@ -81,7 +81,7 @@ them come in**. The phone shows the room.
 
 > **Denys:** "It still misses urgent patients whose danger doesn't show in the vital signs."
 > **Ostap:** "Next, we'll test it with real triage nurses."
-> **Yegor:** "Meddy is a prototype, not medical advice."
+> **Yegor:** "This project is a prototype and is not medical advice."
 
 *(28 words)*
 

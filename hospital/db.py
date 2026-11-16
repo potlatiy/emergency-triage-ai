@@ -53,7 +53,25 @@ if KEPT and KEPT.exists() and not DB_PATH.exists():
     shutil.copyfile(KEPT, DB_PATH)
     print(f"Database taken back from {KEPT}.", flush=True)
 _lock = threading.Lock()
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+
+
+def _opened(path):
+    """Open the database file. A file that is not a database (a copy cut off half-way, for example) is put aside
+    under another name and an empty one is started: the server used to stop on it at every start, for ever."""
+    conn = sqlite3.connect(path, check_same_thread=False)
+    try:
+        conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+    except sqlite3.DatabaseError as error:
+        conn.close()
+        aside = Path(path).with_name(f"{Path(path).name}.broken-{int(time.time())}")
+        os.replace(path, aside)
+        print(f"The database file could not be read ({error}). It was put aside as {aside.name}; "
+              "the hospital starts with an empty one.", flush=True)
+        conn = sqlite3.connect(path, check_same_thread=False)
+    return conn
+
+
+_conn = _opened(DB_PATH)
 _conn.row_factory = sqlite3.Row
 
 SCHEMA = """
@@ -861,7 +879,9 @@ def where_is(reg_no, key=None):
         _, rows = _waiting()            # the same order as the line the nurse sees
         estimate = _estimate(dict(visit), rows) if visit["status"] == "waiting" else None
         doctor = _conn.execute("SELECT name, room FROM doctors WHERE reg_no = ?", (visit["doctor_reg"],)).fetchone()
-        wanted = _conn.execute("SELECT name, room, waiting FROM doctors WHERE reg_no = ?", (visit["wanted_doctor"],)).fetchone()
+        # Only while that doctor is on duty: the phone must not name a doctor who has gone home.
+        wanted = _conn.execute("SELECT name, room, waiting FROM doctors WHERE reg_no = ? AND on_duty = 1",
+                               (visit["wanted_doctor"],)).fetchone()
         today = _meta("day")
     me = {"ticket": visit["ticket"], "status": "registered", "position": None, "ahead": None, "doctor": None, "room": None,
           "day": today, "code": code_for(reg_no), "worse": False, "closed": None, "estimate": None, "note": None,
@@ -1011,10 +1031,18 @@ def _waiting_for(doctor):
     clock, rows = _waiting()
     rows = [p for p in rows if not _with_nurse(p, clock)]          # the nurse is re-checking them: not now
     department = doctor["department"]
-    on_duty = {r["reg_no"] for r in _conn.execute("SELECT reg_no FROM doctors WHERE on_duty = 1")}
+    working = _conn.execute("SELECT reg_no, department FROM doctors WHERE on_duty = 1").fetchall()
+    on_duty, staffed = {r["reg_no"] for r in working}, {r["department"] for r in working}
     free = [p for p in rows if p["wanted_doctor"] not in on_duty or p["wanted_doctor"] == doctor["reg_no"]]
-    mine = [p for p in free if p["wanted_doctor"] == doctor["reg_no"]
-            or (p["department"] or core.department_for(p["complaint"], bool(p["injury"]))) == department]
+
+    def home(patient):
+        return patient["department"] or core.department_for(patient["complaint"], bool(patient["injury"]))
+    # A patient whose own department has nobody on duty would be in no doctor's list: a level 3 patient for
+    # Neurology waited behind every level 5 patient while the phone said "you are next". General medicine takes
+    # such patients as its own, in the line's order; if it has nobody on duty either, every doctor does.
+    takes_the_rest = department == core.DEFAULT_DEPARTMENT or core.DEFAULT_DEPARTMENT not in staffed
+    mine = [p for p in free if p["wanted_doctor"] == doctor["reg_no"] or home(p) == department
+            or (takes_the_rest and home(p) not in staffed)]
     if not mine and department == core.DEFAULT_DEPARTMENT:
         mine = free
     return clock, mine

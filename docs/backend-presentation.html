@@ -139,7 +139,7 @@
         </g>
         <rect x="378" y="96" width="270" height="208" rx="22" fill="#e8eefc" stroke="#2152c4" stroke-width="3"/>
         <text x="513" y="150" font-size="26" fill="#173f9c">The server</text>
-        <text x="513" y="184" font-size="18" font-weight="700" fill="#16252a">FastAPI · 39 addresses</text>
+        <text x="513" y="184" font-size="18" font-weight="700" fill="#16252a">FastAPI · 45 addresses</text>
         <text x="513" y="216" font-size="18" font-weight="700" fill="#16252a">checks every request,</text>
         <text x="513" y="242" font-size="18" font-weight="700" fill="#16252a">keeps the order of steps,</text>
         <text x="513" y="268" font-size="18" font-weight="700" fill="#16252a">locks the staff screens</text>
@@ -228,7 +228,7 @@
         <p class="big" style="margin:16px 0 8px">61%</p>
         <p>Five similar real patients are shown as evidence. Their most common level matched the experts 61% of the time: weaker than the model's 68%.</p></div>
     </div>
-    <p class="note-line">Weak results are reported next to the strong ones, on the screens and in the README.</p>
+    <p class="note-line">Weak results are reported next to the strong ones in the README.</p>
     <div class="foot"><span><b>6</b> / 10</span><span>triage.py (sections 7 and 9) · similar.py</span></div>
     <aside class="speak">
       <p class="say-text">Meddy shows its doubt. As a second check, it flags 107 of the 131 patients nurses rated too low. It gives a range of levels that held the right one for 90.6% of patients it had not seen, but only 80% of the most urgent. And it shows five similar real patients as evidence, not as a second opinion.</p>
@@ -290,17 +290,17 @@
     <p class="kicker">Evidence</p>
     <h2>How we know it works</h2>
     <div class="grid" style="grid-template-columns:repeat(3, 1fr)">
-      <div class="card"><p class="big">350 <small>tests</small></p>
-        <p style="margin-top:12px">About 350 automated tests run on every change: the models' figures, the order of steps, and every safety rule.</p></div>
+      <div class="card"><p class="big">430 <small>tests</small></p>
+        <p style="margin-top:12px">About 430 automated tests, run by hand before every merge: the models' figures, the order of steps, and every safety rule.</p></div>
       <div class="card"><p class="big">5 <small>folds</small></p>
         <p style="margin-top:12px">Every figure comes from patients the model had not seen. Each one is compared with a simple baseline and with real nurses.</p></div>
       <div class="card"><p class="big">3 <small>reviews</small></p>
-        <p style="margin-top:12px">Independent reviews of the statistics, the back end and the pages. They found no data leakage, and the gaps they found were fixed.</p></div>
+        <p style="margin-top:12px">AI-assisted reviews of the statistics, the back end and the pages. They found no data leakage. What they found and what is still open is listed in the README and SECURITY.md.</p></div>
     </div>
     <p class="note-line">If the data or a model changes, a test fails and every document that quotes the figure has to be re-read.</p>
     <div class="foot"><span><b>9</b> / 10</span><span>tests/ · triage.ipynb</span></div>
     <aside class="speak">
-      <p class="say-text">How do we know it works? About 350 automated tests run on every change. Every figure comes from patients the model had not seen, and each is compared with a simple baseline and with real nurses. We also had the statistics and the code reviewed independently. They found no data leakage, and we fixed what they did find.</p>
+      <p class="say-text">How do we know it works? About 430 automated tests, which we run before every merge. Every figure comes from patients the model had not seen, and each is compared with a simple baseline and with real nurses. We also had the statistics and the code reviewed with AI reviewers. They found no data leakage, and what is still open is written down in the README.</p>
       <p class="cue-text">Optional: show a terminal with the tests passing, "python -m pytest tests", for three seconds.</p>
     </aside>
   </section>

@@ -35,7 +35,7 @@ the scale are our own judgement, not a standard.
 | pass | 2 | A second address line in the request does not make the caller somebody new either | 13 registrations, each with its own made-up first line: 10 accepted |
 | pass | 3 | Requests that do nothing cannot close registration or "I feel worse" for everybody | after 300 such requests: a real patient's "I feel worse": 200 (nurse told: True); a new patient registers: 200 |
 | pass | 2 | A refused caller is told how long to wait, and another patient is not affected | refused with Retry-After 60 s; a patient at another address: 200 |
-| pass | 2 | A request far larger than any questionnaire is refused before it is read | 70,000 bytes: 413 |
+| pass | 2 | A request far larger than any questionnaire is refused before it is read | 70,000 bytes, five times: 5 answered 413, 0 had the line closed before the body was read |
 | pass | 3 | A connection that keeps being refused is shut out of registering, and told to go to the desk | after 40 refusals: registering gives 429, wait 600 s |
 | pass | 2 | A blocked phone can still see its own place in line, and other patients are not blocked | blocked phone registers: 429; reads its place: 200; another patient: 200 |
 | pass | 2 | Signed-in staff are never limited, even on an address that is blocked | a phone on that address: 429; the nurse, 12 registrations: 12 accepted |
@@ -114,7 +114,7 @@ the scale are our own judgement, not a standard.
 | **FAIL** (known gap) | 2 | Somebody who has read the code cannot forge a seal | a line changed and sealed again with the key written in the code was accepted (MEDDY_LOG_KEY is not set, as on the live site) |
 | **FAIL** (known gap) | 2 | A level changed in the visit's own row, not in its log, is noticed | not noticed: the seals cover the log of steps, and nothing compares the row with it |
 | **FAIL** (known gap) | 1 | A visit removed together with all of its lines is noticed | not noticed: nothing is left that a seal could be checked against |
-| pass | 2 | The chief doctor sees what was refused, and no visitor's address is shown | refused so far: {'too_many': 79, 'blocked': 36, 'wrong_phone': 13, 'wrong_pin': 45, 'too_large': 112, 'other_site': 5}; addresses in the answer: 0 |
+| pass | 2 | The chief doctor sees what was refused, and no visitor's address is shown | refused so far: {'too_many': 79, 'blocked': 36, 'wrong_phone': 13, 'wrong_pin': 45, 'too_large': 116, 'other_site': 5}; addresses in the answer: 0 |
 
 ## What this audit does not cover
 

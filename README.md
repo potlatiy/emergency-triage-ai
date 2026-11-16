@@ -167,7 +167,7 @@ the language model, and never sent back to the patient's phone. In the demonstra
 
 ## What we added
 
-Our own idea. Three things go beyond a standard classifier:
+Our own idea. These things go beyond a standard classifier:
 
 - **A human baseline.** We compare the model with real nurses on the same patients, both judged against an
   expert panel.
@@ -399,6 +399,15 @@ not as a second opinion.
   and nurses rated 14 of them correctly. This is why the nurse decides.
 - **It does not travel.** Trained at one hospital and tested at the other, the exact level drops from 68% to
   55–58%, and in one direction 49 urgent patients ended up in the slow queue.
+- **Urgent patients given a level that waits.** The count above is strict: level 4 or 5. Counting every level 1–2
+  patient who was given level 3, 4 or 5, the level Meddy shows misses 92 of 246 (the safety-first level 65, the
+  nurses 34). On urgent patients the nurses are clearly better than the model.
+- **It reads some dangerous measurements the wrong way round.** The model gives every number one weight in one
+  direction. A higher temperature counts as more urgent, so a very low one counts as less urgent: a patient with
+  a cough and 31 °C came out as level 5, "96% sure", with no warning sign. Our data has nobody below 35 °C and
+  nobody breathing fewer than 14 times a minute, so the tested warning rule has no line for them. The hospital
+  now tells the nurse to check in person for breathing below 10, temperature below 35 °C and blood pressure of
+  200 or more. This is a safety rule of the app, not a tested result.
 - **Groups.** With the safety-first setting, 9% of women and 7% of men are rated too low (nurses: 12% and 9%).
 
 ### Limits
@@ -413,14 +422,19 @@ not as a second opinion.
 - **One diagnosis cannot be sorted by its name.** "Percutaneous catheter problem" (8 patients) covers urinary catheters and feeding or bile tubes. Our table sends all 8 to urology, and about half belong to gastroenterology.
 - **Each queue order was simulated on its own 200 random days**, so a difference of a minute or two between two rows of the first table is luck. The large differences are not.
 - **The way of finding similar patients was chosen on the same test splits it is reported on.** We tried four and kept the best, so its 61% is a little flattering; the kind-first step adds one point, which could be chance. A complaint the key-word rule does not recognise (1 in 5 in the data) finds patients who are alike mostly in age and measurements; the screen marks them.
-- **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: in the waiting room it only calls the nurse and never moves them up the line. A patient who is still waiting for the nurse's first look goes to the top of her list, ahead of danger signs. Like the rest of the patient's phone it has no sign-in, so anyone who knows a registration number could press for that patient. While the nurse is re-checking a patient no doctor can call them, for 15 minutes at most; that number is our choice.
+- **"I feel worse" and the re-check times are not tested.** Our data has one measurement per patient, so we cannot measure how often a second look changes the level. The re-check times are those of the Canadian scale; we did not find a published table for the Korean one. A patient can press the button without feeling worse: in the waiting room it only calls the nurse and never moves them up the line. A patient who is still waiting for the nurse's first look goes to the top of her list, ahead of danger signs. The patient's phone has no sign-in; only the phone that registered a visit can press for it (it holds a key for that visit). While the nurse is re-checking a patient no doctor can call them, for 15 minutes at most; that number is our choice.
 - **The staff PIN is a lock on the door, not a sign-in.** One PIN is shared by all staff. It keeps a passer-by out of the patients' names and away from "Start a new day"; it does not say who did what. A real department would give every nurse and doctor their own account. A patient without insurance can still register more than once: there is nothing to recognise them by.
 - **The estimated wait, the board and the chief doctor's panel are not tested against a real department.** The estimate
   uses the doctors' visit times in the demo, most of them from the simulated patients; with real patients it should be
   checked against the waits that follow. The board is our own and not connected to any hospital's system.
 - **Waiting time is real time.** The clock moves by itself, so "waited 30 min" means 30 minutes; "15 minutes pass" on the nurse's screen jumps it ahead for a demonstration.
 - **The follow-up questions are not tested.** We have no data on whether they make the level better.
-- **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. We did not test what this loses.
+- **In the hospital the model is weaker than in our tests.** It was trained on the nurse's pain score from 0 to
+  10. The hospital sends it only 4 for "pain" and 0 for "no pain". Scored that way on patients it had not seen,
+  the exact level is 62%, not 68%, and it rates 229 patients too low instead of 200. The test figures on the
+  screens (68%, and "too low as rarely as the nurses") describe the model with the real score. Asking the nurse
+  for the 0–10 score would close the gap. (Pinned in `tests/test_review_fixes.py`.)
+- **We ask what the pain feels like, not how bad it is.** The model was trained with the 0 to 10 pain score nurses recorded. A patient with pain gets 4, the typical score of the patients who had pain in our data, and a patient without pain gets 0. What this loses is measured in the point above.
 - **Insurance is only an identity check.** A card can have one open visit at a time. The registry keeps a one-way fingerprint of the card number and its last four characters, never the number itself, and insurance is never given to either model. A patient without insurance is always registered. The number is typed; it was tested on our own sample numbers, not on real insurance cards.
 - **Patients may exaggerate or play things down.** Someone who writes "I am dying" about a sore finger can jump the line, and someone who plays down chest pain can be missed. The model cannot tell. We reduce the risk in three ways: vital signs are measured and not self-reported, the nurse sees every answer and decides, and check-in asks about facts to tap (danger signs, what the pain feels like, when it started), not for a judgement of how serious it is. We did not test how well this works. The half-level boost for a "yes" to a danger question could be gamed.
 - **Who measures the vital signs is not solved.** In the demo the nurse types them in. In a real department it could be a self-service blood pressure cuff and finger pulse meter, or an assistant at the door, with people who answered "yes" to a danger question measured first. None of this is built or tested.
@@ -438,13 +452,18 @@ not as a second opinion.
 
 ## Run it
 
+Needs **Python 3.10 or newer** (built and tested with 3.13). The Python that comes with macOS (3.9) installs the
+libraries and then fails. In a fresh folder:
+`python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+
 - **Notebook:** open `triage.ipynb`. All outputs are saved in it.
 - **Trained models:** both are saved in [`models/`](models/README.md), so nothing needs training. `python trained_models.py` makes them again.
 - **Demo:** `pip install -r requirements.txt`, then `python app.py` and open http://localhost:7861.
 - **Online:** https://darkshdws-meddy.hf.space (nurse: `/nurse`, doctor: `/doctor`, board: `/board`, chief doctor: `/chief`). The PINs for judges are in [JUDGES.md](JUDGES.md). See [deploy/huggingface](deploy/huggingface/README.md).
 - **Staff PIN:** when the server is started with `MEDDY_STAFF_PIN` set, the nurse's and the doctor's screens and
   every staff action (also "Start a new day" and "15 minutes pass") ask for that PIN. The patient's phone never
-  needs it and can only ask about its own visit. The chief doctor's panel uses `MEDDY_CHIEF_PIN` (without it,
+  needs it and can change only its own visit (what any phone can read about a visit by its number is listed in
+  [SECURITY.md](SECURITY.md)). The chief doctor's panel uses `MEDDY_CHIEF_PIN` (without it,
   the staff PIN opens it too). Without the settings, as on a laptop, the screens are open.
 - **Spam and abuse:** the server limits how often one address may register or press buttons, blocks an address
   that keeps being refused, lets only a visit's own phone change that visit, lets the browser run only Meddy's own

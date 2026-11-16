@@ -181,7 +181,7 @@ We want this list to be as clear as the one above.
   shown, but the doctor's name tells the department, and "Resus bay" tells that the case is urgent. The wall
   board shows tickets and rooms too, as boards in hospitals do.
 - **Somebody who types another person's insurance card number at registration** is told that the card has an
-  open visit, with its registration number and ticket.
+  open visit, and its ticket (not the registration number).
 - **A phone that brings a visit back with its four-digit code has no key.** It can follow the visit, but it
   cannot press "I feel worse": the page tells the patient to speak to the staff.
 - **Made-up patients of the simulation have no key,** so anybody may press "I feel worse" for them (within the
