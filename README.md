@@ -9,9 +9,66 @@
 
 1. **Video (2 minutes):** https://drive.google.com/file/d/1_jOWDl73Wi_kKzoFnVIzn-g1jfmjc85r/view?usp=sharing
 2. **Live demo:** https://darkshdws-meddy.hf.space (the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md))
-3. **Write-up:** this page, from [The problem](#the-problem) to [Sources](#sources)
+3. **Write-up:** the one page just below. The full report follows it, from [The problem](#the-problem) to [Sources](#sources).
 
 Everything else (the other screens, the slides, how to run it) is under [More to open](#more-to-open) near the end.
+
+## The write-up in one page
+
+**In one line:** a model that is worse than the nurse can still catch most of the patients she rates too low,
+at the price of many false alarms.
+
+**The problem.** In an emergency department the triage nurse rates every arriving patient from level 1 (now) to
+level 5 (can wait). In our data, nurses rated 131 of 1,267 patients (about 1 in 10) as less urgent than experts
+judged afterwards. A patient rated too low waits longer than is safe.
+
+**Who it is for.** The triage nurse, at the moment she has measured a patient and is about to give the level.
+
+**What we built.** In: age, sex, how the patient arrived, the complaint in words, pain, alertness and six vital
+signs. Out: a suggested level with how sure the model is, and a warning when the nurse's level may be too low.
+The nurse always decides, and Meddy never gives a diagnosis. Around it, a [working demo](https://darkshdws-meddy.hf.space)
+runs the whole visit: check-in on the patient's phone, the nurse's screen, a line ordered by urgency, the doctor's screen.
+
+**What we added.** Our own idea. Our own user (the triage nurse), our own question (can a weaker model help a
+stronger human as a second check?), and our own tests: against the real nurses, across two hospitals, and
+across age and sex.
+
+**How it works.** *Data:* the public KTAS dataset (Moon et al., PLOS ONE 2019, CC BY 4.0): 1,267 adult visits to
+two Korean emergency departments, each with the nurse's level and the experts' level. Vital signs that could not
+be measured are kept as "not measured"; other gaps are filled with the typical value of the training patients.
+*Model:* logistic regression (scikit-learn) on the numbers and on short letter patterns of the complaint. We chose
+it because the data is small and its weights can be read. Every patient is scored by a model that never saw them
+(5-fold cross-validation).
+
+**Results**, all on held-out patients:
+
+| | Exact level right | Rated too low (missed cases) | Rated too high (false alarms) |
+|---|---|---|---|
+| Baseline: always answer level 3 | 38% | 246 | 534 |
+| Our model | 68% | 200 | 204 |
+| The nurses in the data | 85% | 131 | 55 |
+
+- **As a second check on the nurse:** of the 131 patients she rated too low, the model flags 107 and **misses
+  24**. Its **false alarms: 354** flags on patients she had not rated too low (31% of those 1,136). In all it asks
+  for a second look at 36% of patients.
+- **Across groups** the model is even, and worse than the nurses in each: it rates too low 17% of women and 15%
+  of men, 16% of patients under 65 and 16% of those 65 and over (nurses: 12%, 9%, 10%, 12%). The second check
+  catches 83% of the under-rated women, 80% of the men, 82% of the under-65s and 81% of the over-65s.
+- **Where it fails.** One example: a patient whose chest-pain complaint was written in Korean, with no vital signs
+  recorded, was sent to the slow line. We think this is because the model could read neither the words nor any
+  measurement. It also gives 92 of 246 urgent patients a level that waits (nurses: 34), drops to 55–58% at a
+  hospital it was not trained on, and reads a very low temperature as "less urgent".
+
+**What we'd do next.** Try the flags with real triage nurses and measure how many re-checks change the level;
+test on complaints typed by patients themselves; train and test on more hospitals.
+
+**Sources.** Dataset: Moon et al. (2019), https://doi.org/10.1371/journal.pone.0216972. Language model in the
+demo: Gemma 3 through Ollama. AI tools: Claude (code, tests, reviews, drafting), GPT Image and Kling through
+Higgsfield (pictures and clips). Everything, with links: [Sources](#sources).
+
+---
+
+*The rest of this page is the full report: every figure, every limit, and how to run it.*
 
 **Who it is for:** the triage nurse in a busy emergency department first. Around her: the patient (a phone that
 guides the visit and shows the place in line), the doctor (who gets the right patients with a summary), the waiting
