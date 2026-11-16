@@ -7,7 +7,7 @@
 
 ## Start here
 
-1. **Video (2 minutes):** VIDEO LINK GOES HERE
+1. **Video (2 minutes):** https://drive.google.com/file/d/1_jOWDl73Wi_kKzoFnVIzn-g1jfmjc85r/view?usp=sharing
 2. **Live demo:** https://darkshdws-meddy.hf.space (the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md))
 3. **Write-up:** this page, from [The problem](#the-problem) to [Sources](#sources)
 
