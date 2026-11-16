@@ -172,7 +172,7 @@ put together (the only AI text in it is the two checked sentences, and the nurse
 ## Submission form
 
 - **Track:** Health
-- **Video:** the link to the two-minute video (YouTube, unlisted, or Google Drive open to anyone with the link).
+- **Video:** https://drive.google.com/file/d/1_jOWDl73Wi_kKzoFnVIzn-g1jfmjc85r/view?usp=sharing
   The same link is the first line of "Start here" in the README.
 - **Code:** https://github.com/potlatiy/emergency-triage-ai
 - **Write-up:** the same link (the README is the write-up)
