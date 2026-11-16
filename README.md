@@ -5,6 +5,14 @@
 
 *This project is a prototype and is not medical advice.*
 
+## Start here
+
+1. **Video (2 minutes):** VIDEO LINK GOES HERE
+2. **Live demo:** https://darkshdws-meddy.hf.space (the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md))
+3. **Write-up:** this page, from [The problem](#the-problem) to [Sources](#sources)
+
+Everything else (the other screens, the slides, how to run it) is under [More to open](#more-to-open) near the end.
+
 **Who it is for:** the triage nurse in a busy emergency department first. Around her: the patient (a phone that
 guides the visit and shows the place in line), the doctor (who gets the right patients with a summary), the waiting
 room (a board of ticket numbers) and the chief doctor (the day at a glance).
@@ -33,25 +41,6 @@ room (a board of ticket numbers) and the chief doctor (the day at a glance).
 > things worse ([section 5](#5-does-the-whole-chain-save-time-a-simulation-with-assumed-timings)).
 
 ![Simulated waiting time for the most urgent patients under four queue orders](images/waiting.png)
-
-**Project guide:** the problem of emergency waiting times, our plan and each person's tasks are in [PROJECT_GUIDE.md](PROJECT_GUIDE.md).
-
-**Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
-
-**The back end in ten slides:** https://potlatiy.github.io/emergency-triage-ai/backend-presentation.html
-(press N for the speaker's notes in a second window, S for the whole script; the file is `docs/backend-presentation.html`)
-
-**Try it online:** [the patient's phone](https://darkshdws-meddy.hf.space) ·
-[the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor) ·
-[the waiting room's board](https://darkshdws-meddy.hf.space/board) · [the chief doctor's panel](https://darkshdws-meddy.hf.space/chief).
-**Judges: the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md).**
-**Privacy:** no tracking and only the cookies the site needs; the AI runs on our own server. Details in
-[PRIVACY.md](PRIVACY.md) and on the site at [/privacy](https://darkshdws-meddy.hf.space/privacy).
-Open the three side by side: check in as a patient, open your code on the nurse's screen and choose a doctor, then
-accept yourself on that doctor's screen ("New patient for you: are you free now?"). The phone follows by itself, to
-the room and to a thank-you when the doctor finishes. The nurse's and the doctor's screens ask for a staff PIN (see
-[JUDGES.md](JUDGES.md); the lock is part of what we built, see the limits). A free server: the first visit after a
-quiet day takes about a minute.
 
 ## The problem
 
@@ -196,6 +185,22 @@ weights can be shown to the nurse.
 **Testing.** Every patient is scored by a model that never saw them (5-fold cross-validation).
 
 ## Results
+
+**In short.** Every figure is from patients the model had not seen (1,267 visits, 5-fold cross-validation).
+
+| | Exact level right |
+|---|---|
+| Baseline: always answer level 3 | 38% |
+| Our model | 68% |
+| The nurses in the data | 85% |
+
+So the model does not replace the nurse. As a second check on her it flags 107 of the 131 patients she rated too
+low, at the price of asking for a second look at 36% of all patients.
+
+**Where it is wrong:** it gives 92 of 246 urgent patients a level that waits (the nurses: 34). In the hospital app,
+which gives it a coarser pain input, it is right 62% of the time, not 68%. Moved to another hospital it drops to
+55–58%. It reads a very low temperature as "less urgent". Each of these is in [Where it fails](#where-it-fails)
+and [Limits](#limits).
 
 ### 1. Sorting the line (simulated)
 
@@ -450,6 +455,27 @@ not as a second opinion.
 2. Collect complaints written by patients themselves and test whether the follow-up questions improve the level.
 3. Train and test on more hospitals, since the model got worse when moved between two.
 
+## More to open
+
+**Project guide:** the problem of emergency waiting times, our plan and each person's tasks are in [PROJECT_GUIDE.md](PROJECT_GUIDE.md).
+
+**Project map:** an interactive mind map of the whole project is at https://potlatiy.github.io/emergency-triage-ai/
+
+**The back end in ten slides:** https://potlatiy.github.io/emergency-triage-ai/backend-presentation.html
+(press N for the speaker's notes in a second window, S for the whole script; the file is `docs/backend-presentation.html`)
+
+**Try it online:** [the patient's phone](https://darkshdws-meddy.hf.space) ·
+[the nurse's screen](https://darkshdws-meddy.hf.space/nurse) · [the doctor's screen](https://darkshdws-meddy.hf.space/doctor) ·
+[the waiting room's board](https://darkshdws-meddy.hf.space/board) · [the chief doctor's panel](https://darkshdws-meddy.hf.space/chief).
+**Judges: the staff PINs and a three-minute tour are in [JUDGES.md](JUDGES.md).**
+**Privacy:** no tracking and only the cookies the site needs; the AI runs on our own server. Details in
+[PRIVACY.md](PRIVACY.md) and on the site at [/privacy](https://darkshdws-meddy.hf.space/privacy).
+Open the three side by side: check in as a patient, open your code on the nurse's screen and choose a doctor, then
+accept yourself on that doctor's screen ("New patient for you: are you free now?"). The phone follows by itself, to
+the room and to a thank-you when the doctor finishes. The nurse's and the doctor's screens ask for a staff PIN (see
+[JUDGES.md](JUDGES.md); the lock is part of what we built, see the limits). A free server: the first visit after a
+quiet day takes about a minute.
+
 ## Run it
 
 Needs **Python 3.10 or newer** (built and tested with 3.13). The Python that comes with macOS (3.9) installs the
@@ -492,9 +518,23 @@ libraries and then fails. In a fresh folder:
   15 minutes, 3 every 30, 4 every 60, 5 every 120). Murray M, Bullard M, Grafstein E (2004). Revisions to the
   Canadian Emergency Department Triage and Acuity Scale implementation guidelines. CJEM 6(6): 421–427. We read the
   times in training material and a hospital policy that quote the guideline, not in the guideline itself.
-- **Libraries:** pandas (https://pandas.pydata.org), scikit-learn (https://scikit-learn.org),
-  Matplotlib (https://matplotlib.org), Gradio (https://gradio.app)
-- **Language model for the check-in questions, the summaries and the note tidying:** Gemma 3 by Google (4B on a laptop, 1B online), run through Ollama (https://ollama.com/library/gemma3)
-- **Web server:** FastAPI (https://fastapi.tiangolo.com)
-- **AI tools:** Claude (Claude Code, https://claude.com/claude-code) was used to help write and explain the
-  code and to draft this write-up.
+- **Our own models:** two scikit-learn models trained by us on the dataset above (the urgency level and the
+  department), saved in [`models/`](models/README.md). `python trained_models.py` makes them again.
+- **Language model for the check-in questions, the summaries and the note tidying:** Gemma 3 by Google (4B on a
+  laptop, 1B online), run on our own server through Ollama (https://ollama.com/library/gemma3)
+- **Libraries:** pandas (https://pandas.pydata.org), NumPy (https://numpy.org), scikit-learn
+  (https://scikit-learn.org), SciPy (https://scipy.org), joblib (https://joblib.readthedocs.io), Matplotlib
+  (https://matplotlib.org), Gradio (https://gradio.app), FastAPI (https://fastapi.tiangolo.com), Pydantic
+  (https://docs.pydantic.dev), Uvicorn (https://github.com/Kludex/uvicorn), SQLite (https://sqlite.org), pytest
+  (https://pytest.org)
+- **On the pages:** the fonts Atkinson Hyperlegible Next, Outfit and IBM Plex Mono from Google Fonts
+  (https://fonts.google.com, SIL Open Font License); the QR code library qrcodejs 1.0.0 (MIT licence,
+  https://github.com/davidshimjs/qrcodejs) loaded from cdnjs
+- **Hosting:** Hugging Face Spaces (https://huggingface.co/spaces) for the live demo, GitHub Pages for the slides
+- **AI tools we used:**
+  - **Claude** (Claude Code, https://claude.com/claude-code): to help write, test and explain the code, to review
+    it (the reviews named in [SECURITY.md](SECURITY.md)), and to draft this write-up.
+  - **GPT Image 2.6 and Kling 3.0, through Higgsfield** (https://higgsfield.ai): the furnished floor plan and the
+    two short clips on the patient's page. They are illustrations, not real hospitals or people; how each was
+    made is in [`hospital/static/media/README.md`](hospital/static/media/README.md).
+  - **Gemma 3** (above) is the only AI that runs inside the product, besides our own two models.
