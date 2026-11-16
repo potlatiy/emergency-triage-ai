@@ -23,6 +23,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -169,6 +170,30 @@ def rebuild(token, why):
     hugging_face(token).restart_space(SPACE, factory_reboot=True)
 
 
+def catch_up():
+    """Before the hospital starts (see start.sh): put the latest main in place if the image holds an older one.
+
+    The image keeps the code it was built with. Later versions are put in place while the Space runs, but that is
+    lost when the Space sleeps and wakes, so it would wake on old code and run it until the first look at GitHub.
+    Nothing is running yet, so there is nothing to stop or restart here. If GitHub does not answer, or the new
+    version needs a rebuild, the hospital starts on what it has and run() takes care of it."""
+    if os.environ.get("MEDDY_AUTO_UPDATE") == "0":
+        return say("paused (MEDDY_AUTO_UPDATE=0): starting on the version in the image.")
+    built, latest = built_commit(), main_commit()
+    if not built or not latest or built == latest:
+        return say(f"starting on {built[:7] if built else 'an unknown commit'}.")
+    with tempfile.TemporaryDirectory() as room:
+        try:
+            tree = download(latest, room)
+        except Exception as error:
+            return say(f"could not download {latest[:7]} before the start ({error}); starting on {built[:7]}.")
+        if changed_space_files(tree):
+            return say(f"{latest[:7]} needs a rebuild; starting on {built[:7]} until then.")
+        count = put_in_place(tree)
+        BUILT_COMMIT.write_text(latest + "\n")
+        say(f"caught up before the start: {count} files of {latest[:7]} in place (the image held {built[:7]}).")
+
+
 def run():
     if os.environ.get("MEDDY_AUTO_UPDATE") == "0":
         return say("paused (MEDDY_AUTO_UPDATE=0): the Space stays on this version.")
@@ -214,6 +239,6 @@ def run():
 
 if __name__ == "__main__":
     try:
-        run()
+        catch_up() if "--catch-up" in sys.argv else run()
     except Exception as error:          # never take the hospital down with it
         say(f"stopped: {error}")

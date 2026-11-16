@@ -163,3 +163,68 @@ def test_the_site_says_which_commit_it_runs(tmp_path, monkeypatch):
     answer = client.get("/api/version").json()
     assert answer["commit"] == "5ae6e55" and len(answer["version"]) == 12
 
+
+
+# ---------------------------------------------------------------- the start of the Space
+
+def test_before_the_start_the_space_catches_up_with_main(tmp_path, monkeypatch):
+    """After a sleep the Space wakes on the code its image was built with. It ran that for the first two minutes."""
+    app = tree(tmp_path / "app", {"hospital/server.py": "old", "hospital/hospital.db": "every visit"})
+    new = tree(tmp_path / "new", {"hospital/server.py": "new", "hospital/guard.py": "added since"})
+    built = tmp_path / "built_commit"
+    built.write_text("aaaaaaa1\n")
+    monkeypatch.setattr(watch, "APP", app)
+    monkeypatch.setattr(watch, "BROUGHT", tmp_path / "app_files")
+    monkeypatch.setattr(watch, "BUILT", tmp_path / "space")           # no Space files there: none can have changed
+    monkeypatch.setattr(watch, "BUILT_COMMIT", built)
+    monkeypatch.setattr(watch, "main_commit", lambda: "bbbbbbb2")
+    monkeypatch.setattr(watch, "download", lambda commit, room: new)
+    monkeypatch.delenv("MEDDY_AUTO_UPDATE", raising=False)
+    watch.catch_up()
+    assert (app / "hospital/server.py").read_text() == "new" and (app / "hospital/guard.py").exists()
+    assert (app / "hospital/hospital.db").read_text() == "every visit" and built.read_text().strip() == "bbbbbbb2"
+
+
+def test_the_start_goes_on_when_github_does_not_answer_or_updates_are_paused(tmp_path, monkeypatch):
+    app = tree(tmp_path / "app", {"hospital/server.py": "old"})
+    built = tmp_path / "built_commit"
+    built.write_text("aaaaaaa1\n")
+    monkeypatch.setattr(watch, "APP", app)
+    monkeypatch.setattr(watch, "BROUGHT", tmp_path / "app_files")
+    monkeypatch.setattr(watch, "BUILT_COMMIT", built)
+
+    def unreachable(commit, room):
+        raise OSError("no route to host")
+    monkeypatch.setattr(watch, "main_commit", lambda: "bbbbbbb2")
+    monkeypatch.setattr(watch, "download", unreachable)
+    watch.catch_up()                                                    # no error: the hospital starts on what it has
+    monkeypatch.setattr(watch, "main_commit", lambda: None)
+    watch.catch_up()
+    monkeypatch.setenv("MEDDY_AUTO_UPDATE", "0")
+    monkeypatch.setattr(watch, "main_commit", lambda: pytest.fail("GitHub must not be asked while paused"))
+    watch.catch_up()
+    assert (app / "hospital/server.py").read_text() == "old" and built.read_text().strip() == "aaaaaaa1"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the start script is a shell script")
+def test_the_hospital_starts_even_if_ollama_never_does(tmp_path):
+    """The start script waited for Ollama for ever, so without Ollama there was no hospital."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    for name, body in (("ollama", "exit 1"), ("sleep", "exit 0"),
+                       ("python", 'echo "PYTHON $*"; case "$*" in *server.py*) exec /bin/sleep 20;; esac')):
+        (stubs / name).write_text("#!/bin/sh\n" + body + "\n")
+        (stubs / name).chmod(0o755)
+    script = ROOT / "deploy" / "huggingface" / "start.sh"
+    started = subprocess.Popen(["sh", str(script)], cwd=tmp_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                               env={"PATH": f"{stubs}:/usr/bin:/bin", "MEDDY_OLLAMA_MODEL": "x", "MEDDY_PORT": "1"})
+    try:
+        out = ""
+        until = time.time() + 20
+        while "server.py" not in out and time.time() < until:
+            out += started.stdout.readline()
+    finally:
+        started.terminate()
+        started.wait(timeout=10)
+    assert "Ollama did not start within a minute" in out
+    assert out.index("--catch-up") < out.index("server.py")            # caught up first, then the hospital

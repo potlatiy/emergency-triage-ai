@@ -3,12 +3,20 @@
 # Hugging Face sets SPACE_HOST to the Space's address.
 
 ollama serve > /tmp/ollama.log 2>&1 &
-until ollama list > /dev/null 2>&1; do sleep 1; done
+# Wait for Ollama, but not for ever: the hospital works without it (standard questions, no AI summary). This line
+# used to wait until Ollama answered, so if Ollama did not start, neither did the hospital.
+tries=0
+until ollama list > /dev/null 2>&1 || [ "$tries" -ge 60 ]; do tries=$((tries + 1)); sleep 1; done
+if [ "$tries" -ge 60 ]; then echo "Ollama did not start within a minute: the hospital starts without the language model."; fi
 
 # The first answer loads Gemma into memory; doing it now keeps the first patient's questions quick.
 ollama run "$MEDDY_OLLAMA_MODEL" "Say ready." > /dev/null 2>&1 &
 
-# Rebuilds the Space when main on GitHub moves on (see watch.py). Its messages appear in the Space's logs.
+# Before the hospital starts: catch up with main on GitHub. After a sleep the Space wakes on the code its image
+# was built with, which can be days old; the hospital would run that old code for the first minutes of a visit.
+python /home/user/space/watch.py --catch-up
+
+# Then keeps the Space on main while it runs (see watch.py). Its messages appear in the Space's logs.
 python /home/user/space/watch.py &
 
 # Lasting storage: the Space's bucket is mounted at /data. The database is copied there every few seconds and
