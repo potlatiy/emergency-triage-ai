@@ -16,6 +16,11 @@ stranger = TestClient(server.app)
 BODY = {"complaint": "sore throat", "age": 30, "sex": "Female", "use_model": False}
 
 
+@pytest.fixture(autouse=True)
+def nothing_remembered():
+    server._log_checked = None          # the panel remembers a check of the log for 20 seconds: not between tests
+
+
 @pytest.fixture
 def limits(monkeypatch):
     monkeypatch.setattr(guard, "ON", True)
@@ -138,6 +143,7 @@ def test_under_pressure_one_address_gets_a_smaller_share(limits, monkeypatch):
     monkeypatch.setitem(guard.LIMITS, "/api/register", ((10, 60), (20, 600)))
     for n in range(10):                                             # ten addresses, one registration each: half of 20
         assert guard.too_many(f"8.8.{n}.1", "/api/register", now=n) is None
+        guard.served("/api/register", now=n)
     assert "/api/register" in guard.report(now=10)["pressure"]
     waits = [guard.too_many("5.6.7.8", "/api/register", now=11) for _ in range(4)]
     assert waits[:3] == [None] * 3 and waits[3]                     # 3 instead of 10
@@ -155,7 +161,7 @@ def test_the_chief_doctor_sees_what_was_refused_without_any_address(limits):
     assert [line["why"] for line in seen["recent"]] == ["too_large", "wrong_phone"]
     assert seen["recent"][1]["where"] == "/api/checkin" and len(seen["recent"][1]["who"]) == 8
     assert "5.6.7.8" not in str(seen) and "testclient" not in str(seen)
-    assert seen["log"]["whole"] is True and seen["log"]["lines"] > 0
+    assert "log" in seen and seen["log"]["lines"] > 0
 
 
 def test_the_security_figures_are_for_the_chief_doctor_only(monkeypatch):
@@ -189,7 +195,7 @@ def test_an_untouched_log_is_whole_through_a_whole_visit():
     client.post("/api/nurse/still-fine", json={"reg_no": reg})
     db.call_next(reg)
     check = db.log_check()
-    assert check["whole"] is True and check["broken"] == [] and check["older"] == 0
+    assert check["whole"] is True and check["broken"] == []
     assert check["lines"] == db._conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] > 5
 
 
@@ -200,10 +206,11 @@ def test_a_changed_line_is_noticed():
     assert other not in broken()
 
 
-def test_a_line_taken_out_of_the_middle_is_noticed():
-    reg = in_the_waiting_room()
+def test_a_line_taken_out_of_the_middle_or_the_beginning_is_noticed():
+    reg, other = in_the_waiting_room(), in_the_waiting_room()
     change("DELETE FROM events WHERE visit_reg = ? AND what = 'checked in'", reg)
-    assert reg in broken()
+    change("DELETE FROM events WHERE visit_reg = ? AND what = 'registered'", other)
+    assert reg in broken() and "beginning" in broken()[other]
 
 
 def test_the_end_of_a_log_cut_off_is_noticed():
@@ -215,6 +222,20 @@ def test_the_end_of_a_log_cut_off_is_noticed():
     assert "every line" in broken()[reg]
 
 
+def test_the_next_line_does_not_make_a_cut_log_look_whole_again():
+    """The app used to seal a damaged log afresh with the very next step, so the alarm lasted until then."""
+    cut, emptied, bare = in_the_waiting_room(), in_the_waiting_room(), in_the_waiting_room()
+    change("DELETE FROM events WHERE id = (SELECT MAX(id) FROM events WHERE visit_reg = ?)", cut)
+    change("DELETE FROM events WHERE visit_reg = ?", emptied)                   # every line gone, the visit's seal left
+    change("DELETE FROM events WHERE visit_reg = ?", bare)                      # every line gone and the seal wiped too
+    change("UPDATE visits SET log_seal = NULL WHERE reg_no = ?", bare)
+    assert set(broken()) == {cut, emptied, bare}
+    for reg in (cut, emptied, bare):
+        assert client.post("/api/worse", json={"reg_no": reg}).status_code == 200      # the visit goes on
+    db.new_day()                                                                # which writes "closed" for every open visit
+    assert set(broken()) == {cut, emptied, bare}
+
+
 def test_a_line_added_without_the_key_is_noticed():
     reg = in_the_waiting_room()
     change("INSERT INTO events (visit_reg, day, clock, at, what, who, detail, seal) "
@@ -222,20 +243,78 @@ def test_a_line_added_without_the_key_is_noticed():
     assert reg in broken()
     change("DELETE FROM events WHERE visit_reg = ? AND detail = 'level 1'", reg)
     assert broken() == {}
-    change("INSERT INTO events (visit_reg, day, clock, at, what) SELECT visit_reg, day, clock, at, 'in line' FROM events "
-           "WHERE visit_reg = ? LIMIT 1", reg)                                   # a line with no seal at all
-    assert "lost its seal" in broken()[reg]
+    change("INSERT INTO events (id, visit_reg, day, clock, at, what) SELECT -5, visit_reg, day, clock, at, 'removed' FROM events "
+           "WHERE visit_reg = ? LIMIT 1", reg)                                   # a line with no seal, put in front
+    assert reg in broken()
 
 
-def test_lines_from_before_sealing_are_counted_not_blamed():
+def test_no_line_can_pass_as_too_old_to_check():
+    """Lines without a seal used to count as "from before sealing". Taking the seals off and moving the mark
+    where sealing began made any change invisible."""
+    reg = in_the_waiting_room(level=4)
+    change("UPDATE events SET seal = NULL, detail = replace(detail, 'level 4', 'level 2') WHERE visit_reg = ?", reg)
+    change("UPDATE visits SET log_seal = NULL WHERE reg_no = ?", reg)
+    change("INSERT INTO meta (key, value) VALUES ('sealed_from', 1000000000) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    assert reg in broken()
+
+
+def test_a_file_from_before_sealing_is_sealed_once_as_it_is_found():
     reg = in_the_waiting_room()
-    last = db._conn.execute("SELECT MAX(id) AS n FROM events").fetchone()["n"]
-    change("UPDATE events SET seal = NULL")
+    lines = db._conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
+    change("UPDATE events SET seal = NULL")                                     # as an older version left the file
     change("UPDATE visits SET log_seal = NULL")
-    change("UPDATE meta SET value = ? WHERE key = 'sealed_from'", last + 1)     # as _upgrade leaves an older file
-    client.post("/api/worse", json={"reg_no": reg})                             # the first sealed line of this visit
+    change("DELETE FROM meta WHERE key = 'log_id'")
+    db._upgrade()
     check = db.log_check()
-    assert check["whole"] is True and check["older"] == last and check["lines"] == 1
+    assert check["whole"] is True and check["lines"] == lines
+    client.post("/api/worse", json={"reg_no": reg})                             # the visit goes on, sealed
+    assert db.log_check()["whole"] is True
+    change("UPDATE events SET who = 'somebody else' WHERE visit_reg = ? AND what = 'registered'", reg)
+    assert reg in broken()                                                      # an old line is under the seal now
+    db._upgrade()                                                               # a second start seals nothing afresh
+    assert reg in broken()
+
+
+def test_a_log_saved_before_an_erase_does_not_fit_afterwards():
+    """Registration numbers start again after "Erase everything", so an old log could be put under a new visit."""
+    reg = in_the_waiting_room(level=4)
+    old = [tuple(r) for r in db._conn.execute("SELECT visit_reg, day, clock, at, what, who, detail, seal FROM events "
+                                              "WHERE visit_reg = ? ORDER BY id", (reg,))]
+    old_head = db.visit_for(reg)["log_seal"]
+    db.wipe_everything()
+    again = new_visit()
+    assert again == reg and db.log_check()["whole"] is True
+    change("DELETE FROM events WHERE visit_reg = ?", reg)
+    for line in old:
+        change("INSERT INTO events (visit_reg, day, clock, at, what, who, detail, seal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", *line)
+    change("UPDATE visits SET log_seal = ? WHERE reg_no = ?", old_head, reg)
+    assert reg in broken()
+
+
+def test_a_seal_that_is_not_even_text_is_an_alarm_not_a_crash():
+    one, two, three = in_the_waiting_room(), in_the_waiting_room(), in_the_waiting_room()
+    change("UPDATE events SET seal = 'é' WHERE id = (SELECT MAX(id) FROM events WHERE visit_reg = ?)", one)
+    change("UPDATE events SET seal = x'00ff' WHERE id = (SELECT MAX(id) FROM events WHERE visit_reg = ?)", two)
+    change("UPDATE visits SET log_seal = x'00' WHERE reg_no = ?", three)
+    assert set(broken()) == {one, two, three}
+    seen = client.get("/api/chief/security")
+    assert seen.status_code == 200 and seen.json()["log"]["whole"] is False
+
+
+def test_a_log_whose_visit_is_gone_is_noticed():
+    reg = in_the_waiting_room()
+    change("DELETE FROM answers WHERE visit_reg = ?", reg)
+    change("DELETE FROM visits WHERE reg_no = ?", reg)
+    assert "visit itself was removed" in broken()[reg]
+
+
+def test_a_step_written_with_a_number_or_a_yes_still_fits_its_seal():
+    """SQLite gives True back as 1 and 0.1 + 0.2 as 0.3: sealed as written, such a line would never fit again."""
+    reg = new_visit()
+    with db._lock, db._conn:
+        db._event(reg, "test", True, 0.1 + 0.2)
+        db._event(reg, "test", 7, 1e16)
+    assert db.log_check()["whole"] is True
 
 
 def test_removing_old_made_up_visits_leaves_the_log_whole():
@@ -248,5 +327,15 @@ def test_a_new_day_and_starting_from_scratch_leave_the_log_whole():
     in_the_waiting_room()
     db.new_day()
     assert db.log_check()["whole"] is True
+    first = db._setting("log_id", None)
     db.wipe_everything()
-    assert db.log_check()["whole"] is True and db.log_check()["older"] == 0
+    assert db.log_check()["whole"] is True and db._setting("log_id", None) not in (None, first)
+
+
+def test_erasing_everything_also_forgets_the_last_check():
+    """The panel remembers a check for 20 seconds. After "Erase everything" it showed the erased log's alarm."""
+    reg = in_the_waiting_room()
+    change("DELETE FROM events WHERE visit_reg = ? AND what = 'checked in'", reg)
+    assert client.get("/api/chief/security").json()["log"]["whole"] is False
+    assert client.post("/api/chief/wipe", json={"confirm": "ERASE"}).status_code == 200
+    assert client.get("/api/chief/security").json()["log"]["whole"] is True

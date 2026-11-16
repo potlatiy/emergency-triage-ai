@@ -180,11 +180,13 @@ async function load() {
 // The guard's own figures (GET /api/chief/security): refusals, blocked connections, and the check of the log's seals.
 async function loadGuard() {
   let g;
-  try { const response = await fetch("/api/chief/security", { cache:"no-store" }); if (!response.ok) return; g = await response.json(); }
-  catch (e) { return; }
+  // A check that cannot be read must not leave an old "Unchanged" on the screen.
+  const failed = () => { $("guard").innerHTML = `<div class="fact"><b>Could not check</b><span>the server did not answer; trying again</span></div>`; $("guard-note").textContent = ""; };
+  try { const response = await fetch("/api/chief/security", { cache:"no-store" }); if (!response.ok) return failed(); g = await response.json(); }
+  catch (e) { return failed(); }
   const log = g.log, r = g.refused;
   $("guard").innerHTML = [
-    [log.whole ? "Unchanged" : "Changed", `log of the visits (${log.lines} sealed ${log.lines === 1 ? "line" : "lines"} checked)`],
+    [log.whole ? "Unchanged" : "Changed", `log of the visits (${log.lines} ${log.lines === 1 ? "line" : "lines"} checked)`],
     [g.blocked_now.length, g.blocked_now.length === 1 ? "connection blocked now" : "connections blocked now"],
     [r.too_many + r.blocked, "requests over the limit"],
     [r.wrong_phone, "tries on another patient's visit"],
@@ -195,8 +197,8 @@ async function loadGuard() {
   if (!g.limits_on) notes.push("The limits are switched off (MEDDY_LIMITS=off).");
   if (g.pressure.length) notes.push("Under pressure now: " + g.pressure.join(", ") + ". Each connection gets a smaller share there.");
   if (!log.whole) notes.push("The log was changed outside Meddy: " + log.broken.map((b) => `${b.visit} (${b.how})`).join("; ")
-    + (log.broken_count > log.broken.length ? ` and ${log.broken_count - log.broken.length} more` : "") + ".");
-  if (log.older) notes.push(`${log.older} older lines are from before the log was sealed and cannot be checked.`);
+    + (log.broken_count > log.broken.length ? ` and ${log.broken_count - log.broken.length} more` : "")
+    + ". This stays shown until “Erase everything”.");
   if (!log.own_key) notes.push("The seals use the key built into the code (no MEDDY_LOG_KEY is set).");
   if (g.recent.length) notes.push("Last refused: " + g.recent.slice(0, 3).map((x) => `${x.at} ${x.why.replace("_", " ")} at ${x.where}`).join("; ") + ".");
   $("guard-note").textContent = notes.join(" ");
