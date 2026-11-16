@@ -156,3 +156,29 @@ def test_the_figures_the_readme_quotes_about_missed_urgent_patients_and_the_pain
     given = triage.most_likely(fed)
     assert round(float((shown == truth).mean()), 2) == 0.68 and round(float((given == truth).mean()), 2) == 0.62
     assert (int((shown > truth).sum()), int((given > truth).sum())) == (200, 229)
+
+
+def test_the_figures_of_the_one_page_write_up():
+    """The table and the three points under it at the top of the README: missed cases and false alarms apart,
+    and the same by sex and age. All on patients the model had not seen."""
+    import triage
+    data = core._data.reset_index(drop=True)
+    truth, nurse = data["KTAS_expert"].to_numpy(), data["KTAS_RN"].to_numpy()
+    held_out = triage.fair_probabilities(data)
+    shown, careful = triage.most_likely(held_out), triage.safety_first(held_out)
+
+    def row(given):
+        return round(float((given == truth).mean()) * 100), int((given > truth).sum()), int((given < truth).sum())
+    assert row(truth * 0 + 3) == (38, 246, 534) and row(shown) == (68, 200, 204) and row(nurse) == (85, 131, 55)
+
+    under, flag = nurse > truth, careful < nurse
+    assert (int(under.sum()), int((flag & under).sum()), int((under & ~flag).sum())) == (131, 107, 24)
+    assert (int((flag & ~under).sum()), int((~under).sum())) == (354, 1136)
+    assert round(float(flag.mean()) * 100) == 36 and round(354 / 1136 * 100) == 31
+
+    groups = {"women": data["Sex"] == 1, "men": data["Sex"] == 2, "under 65": data["Age"] < 65, "65 and over": data["Age"] >= 65}
+    too_low = {name: (round(float(((shown > truth) & m).sum() / m.sum()) * 100), round(float(((nurse > truth) & m).sum() / m.sum()) * 100))
+               for name, m in groups.items()}
+    assert too_low == {"women": (17, 12), "men": (15, 9), "under 65": (16, 10), "65 and over": (16, 12)}
+    caught = {name: round(float((flag & under & m).sum() / (under & m).sum()) * 100) for name, m in groups.items()}
+    assert caught == {"women": 83, "men": 80, "under 65": 82, "65 and over": 81}
