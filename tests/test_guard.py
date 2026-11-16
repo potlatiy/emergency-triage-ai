@@ -28,12 +28,12 @@ def limits(monkeypatch):
 
 def test_the_address_is_the_one_the_proxy_wrote_not_one_the_visitor_typed(monkeypatch):
     monkeypatch.setattr(guard, "BEHIND_PROXY", True)
-    typed_by_visitor = {"x-forwarded-for": "1.2.3.4, 93.184.216.34"}      # the proxy adds the real address at the end
+    typed_by_visitor = "1.2.3.4, 93.184.216.34"                           # the proxy adds the real address at the end
     assert guard.client_address(typed_by_visitor, "10.0.0.5") == "93.184.216.34"
-    assert guard.client_address({"x-forwarded-for": "93.184.216.34, 10.16.0.3"}, "10.0.0.5") == "93.184.216.34"   # in-house hops skipped
-    assert guard.client_address({}, "127.0.0.1") == "127.0.0.1"           # on a laptop there is no proxy
-    assert guard.client_address({"x-forwarded-for": "not an address"}, "127.0.0.1") == "127.0.0.1"
-    assert guard.client_address({}, None) == "unknown"
+    assert guard.client_address("93.184.216.34, 10.16.0.3", "10.0.0.5") == "93.184.216.34"      # in-house hops stepped over
+    assert guard.client_address("", "127.0.0.1") == "127.0.0.1"           # on a laptop there is no proxy
+    assert guard.client_address("not an address", "127.0.0.1") == "127.0.0.1"
+    assert guard.client_address("", None) == "unknown"
     monkeypatch.setattr(guard, "BEHIND_PROXY", False)                     # on a laptop the caller wrote all of the header
     assert guard.client_address(typed_by_visitor, "192.168.1.30") == "192.168.1.30"
 
@@ -79,8 +79,13 @@ def test_a_refused_call_is_not_counted_and_the_wait_ends():
 def test_everybody_together_has_a_limit_too(limits, monkeypatch):
     """A spammer behind many addresses is held by the limit for everybody together."""
     monkeypatch.setitem(guard.LIMITS, "/api/worse", ((6, 60), (8, 600)))
-    waits = [guard.too_many(f"93.184.216.{n}", "/api/worse", now=n) for n in range(10)]
-    assert waits[:8] == [None] * 8 and waits[8] and waits[9]
+    waits = []
+    for n in range(10):
+        waits.append(guard.check(f"93.184.216.{n}", "/api/worse", now=n))
+        if waits[-1][0] is None:
+            guard.served("/api/worse", now=n)                       # the hospital accepted it: now it counts for everybody
+    assert [w for w, _ in waits[:8]] == [None] * 8
+    assert waits[8][0] and waits[9][0] and waits[8][1] is False     # refused, and not through any fault of the caller
 
 
 def test_limits_cover_what_they_should():

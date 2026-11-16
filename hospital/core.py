@@ -620,7 +620,8 @@ def questions_from_model(complaint, skip=(), timeout=OLLAMA_TIMEOUT):
             "options": {"temperature": 0.2, "num_ctx": 2048}}
     request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"})
-    with guard.model_seat(), urllib.request.urlopen(request, timeout=timeout) as response:      # busy: standard questions
+    # busy: the standard questions. A patient's phone may hold one seat only (see guard.model_seat).
+    with guard.model_seat(patient=True), urllib.request.urlopen(request, timeout=timeout) as response:
         answer = json.loads(json.loads(response.read())["message"]["content"])
     return checked_questions(answer.get("questions"), skip, complaint)
 

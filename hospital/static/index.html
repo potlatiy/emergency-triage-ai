@@ -852,13 +852,13 @@ function entrance() {
     </div>
     <div class="card-tools"><button type="button" class="mini" id="made-up-name">Make up a name</button></div>
     <p class="hint">Demo: please use a made-up name.</p>
-    <label for="complaint">What is wrong? <span class="count" id="count">${me.complaint.length} / 200</span></label>
+    <label for="complaint">What is wrong? <span class="count" id="count">${String(me.complaint || "").length} / 200</span></label>
     <input type="text" id="complaint" maxlength="200" autocomplete="off" placeholder="For example: chest pain since this morning" value="${esc(me.complaint)}">
     <p class="hint" id="spell" hidden>Did you mean: <b id="spell-text"></b>? <button type="button" class="mini" id="spell-use">Yes, use this</button></p>
     <p class="hint" id="english" hidden><b>Meddy reads English only.</b> Please describe it in English, for example:
       “headache since this morning”. You can still go on: the nurse reads what you wrote.</p>
     <div class="row">
-      <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" inputmode="numeric" value="${me.age}"></div>
+      <div><label for="age">Age</label><input type="number" id="age" min="15" max="110" inputmode="numeric" value="${esc(me.age)}"></div>
       <div><span class="label" id="sex-label">Sex</span>${choice("sex", ["Female", "Male"], me.sex, "sex-label")}</div>
     </div>
     <label for="arrival">How did you get here?</label>
@@ -1060,7 +1060,7 @@ function checkin() {
       ${sectionHead("danger", "Is any of this true for you?", "Tap each one you would answer yes to. A yes moves you up the line.")}
       <div class="ticks" id="ticks" role="group" aria-label="Danger signs">
         ${danger.map(([q, i]) => `<button type="button" data-i="${i}" class="${q.answer === "Yes" ? "on" : ""}" aria-pressed="${q.answer === "Yes"}">${esc(q.question)}</button>`).join("")}
-        <button type="button" data-i="none" class="none ${me.noDanger ? "on" : ""}" aria-pressed="${me.noDanger}">No, none of these</button>
+        <button type="button" data-i="none" class="none ${me.noDanger ? "on" : ""}" aria-pressed="${Boolean(me.noDanger)}">No, none of these</button>
       </div>
     </section>
     <section class="section sec-pain">
@@ -1077,7 +1077,7 @@ function checkin() {
       ${sectionHead("doctor", "In your own words (optional)", "What happened, and how do you feel now? The nurse reads this before she sees you.")}
       <div class="q"><textarea id="story" maxlength="200" rows="3" aria-label="In your own words: what happened, and how do you feel now?"
         placeholder="For example: I was climbing the stairs when my chest went tight">${esc(me.story || "")}</textarea>
-        <span class="count" id="story-count">${(me.story || "").length} / 200</span></div>
+        <span class="count" id="story-count">${String(me.story || "").length} / 200</span></div>
     </section>
     <div id="follow-up" aria-live="polite"></div>
     <p class="error" id="error" role="alert"></p>

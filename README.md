@@ -450,6 +450,9 @@ not as a second opinion.
   that keeps being refused, lets only a visit's own phone change that visit, lets the browser run only Meddy's own
   scripts, and seals every line of a visit's log so that a later change shows on the chief doctor's panel. What is
   protected and what is not is in [SECURITY.md](SECURITY.md). `MEDDY_LIMITS=off` switches the limits off.
+- **Security audit:** `python security_audit.py` starts a copy of the server, attacks it over real HTTP (60 checks)
+  and grades what holds. The result, **B (84%)** with every known gap counted against it, is in
+  [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
 - **Digital hospital:** `python hospital/server.py` and open http://localhost:8000 (the patient's phone),
   http://localhost:8000/nurse, http://localhost:8000/doctor, http://localhost:8000/board and
   http://localhost:8000/chief. For AI-written questions, the nurse's summary and the note tidying,

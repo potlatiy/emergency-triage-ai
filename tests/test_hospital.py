@@ -153,6 +153,13 @@ class OwnPhone(TestClient):
                 kwargs["headers"] = {"X-Meddy-Visit": key}
         return super().post(url, **kwargs)
 
+    def get(self, url, **kwargs):
+        if url.startswith("/api/follow-up/") and "headers" not in kwargs:      # the questions are for the own phone only
+            key = db.phone_key(url.rsplit("/", 1)[1])
+            if key:
+                kwargs["headers"] = {"X-Meddy-Visit": key}
+        return super().get(url, **kwargs)
+
 
 client = OwnPhone(server.app)
 
@@ -608,7 +615,10 @@ def test_one_person_has_one_open_visit():
     assert first.status_code == 200
     again = arrive(card="md48291375", complaint="headache")              # the same card, written differently
     assert again.status_code == 409
-    assert again.json()["detail"]["reg_no"] == first.json()["reg_no"] and "one visit" in again.json()["detail"]["message"].lower()
+    assert "one visit" in again.json()["detail"]["message"].lower()
+    # The answer names the ticket (the page shows it), never the registration number: with it, anybody who knows a
+    # card number could have followed that person's visit.
+    assert set(again.json()["detail"]) == {"message", "ticket"} and first.json()["reg_no"] not in again.text
     assert arrive(card="ZZ-0000-1111").status_code == 200                 # another person
     assert db.staff()["people"] == 2
 

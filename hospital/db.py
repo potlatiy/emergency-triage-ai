@@ -225,15 +225,23 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# The log is sealed, so that a line cannot be changed or taken out quietly (who set which level, and when, is the
-# record a hospital must be able to trust). Every line carries a seal: a keyed fingerprint (HMAC-SHA256) of the
-# line itself and of the seal of the visit's line before it. Change a line, or remove one from the middle, and the
-# seals after it no longer fit. The visit keeps a seal of its last line (log_seal), so cutting off the end shows
-# too. log_check() goes through all of it; the chief doctor's panel shows the result.
-# The key: MEDDY_LOG_KEY. Without it a key written here is used, which still shows damage and careless changes,
-# but not a forgery by somebody who has read this file. Changing the key makes every older seal look broken.
+# The log is sealed, so that a line cannot be changed or taken out quietly (who did what, and when, is the record a
+# hospital must be able to trust). Every line carries a seal: a keyed fingerprint (HMAC-SHA256) of this database's
+# own number, of the line itself and of the seal of the visit's line before it. Change a line, or remove one from
+# the middle, and the seals after it no longer fit. The visit keeps a seal of its last line (log_seal), so cutting
+# off the end shows too. log_check() goes through all of it; the chief doctor's panel shows the result.
+#
+# - Every line must have a seal. A file from before sealing is sealed once, as it was found (see _seal_everything).
+# - A log that no longer fits is never repaired by the next line: the visit's own seal is then left alone, so the
+#   alarm stays (see _event). It stays until "Erase everything".
+# - The database's own number (meta "log_id", new at every "Erase everything") is in every seal, so lines saved
+#   from before an erase, or from another copy of Meddy, do not fit here.
+# - The key: MEDDY_LOG_KEY. Without it a key written here is used, which still shows damage and careless changes,
+#   but not a forgery by somebody who has read this file. Changing the key makes every older seal look broken.
+# What the seal covers is the log, not the visit's own row (see SECURITY.md for this and the other limits).
 LOG_KEY = (os.environ.get("MEDDY_LOG_KEY") or "meddy: the key every copy of this code has").encode()
 OWN_LOG_KEY = bool(os.environ.get("MEDDY_LOG_KEY"))
+BORN_WITH = ("registered", "made up")           # the first line of every visit's log is one of these
 
 
 def _seal(*parts):
@@ -242,48 +250,77 @@ def _seal(*parts):
     return hmac.new(LOG_KEY, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _fits(stored, expected):
+    """Is a seal read from the file the one it should be? Anything that is not such a text does not fit."""
+    return isinstance(stored, str) and hmac.compare_digest(stored.encode("utf-8", "replace"), expected.encode())
+
+
+def _text(value):
+    return None if value is None else str(value)
+
+
 def _event(reg_no, what, who=None, detail=None):
     """Write one step of a visit into the log, sealed (see above). The caller holds the lock and the transaction."""
+    log_id = _setting("log_id", 0)
     before = _conn.execute("SELECT seal FROM events WHERE visit_reg IS ? ORDER BY id DESC LIMIT 1", (reg_no,)).fetchone()
-    line = (reg_no, _meta("day"), _clock(), _now(), what, who, detail)
-    seal = _seal(before["seal"] if before else None, *line)
+    before = before["seal"] if before else None
+    # As text: a number or True would come back from the database written differently, and the seal would not fit.
+    line = (reg_no, _meta("day"), _clock(), _now(), _text(what), _text(who), _text(detail))
+    seal = _seal(log_id, before, *line)
+    visit = _conn.execute("SELECT log_seal FROM visits WHERE reg_no = ?", (reg_no,)).fetchone() if reg_no is not None else None
+    # Was the log whole until now? Only then does the visit get the seal of its new last line. If lines were cut off
+    # or the visit's seal was touched, it is left as it is: the next line must not make a damaged log look whole.
+    whole = visit is not None and (
+        (before is None and visit["log_seal"] is None and what in BORN_WITH)
+        or (isinstance(before, str) and _fits(visit["log_seal"], _seal(log_id, "last line", reg_no, before))))
     _conn.execute("INSERT INTO events (visit_reg, day, clock, at, what, who, detail, seal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                   (*line, seal))
-    if reg_no is not None:
-        _conn.execute("UPDATE visits SET log_seal = ? WHERE reg_no = ?", (_seal("last line", reg_no, seal), reg_no))
+    if whole:
+        _conn.execute("UPDATE visits SET log_seal = ? WHERE reg_no = ?", (_seal(log_id, "last line", reg_no, seal), reg_no))
+
+
+def _seal_everything():
+    """Seal a file from before sealing, once, as it is found: every line of every visit, in order. From then on
+    every line must carry a fitting seal. The caller holds the lock and the transaction."""
+    log_id = _setting("log_id", 0)
+    last = {}
+    for row in _conn.execute("SELECT id, visit_reg, day, clock, at, what, who, detail FROM events ORDER BY id").fetchall():
+        reg = row["visit_reg"]
+        last[reg] = _seal(log_id, last.get(reg), reg, row["day"], row["clock"], row["at"], row["what"], row["who"], row["detail"])
+        _conn.execute("UPDATE events SET seal = ? WHERE id = ?", (last[reg], row["id"]))
+    for reg, seal in last.items():
+        if reg is not None:
+            _conn.execute("UPDATE visits SET log_seal = ? WHERE reg_no = ?", (_seal(log_id, "last line", reg, seal), reg))
 
 
 def log_check():
     """Go through the whole log and say whether every seal still fits.
 
-    Returns "whole" (nothing changed), "lines" (sealed lines checked), "older" (lines from before sealing, which
-    cannot be checked), "broken" (up to five visits whose log was changed, and how) and "own_key" (is MEDDY_LOG_KEY
-    set). What it cannot see: a visit removed together with all of its lines."""
+    Returns "whole" (nothing changed), "lines" (how many were checked), "broken" (up to five visits whose log was
+    changed, and how), "broken_count" and "own_key" (is MEDDY_LOG_KEY set). What it cannot see is in SECURITY.md:
+    above all a visit removed together with all of its lines, and a change to the visit's own row."""
     with _lock:
         rows = _conn.execute("SELECT id, visit_reg, day, clock, at, what, who, detail, seal FROM events "
                              "ORDER BY visit_reg, id").fetchall()
         heads = {r["reg_no"]: r["log_seal"] for r in _conn.execute("SELECT reg_no, log_seal FROM visits")}
-        sealed_from = _setting("sealed_from", 1)
-    broken, lines, older, last = {}, 0, 0, {}
+        log_id = _setting("log_id", 0)
+    broken, last = {}, {}
     for row in rows:
         reg = row["visit_reg"]
-        if row["seal"] is None:
-            if row["id"] >= sealed_from or last.get(reg):
-                broken.setdefault(reg, "a line has lost its seal")
-            else:
-                older += 1
-            continue
-        lines += 1
-        if not hmac.compare_digest(row["seal"], _seal(last.get(reg), reg, row["day"], row["clock"], row["at"],
-                                                      row["what"], row["who"], row["detail"])):
-            broken.setdefault(reg, "a line was changed, or one before it was removed")
-        last[reg] = row["seal"]
+        if reg not in last and row["what"] not in BORN_WITH:
+            broken.setdefault(reg, "the beginning of the log was removed")
+        if reg is not None and reg not in heads:
+            broken.setdefault(reg, "the visit itself was removed, its log is still there")
+        if not _fits(row["seal"], _seal(log_id, last.get(reg), reg, row["day"], row["clock"], row["at"],
+                                        row["what"], row["who"], row["detail"])):
+            broken.setdefault(reg, "a line was changed or added, or one before it was removed")
+        last[reg] = row["seal"] if isinstance(row["seal"], str) else ""
     for reg, head in heads.items():
-        if reg in last and (head is None or not hmac.compare_digest(head, _seal("last line", reg, last[reg]))):
-            broken.setdefault(reg, "the end of the log was cut off or added to")
-        elif reg not in last and head is not None:
+        if reg not in last:
             broken.setdefault(reg, "every line of the log was removed")
-    return {"whole": not broken, "lines": lines, "older": older, "own_key": OWN_LOG_KEY,
+        elif not _fits(head, _seal(log_id, "last line", reg, last[reg])):
+            broken.setdefault(reg, "the end of the log was cut off or added to")
+    return {"whole": not broken, "lines": len(rows), "own_key": OWN_LOG_KEY,
             "broken": [{"visit": reg or "(no visit)", "how": how} for reg, how in list(broken.items())[:5]],
             "broken_count": len(broken)}
 
@@ -324,7 +361,7 @@ def reset():
                             "DROP TABLE IF EXISTS meta;" + SCHEMA)
         _seed_staff()
         _meta("visit", 0)
-        _meta("sealed_from", 1)                 # the log is sealed from its very first line (see _event)
+        _meta("log_id", secrets.randbits(62))   # this database's own number: it is in every seal of the log (see _event)
         _start_day()
 
 
@@ -1558,8 +1595,9 @@ def _upgrade():
         fresh = _conn.execute("SELECT COUNT(*) AS n FROM meta WHERE key = 'clock'").fetchone()["n"] == 0
         if not fresh and _setting("day_started", None) is None:      # a file from before the clock ran in real time
             _meta("day_started", int(time.time()))
-        if not fresh and _setting("sealed_from", None) is None:      # a file from before the log was sealed:
-            _meta("sealed_from", _conn.execute("SELECT COALESCE(MAX(id), 0) + 1 AS n FROM events").fetchone()["n"])
+        if not fresh and _setting("log_id", None) is None:      # a file from before every line of the log was sealed
+            _meta("log_id", secrets.randbits(62))
+            _seal_everything()
         if not fresh:       # visits from before days were written down belong to the day that is open now
             _conn.execute("UPDATE visits SET day = (SELECT value FROM meta WHERE key = 'day') WHERE day IS NULL")
     model.close()

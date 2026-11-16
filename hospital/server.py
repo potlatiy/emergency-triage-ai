@@ -12,6 +12,7 @@ Everything is kept in the internal database, hospital.db (see db.py).
 import hashlib
 import hmac
 import os
+import re
 import socket
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import core
 import db
@@ -66,7 +67,8 @@ def _staff_token():
 
 
 def is_staff(request):
-    return STAFF_PIN is None or hmac.compare_digest(request.cookies.get(STAFF_COOKIE, ""), _staff_token())
+    # Compared as bytes: as text, one letter outside English in the cookie made the comparison itself fail (a 500).
+    return STAFF_PIN is None or hmac.compare_digest(request.cookies.get(STAFF_COOKIE, "").encode(), _staff_token().encode())
 
 
 # The chief doctor's panel has a PIN of its own (Space secret MEDDY_CHIEF_PIN): it shows the whole department at
@@ -82,22 +84,23 @@ def _chief_token():
 def is_chief(request):
     if CHIEF_PIN is None:
         return is_staff(request)
-    return hmac.compare_digest(request.cookies.get(CHIEF_COOKIE, ""), _chief_token())
+    return hmac.compare_digest(request.cookies.get(CHIEF_COOKIE, "").encode(), _chief_token().encode())
 
 
 @app.middleware("http")
 async def watched(request, call_next):
     """Every request from a Meddy screen tells the simulated rest of the hospital that somebody is watching.
     A request for a staff screen's data without the staff PIN is refused."""
-    path = request.url.path
+    path = request.scope["path"]                # the path the server routes by, never one worked out from a header
     page = STATIC / PAGES[path] if path in PAGES else None
-    scripts = guard.marks_of(page) if page is not None and page.exists() else ()
+    scripts, styles = guard.marks_of(page) if page is not None and page.exists() else ((), ())
     headers = guard.security_headers(path, request.headers.get("x-forwarded-proto", request.url.scheme) == "https",
-                                     scripts)
+                                     scripts, styles)
 
     def refuse(status, detail, more=None):
         return JSONResponse({"detail": detail}, status_code=status, headers={**headers, **(more or {})})
 
+    counted = False
     if path.startswith("/api/"):
         # The guard against spam and abuse (guard.py): nothing oversized, nobody calls the open addresses more
         # often than a real phone would, and an address that keeps being refused is shut out for a while.
@@ -106,6 +109,9 @@ async def watched(request, call_next):
         if write and guard.body_too_large(request.headers):
             guard.note("too_large", who, path)
             return refuse(413, "This request is larger than anything Meddy asks for.")
+        if write and guard.from_another_site(request.headers):
+            guard.note("other_site", who, path, strike=False)
+            return refuse(403, "This request was not sent by a Meddy page.")
         if not (STAFF_PIN is not None and is_staff(request)):
             left = guard.blocked(who, path)
             if left:
@@ -113,11 +119,15 @@ async def watched(request, call_next):
                 return refuse(429, f"Too many refused requests came from this connection. It can be used again in "
                                    f"about {(left + 59) // 60} minutes. Until then, please speak to the staff at the desk.",
                               {"Retry-After": str(left)})
-            wait = guard.too_many(who, path)
+            wait, own = guard.check(who, path)
             if wait:
-                guard.note("too_many", who, path, strike=write)       # reading too often never blocks anybody
-                return refuse(429, "Too many requests from this connection. Wait a moment, then try again.",
+                # A strike only when the caller went over their OWN limit, and never for reading too often. Refused
+                # because everybody together used the address up: that is not this caller's fault.
+                guard.note("too_many", who, path, strike=write and own)
+                return refuse(429, "Too many requests from this connection. Wait a moment, then try again."
+                              if own else "Meddy is very busy right now. Please try again in a few minutes, or speak to the staff at the desk.",
                               {"Retry-After": str(wait)})
+            counted = True
         db.seen()
         if path.startswith("/api/chief/"):
             if not is_chief(request):
@@ -125,6 +135,8 @@ async def watched(request, call_next):
         elif not path.startswith(FOR_PATIENTS) and not is_staff(request):
             return refuse(401, "Staff only: enter the staff PIN.")
     answer = await call_next(request)
+    if counted and answer.status_code < 300:
+        guard.served(path)                      # only what the hospital accepted counts towards the limit for everybody
     for name, value in headers.items():
         answer.headers[name] = value
     return answer
@@ -132,7 +144,8 @@ async def watched(request, call_next):
 
 def who_asks(request):
     """The address a request really comes from (see guard.client_address)."""
-    return guard.client_address(request.headers, request.client.host if request.client else None)
+    return guard.client_address(",".join(request.headers.getlist("x-forwarded-for")),
+                                request.client.host if request.client else None)
 
 
 def own_phone(visit, request):
@@ -174,7 +187,23 @@ def unreadable_text(request, error):
 Sex = Literal["Female", "Male"]
 
 
-class Arrival(BaseModel):
+# Characters nobody can see, but which change what a nurse or a doctor reads: the ones that turn the direction of
+# the text around (so that a sentence reads differently on the screen than it was stored), and control characters
+# such as NUL. Line breaks and tabs stay. Zero-width joiners stay too: several languages need them.
+_UNSEEN = re.compile("[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f\\u202a-\\u202e\\u2066-\\u2069\\u2028\\u2029]")
+
+
+class Clean(BaseModel):
+    """Every request body: such characters are taken out of every piece of text before anything else looks at it."""
+    @model_validator(mode="before")
+    @classmethod
+    def without_unseen_characters(cls, body):
+        if isinstance(body, dict):
+            return {name: _UNSEEN.sub("", value) if isinstance(value, str) else value for name, value in body.items()}
+        return body
+
+
+class Arrival(Clean):
     # Spaces are trimmed before the length check, so a complaint made only of spaces is refused.
     model_config = ConfigDict(str_strip_whitespace=True)
     complaint: str = Field(min_length=1, max_length=200)
@@ -191,14 +220,14 @@ class Arrival(BaseModel):
     last_name: str | None = Field(default=None, min_length=1, max_length=40, pattern=r"^[^\W\d_]+(?:[ '\-][^\W\d_]+)*$")
 
 
-class Answer(BaseModel):
+class Answer(Clean):
     question: str = Field(max_length=300)
     answer: str | None = Field(default=None, max_length=200)
     kind: Literal["danger", "extra"]         # a hand-written danger question, or one for the doctor's history
     topic: str | None = Field(default=None, max_length=30)   # the history topic, for the doctor's overview
 
 
-class Vitals(BaseModel):
+class Vitals(Clean):
     """What the nurse measured, typed in by hand. The limits only keep out typing slips; they are wide enough for
     a very sick patient, because a value the form refuses is a sick patient the model never sees."""
     SBP: float = Field(ge=40, le=260)           # blood pressure, upper number
@@ -209,7 +238,7 @@ class Vitals(BaseModel):
     Saturation: float = Field(ge=50, le=100)    # oxygen, percent
 
 
-class Assessment(BaseModel):
+class Assessment(Clean):
     # Every choice is spelled out. An unknown value is refused rather than quietly read as "normal" or "alert":
     # a silent default here would make a sick patient look well.
     reg_no: str
@@ -228,7 +257,7 @@ class Assessment(BaseModel):
     answers: list[Answer] = Field(default=[], max_length=20)
 
 
-class CheckIn(BaseModel):
+class CheckIn(Clean):
     """What the patient's phone sends when check-in is done. The nurse measures the rest on her own screen."""
     reg_no: str
     arrival: Literal["Walked in", "Public ambulance", "Private car", "Private ambulance"] = "Walked in"
@@ -237,7 +266,7 @@ class CheckIn(BaseModel):
     answers: list[Answer] = Field(default=[], max_length=20)
 
 
-class Joining(BaseModel):
+class Joining(Clean):
     reg_no: str
     level: int = Field(ge=1, le=5)
     danger: bool = False
@@ -254,7 +283,7 @@ class Joining(BaseModel):
     doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
-class Referral(BaseModel):
+class Referral(Clean):
     # Spaces are trimmed before the length check, so a reason made only of spaces is refused.
     model_config = ConfigDict(str_strip_whitespace=True)
     reg_no: str
@@ -267,27 +296,27 @@ class Referral(BaseModel):
     doctor_reg: str | None = Field(default=None, pattern=r"^DR-\d{4}$")
 
 
-class Duty(BaseModel):
+class Duty(Clean):
     reg_no: str
     on_duty: bool
 
 
-class Finished(BaseModel):
+class Finished(Clean):
     model_config = ConfigDict(str_strip_whitespace=True)
     reg_no: str
     note: str | None = Field(default=None, max_length=300)      # the doctor's note for the patient, confirmed
 
 
-class Tidying(BaseModel):
+class Tidying(Clean):
     model_config = ConfigDict(str_strip_whitespace=True)
     text: str = Field(min_length=1, max_length=300)
 
 
-class Worse(BaseModel):
+class Worse(Clean):
     reg_no: str
 
 
-class Calling(BaseModel):
+class Calling(Clean):
     doctor_reg: str
     reg_no: str | None = None          # "Accept": this patient, who must be waiting for this doctor
     # The doctor's own screen sends this: a doctor sees one patient at a time, so they close the visit they are in
@@ -295,25 +324,25 @@ class Calling(BaseModel):
     one_at_a_time: bool = False
 
 
-class Simulation(BaseModel):
+class Simulation(Clean):
     on: bool
 
 
-class Managing(BaseModel):
+class Managing(Clean):
     reg_no: str
     why: Literal["left without being seen", "sent home by the nurse", "registered by mistake"] | None = None
 
 
-class Wiping(BaseModel):
+class Wiping(Clean):
     confirm: Literal["ERASE"]                 # typed on purpose: erasing everything is never one stray click
 
 
-class Login(BaseModel):
+class Login(Clean):
     pin: str = Field(min_length=1, max_length=40)
     role: Literal["staff", "chief"] = "staff"
 
 
-class Matching(BaseModel):
+class Matching(Clean):
     match: dict[str, float] = Field(max_length=20)
 
 
@@ -344,6 +373,7 @@ def checked_answers(visit, answers, injury=False):
             if a["answer"] not in ("Yes", "No", None):
                 raise HTTPException(422, "A danger question is answered with Yes or No.")
             seen.add(a["question"])
+            a["topic"] = None                   # a danger question has no history topic: whatever was sent is dropped
         elif a["topic"] is not None and not core.known_topic(a["topic"]):
             raise HTTPException(422, "Unknown topic for an answer.")
     return answers
@@ -384,8 +414,10 @@ def register(body: Arrival):
         reg_no = db.register(body.complaint, body.age, body.sex, body.insurance, body.card, body.first_name, body.last_name)
     except db.AlreadyRegistered as already:
         # One person, one open visit. The answer points to the visit that is already open.
+        # Only the ticket, which the page shows. Not the registration number: with it, anybody who knows a card
+        # number could have followed that person's visit (/api/me).
         raise HTTPException(409, {"message": "This card already has an open visit. One person, one visit at a time.",
-                                  **already.visit})
+                                  "ticket": already.visit.get("ticket")})
     # "key": only this phone gets it. It sends it back when it asks about its visit, and the doctor's note for the
     # patient is given to nobody else (registration numbers follow one another and can be guessed).
     return {"reg_no": reg_no, "day": db.day(), "key": db.phone_key(reg_no),
@@ -393,14 +425,21 @@ def register(body: Arrival):
 
 
 @app.get("/api/follow-up/{reg_no}")
-def follow_up(reg_no: str):
+def follow_up(reg_no: str, request: Request):
     """The optional questions for the doctor, written by the language model for this visit's complaint.
 
     Each has a history topic and short answers to tap. The page asks for them after registering, so the
-    patient never waits for the model. The list is empty when the model is switched off."""
+    patient never waits for the model. The list is empty when the model is switched off.
+
+    Only for the phone that registered the visit, and only until check-in is done: the model words its questions
+    with the patient's own complaint ("When did the crushing chest pain start?"), and registration numbers follow
+    one another, so anybody could have read every patient's complaint this way."""
     visit = db.visit_for(reg_no)
     if visit is None:
         raise HTTPException(404, "No visit with this registration number.")
+    own_phone(visit, request)
+    if visit["status"] != "registered":
+        raise HTTPException(409, "Check-in is already done for this visit.")
     return core.follow_up(visit["complaint"], bool(visit["injury"]))
 
 
@@ -554,6 +593,8 @@ def chief_page():
 @app.post("/api/chief/wipe")
 def chief_wipe(body: Wiping):
     """Erase everything and start as on the first day (chief doctor only, and only with the word ERASE)."""
+    global _log_checked
+    _log_checked = None                         # the last check of the log was about what is now erased
     return db.wipe_everything()
 
 
@@ -563,7 +604,12 @@ def chief_security():
     whole (chief doctor only). Addresses appear only as fingerprints."""
     global _log_checked
     if _log_checked is None or time.time() - _log_checked[0] > 20:        # the whole log is read: not at every look
-        _log_checked = (time.time(), db.log_check())
+        try:
+            checked = db.log_check()
+        except Exception as error:                  # a check that cannot be done is an alarm, never a silent "fine"
+            checked = {"whole": False, "lines": 0, "own_key": db.OWN_LOG_KEY, "broken_count": 1,
+                       "broken": [{"visit": "(the whole log)", "how": f"the check itself failed: {type(error).__name__}"}]}
+        _log_checked = (time.time(), checked)
     return {**guard.report(), "log": _log_checked[1]}
 
 
@@ -590,7 +636,7 @@ def version():
     return {"version": VERSION, "commit": running_commit()}
 
 
-class Typed(BaseModel):
+class Typed(Clean):
     text: str = Field(default="", max_length=200)
 
 
