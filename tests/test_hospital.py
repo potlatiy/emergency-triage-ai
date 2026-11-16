@@ -291,7 +291,7 @@ def test_the_doctor_screen_reads_the_doctor_api_and_carries_the_disclaimer():
     page = client.get("/doctor")
     assert page.status_code == 200
     assert "/api/doctor/" in page.text and "/patients" in page.text
-    assert "Prototype, not medical advice. Meddy never gives a diagnosis." in page.text
+    assert "This project is a prototype and is not medical advice. Meddy never gives a diagnosis." in page.text
 
 
 # ---------------------------------------------------------------- saving the assessment

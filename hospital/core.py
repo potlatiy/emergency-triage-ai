@@ -220,6 +220,22 @@ def vital_warnings(vitals, alert="Alert", pain=0):
     return [name for name in table.columns if bool(table[name].iloc[0])]
 
 
+# Measurements the level model is known to misjudge. It gives every number one weight, in one direction: a higher
+# temperature counts as more urgent, so a very LOW one counts as less urgent. A patient at 31 degrees came out as
+# level 5, "96% sure", with no warning. The data it learned from holds nobody below 35.0 degrees and nobody
+# breathing fewer than 14 times a minute, so the tested warning rule (triage.warning_signs) has no line for them.
+# These three are a safety rule of the hospital only: they are not in the tested rule and no test figure covers
+# them. The nurse is told to check in person, and the doctor reads them with the other warning signs.
+MISJUDGED = (("very slow breathing", "RR", lambda value: value < 10),
+             ("very low temperature", "BT", lambda value: value < 35),
+             ("very high blood pressure", "SBP", lambda value: value >= 200))
+
+
+def misjudged_values(vitals):
+    """The measurements of one patient that Meddy's level cannot be trusted with, by name (see MISJUDGED)."""
+    return [name for name, sign, is_one in MISJUDGED if vitals.get(sign) is not None and is_one(vitals[sign])]
+
+
 def review_advice(result, danger=False, asked=True, worse=False):
     """Can the nurse accept Meddy's report after a quick look, or should she check the patient in person?
 
@@ -252,6 +268,8 @@ def review_advice(result, danger=False, asked=True, worse=False):
         reasons.append("the patient says they feel worse")
     if result["warnings"]:
         reasons.append("warning signs: " + ", ".join(result["warnings"]))
+    if result.get("misjudged"):
+        reasons.append("Meddy is known to misjudge " + ", ".join(result["misjudged"]) + ": do not rely on its level")
     return {"quick": not reasons, "emergency": False, "reasons": reasons, "rule_only": bool(reasons) and measured}
 
 
@@ -365,6 +383,7 @@ def assess(complaint, age, sex="Female", arrival="Walked in", injury=False, aler
         "second_check": {str(l): second_check(probabilities, l) for l in LEVELS},
         "unread": not known_words(complaint),
         "warnings": vital_warnings(vitals, alert, pain),
+        "misjudged": misjudged_values(vitals),      # measurements the level cannot be trusted with (see MISJUDGED)
     }
 
 
@@ -1043,7 +1062,7 @@ def patient_summary(visit, answers, ai=None, summary_ok=True, note=None):
     measured, warnings = None, []
     if saved:
         six = {name: saved.get(name) for name in VITAL_PRESETS["normal"]}
-        warnings = vital_warnings(six, saved.get("alert", "Alert"), saved.get("pain") or 0)
+        warnings = vital_warnings(six, saved.get("alert", "Alert"), saved.get("pain") or 0) + misjudged_values(six)
         measured = {**six, "alert": saved.get("alert"), "pain_word": pain_word(saved.get("pain"))}
     # She accepted Meddy's report although Meddy itself had advised checking the patient in person: the doctor is told.
     against_advice = visit.get("review") == "approved" and visit.get("quick_advised") == 0

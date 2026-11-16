@@ -182,7 +182,8 @@ To reproduce these numbers: `python assignment.py`
   score of patients with pain in our data (4; see `PAIN_TYPICAL` in `hospital/core.py`). This is our choice and
   is not tested.
 - **What the doctor gets:** each answer carries its topic, so the doctor's card starts with a short overview
-  put together by plain code ("Started: under an hour ago"). The model never summarises the patient.
+  put together by plain code ("Started: under an hour ago"). The nurse's screen also offers a two-sentence
+  summary written by the language model, marked as AI-written and checked against the patient's own answers.
 
 **A note on "fine-tuning with a system prompt".** These are two different things, and it matters for what we
 can claim.
@@ -305,4 +306,5 @@ it reports, and push again. To avoid this, say in the team chat which file you a
 | `data/diagnosis_departments.csv` | Our own table matching each diagnosis in the data to a department | Made by us from the data above |
 
 `hospital/hospital.db` is not training data. It is the demonstration database of made-up doctors and test
-visits, rebuilt each time the server starts, and it is not stored on GitHub.
+visits. It is kept between starts ("Start a new day" closes open visits, "Erase everything" empties it), and it
+is not stored on GitHub.

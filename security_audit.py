@@ -79,6 +79,11 @@ def call(method, path, body=None, address=None, headers=None, cookie=None, raw=N
             status, got, text = answer.status, answer.headers, answer.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as error:
         status, got, text = error.code, error.headers, error.read().decode("utf-8", "replace")
+    except (ConnectionError, urllib.error.URLError) as error:
+        # The server refuses an oversized request before reading it and closes the line; sometimes the sender is
+        # still writing and sees only the closed line. That is a refusal too: status 0, never a crash of the audit.
+        import email.message
+        return 0, email.message.Message(), f"the connection was closed ({type(error).__name__})"
     try:
         return status, got, json.loads(text)
     except ValueError:
@@ -177,8 +182,10 @@ def _():
 
 @check("Spam and flooding", 2, "A request far larger than any questionnaire is refused before it is read")
 def _():
-    big = call("POST", "/api/register", raw=b"x" * 70000, address=new_address(), headers={"Content-Type": "application/json"})[0]
-    return big == 413, f"70,000 bytes: {big}"
+    answers = [call("POST", "/api/register", raw=b"x" * 70000, address=new_address(), headers={"Content-Type": "application/json"})[0]
+               for _ in range(5)]
+    return set(answers) <= {413, 0} and 413 in answers, \
+        f"70,000 bytes, five times: {answers.count(413)} answered 413, {answers.count(0)} had the line closed before the body was read"
 
 
 @check("Spam and flooding", 3, "A connection that keeps being refused is shut out of registering, and told to go to the desk")
@@ -778,11 +785,9 @@ def start_server(folder):
     server = subprocess.Popen([sys.executable, str(ROOT / "hospital" / "server.py")], env=settings, cwd=str(ROOT),
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(120):
-        try:
-            if call("GET", "/api/version")[0] == 200:
-                return server
-        except OSError:
-            time.sleep(0.5)
+        if call("GET", "/api/version")[0] == 200:
+            return server
+        time.sleep(0.5)                         # not up yet: call() answers 0 for a closed line
     server.kill()
     raise SystemExit("The audit's own server did not start.")
 
